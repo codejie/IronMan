@@ -4,3 +4,4 @@ backend/dist
 frontend/dist
 data/
 .env
+.superpowers/
