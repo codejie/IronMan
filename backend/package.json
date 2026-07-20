@@ -1,0 +1,21 @@
+{
+  "name": "@ironman/backend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun build ./src/server.ts --outdir ./dist --target bun",
+    "dev": "bun --watch ./src/server.ts",
+    "lint": "tsc --noEmit",
+    "start": "bun ./dist/server.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "latest",
+    "hono": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "~5.9.3"
+  }
+}

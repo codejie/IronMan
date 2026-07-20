@@ -1,0 +1,27 @@
+{
+  "name": "@ironman/frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vue-tsc --noEmit && vite build",
+    "dev": "vite --host 0.0.0.0",
+    "lint": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@vueuse/core": "latest",
+    "echarts": "latest",
+    "lucide-vue-next": "latest",
+    "vue": "latest",
+    "vue-router": "latest"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "latest",
+    "@vue/test-utils": "latest",
+    "jsdom": "latest",
+    "typescript": "~5.9.3",
+    "vite": "latest",
+    "vitest": "latest",
+    "vue-tsc": "latest"
+  }
+}

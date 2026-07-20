@@ -1,0 +1,36 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_PATH: /app/data/ironman.sqlite
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting IronMan}
+      PORT: 3000
+      TOKEN_TTL_SECONDS: 604800
+    volumes:
+      - ${IRONMAN_DATA_DIR:-./data}:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const response = await fetch('http://127.0.0.1:3000/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); if (!response.ok) process.exit(1);"
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - ${IRONMAN_PORT:-8080}:80
+    restart: unless-stopped

@@ -2,11 +2,11 @@
 
 ## 项目目标
 
-本工程目标是复刻 [codejie/Batman](https://github.com/codejie/Batman) 的核心能力，功能分析以 `docs/project-replication-guide.md` 为准。复刻不是逐字迁移：实现相同业务闭环的同时，应修复原工程中可能存在的认证、数据源稳定性、路由拼写、导出范围、任务可靠性和交互体验问题，优先做成更实用、更方便、更顺畅的产品。
+本工程的版本库为 [codejie/IronMan](https://github.com/codejie/IronMan)，目标是复刻 [codejie/Batman](https://github.com/codejie/Batman) 的核心能力，功能分析以 `docs/project-replication-guide.md` 为准。复刻不是逐字迁移：实现相同业务闭环的同时，应修复原工程中可能存在的认证、数据源稳定性、路由拼写、导出范围、任务可靠性和交互体验问题，优先做成更实用、更方便、更顺畅的产品。
 
 ## 架构与目录
 
-保持前后端分离构建，分别建立 `backend/` 与 `frontend/` 应用。统一使用 Bun 构建与管理脚本，语言使用 TypeScript。后端负责 OpenAPI 接口、数据源适配、用户隔离、任务调度、告警提醒和指标计算；前端负责登录、资产管理、行情图表、策略分析、提醒配置和系统设置。文档、设计和验收记录放入 `docs/`。
+保持前后端分离构建，分别建立 `backend/` 与 `frontend/` 应用。统一使用 Bun 构建与管理脚本，语言使用 TypeScript。后端负责 OpenAPI 接口、数据源适配、用户隔离、任务调度、告警提醒和指标计算；前端负责登录、资产管理、行情图表、策略分析、提醒配置和系统设置。文档、设计和验收记录放入 `docs/`。工程必须支持 Docker 部署：为各应用提供可复现的镜像构建，并用 Compose 或等价方案编排运行依赖；配置通过环境变量注入，持久化数据使用卷且不写入镜像。
 
 ## 接口与数据契约
 
