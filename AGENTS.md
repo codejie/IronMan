@@ -36,6 +36,10 @@ Batman 使用 AkShare 和 Tencent 服务获取行情数据。本工程允许选�
 
 前端风格、样式和布局参考 [Wei-Shaw/sub2api](https://github.com/Wei-Shaw/sub2api) 及其后台示例 [sub2api-admin](https://sub2api-admin.enlhz.com/dashboard)。面向高频使用场景设计：导航清晰、表格密度合理、配置流程顺畅、图表信息可读，避免只做展示型页面。
 
+### 交互反馈
+
+禁止使用浏览器原生的 alert、confirm 和 prompt。确认删除、停止任务、覆盖配置等操作必须使用工程统一样式的模态确认对话框；成功、失败和轻量状态反馈使用统一的浮动提示或页面内提示组件。提示应有明确的自动消失或关闭方式，且不得挤占主要内容区或破坏页面布局。
+
 ## 开发、测试与验收
 
 先规划方案，再进入实现。遵循 TDD：先写或明确验收用例，再实现功能。每个模块至少覆盖成功路径、权限隔离、异常输入和外部服务失败。常用脚本应以 Bun 暴露，例如 `bun test`、`bun run dev`、`bun run build`、`bun run lint`。

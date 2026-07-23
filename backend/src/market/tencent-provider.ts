@@ -1,11 +1,14 @@
 import { errors } from "../errors";
+import { listedFundExchange } from "./listed-fund";
 import type { Instrument, MarketDataProvider, PriceBar, Timeframe } from "./types";
 
 interface TencentKlinePayload {
   data?: Record<string, { qfqday?: string[][]; day?: string[][]; qfqweek?: string[][]; week?: string[][]; qfqmonth?: string[][]; month?: string[][] }>;
 }
 
-function symbolFor(instrument: Instrument): string {
+export function tencentSymbol(instrument: Instrument): string {
+  const listedExchange = listedFundExchange(instrument);
+  if (listedExchange !== undefined) return `${listedExchange}${instrument.code}`;
   return instrument.exchange === "fund" ? instrument.code : `${instrument.exchange}${instrument.code}`;
 }
 
@@ -20,10 +23,11 @@ function seriesFor(payload: TencentKlinePayload, symbol: string, timeframe: Time
 export class TencentMarketProvider implements MarketDataProvider {
   readonly source = "tencent" as const;
 
-  async history(instrument: Instrument, timeframe: Timeframe): Promise<PriceBar[]> {
-    const symbol = symbolFor(instrument);
+  async history(instrument: Instrument, timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]> {
+    const symbol = tencentSymbol(instrument);
+    const end = endDate ?? "";
     const response = await fetch(
-      `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(`${symbol},${timeframe},,,180,qfq`)}`,
+      `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(`${symbol},${timeframe},,${end},${limit},qfq`)}`,
       { headers: { "user-agent": "IronMan/0.1 market-data" }, signal: AbortSignal.timeout(10_000) }
     );
     if (!response.ok) {

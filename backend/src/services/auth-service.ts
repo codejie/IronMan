@@ -212,6 +212,10 @@ export class AuthService {
     this.writeAudit(userId, "account.password-change", {});
   }
 
+  recordAudit(actorId: string | null, action: string, metadata: Record<string, unknown>): void {
+    this.writeAudit(actorId, action, metadata);
+  }
+
   listAuditLogs(limit: number): AuditLog[] {
     return this.database
       .all<{

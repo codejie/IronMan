@@ -1,6 +1,7 @@
 import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { EastmoneyMarketProvider } from "../market/eastmoney-provider";
+import { listedFundExchange } from "../market/listed-fund";
 import { MockMarketProvider } from "../market/mock-provider";
 import { TencentMarketProvider } from "../market/tencent-provider";
 import type { AssetType, DataSourceConfig, Exchange, Instrument, MarketDataProvider, MarketSource, PriceBar, Timeframe } from "../market/types";
@@ -113,25 +114,107 @@ export class MarketService {
     return config;
   }
 
-  async getHistory(userId: string, instrumentId: string, timeframe: Timeframe, refresh: boolean): Promise<{ source: MarketSource; bars: PriceBar[] }> {
+  async getHistory(userId: string, instrumentId: string, timeframe: Timeframe, refresh: boolean, limit = 180): Promise<{ source: MarketSource; bars: PriceBar[] }> {
     const instrument = this.getInstrument(instrumentId);
     const config = this.getDataSourceConfig(userId);
-    if (!refresh) {
-      const cached = this.getCachedBars(instrument.id, timeframe, config.primary);
-      if (cached.length > 0) {
-        return { source: config.primary, bars: cached };
+    const candidates = [...new Set([config.primary, config.fallback])];
+    const cached = candidates
+      .map((source) => ({ source, bars: this.getCachedBars(instrument.id, timeframe, source) }))
+      .find((entry) => entry.bars.length > 0 && !this.shouldRefreshListedFundMock(instrument, entry.source, config.primary));
+    if (!refresh && cached !== undefined && cached.bars.length >= limit) {
+      return { source: cached.source, bars: this.takeRecentBars(cached.bars, limit) };
+    }
+    try {
+      const result = await this.fetchWithFallback(instrument, timeframe, config, limit);
+      this.database.transaction(() => this.cacheBars(instrument.id, timeframe, result.source, result.bars));
+      return { source: result.source, bars: this.takeRecentBars(result.bars, limit) };
+    } catch (error) {
+      if (cached !== undefined) {
+        return { source: cached.source, bars: this.takeRecentBars(cached.bars, limit) };
+      }
+      throw error;
+    }
+  }
+
+  async getHistoryRange(
+    userId: string,
+    instrumentId: string,
+    timeframe: Timeframe,
+    startDate: string,
+    endDate: string,
+    refresh: boolean
+  ): Promise<{ source: MarketSource; bars: PriceBar[] }> {
+    if (!isCalendarDate(startDate) || !isCalendarDate(endDate) || startDate > endDate) {
+      throw errors.validation("历史行情日期范围无效");
+    }
+
+    const instrument = this.getInstrument(instrumentId);
+    const config = this.getDataSourceConfig(userId);
+    const candidates = [...new Set([config.primary, config.fallback])];
+    const cached = candidates
+      .map((source) => ({ source, bars: this.getCachedBars(instrument.id, timeframe, source) }))
+      .find((entry) => entry.bars.length > 0 && !this.shouldRefreshListedFundMock(instrument, entry.source, config.primary));
+    const cachedRange = cached === undefined ? [] : barsInRange(cached.bars, startDate, endDate);
+    if (!refresh && isCompleteRange(cachedRange, startDate, endDate)) {
+      return { source: cached!.source, bars: cachedRange };
+    }
+
+    const bars = new Map(cachedRange.map((bar) => [bar.date, bar]));
+    let source = cached?.source ?? config.primary;
+    let cursor = endDate;
+    let lastError: unknown;
+
+    for (let page = 0; page < 24; page += 1) {
+      try {
+        const result = await this.fetchWithFallback(instrument, timeframe, config, 640, cursor);
+        source = result.source;
+        this.database.transaction(() => this.cacheBars(instrument.id, timeframe, result.source, result.bars));
+        for (const bar of result.bars) {
+          if (bar.date >= startDate && bar.date <= endDate) bars.set(bar.date, bar);
+        }
+        const sorted = [...result.bars].sort((left, right) => left.date.localeCompare(right.date));
+        const earliest = sorted[0]?.date;
+        if (earliest === undefined || earliest <= startDate || sorted.length < 640) break;
+        const previous = previousCalendarDate(earliest);
+        if (previous >= cursor) break;
+        cursor = previous;
+      } catch (error) {
+        lastError = error;
+        break;
       }
     }
 
-    const result = await this.fetchWithFallback(instrument, timeframe, config);
-    this.database.transaction(() => this.cacheBars(instrument.id, timeframe, result.source, result.bars));
-    return result;
+    const result = [...bars.values()].sort((left, right) => left.date.localeCompare(right.date));
+    if (result.length > 0) return { source, bars: result };
+    if (lastError instanceof Error) throw lastError;
+    throw errors.external("未获取到指定日期范围的历史行情");
   }
 
   overview(): { instrumentCount: number; cachedBarCount: number; latestCacheAt: string | null } {
     const instrumentCount = this.database.get<{ count: number }>("SELECT COUNT(*) AS count FROM instruments")?.count ?? 0;
     const cache = this.database.get<{ count: number; latest: string | null }>("SELECT COUNT(*) AS count, MAX(created_at) AS latest FROM market_bars");
     return { instrumentCount, cachedBarCount: cache?.count ?? 0, latestCacheAt: cache?.latest ?? null };
+  }
+
+  async refreshInstruments(userId: string, instrumentIds: string[]): Promise<{ requested: number; refreshed: number; failed: number }> {
+    const ids = [...new Set(instrumentIds)];
+    let refreshed = 0;
+    let failed = 0;
+    for (const instrumentId of ids) {
+      try {
+        await this.getHistory(userId, instrumentId, "day", true);
+        refreshed += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+    return { requested: ids.length, refreshed, failed };
+  }
+
+  clearCachedBars(): number {
+    const deleted = this.database.get<{ count: number }>("SELECT COUNT(*) AS count FROM market_bars")?.count ?? 0;
+    this.database.run("DELETE FROM market_bars");
+    return deleted;
   }
 
   async signalsForWatchlist(userId: string): Promise<Array<{ instrumentId: string; name: string; code: string; price: number; signals: string[]; source: MarketSource }>> {
@@ -176,14 +259,20 @@ export class MarketService {
     ];
   }
 
-  private async fetchWithFallback(instrument: Instrument, timeframe: Timeframe, config: DataSourceConfig): Promise<{ source: MarketSource; bars: PriceBar[] }> {
+  private async fetchWithFallback(
+    instrument: Instrument,
+    timeframe: Timeframe,
+    config: DataSourceConfig,
+    limit: number,
+    endDate?: string
+  ): Promise<{ source: MarketSource; bars: PriceBar[] }> {
     const candidates = [...new Set([config.primary, config.fallback])];
     let lastError: unknown;
     for (const source of candidates) {
       try {
         const provider = this.providers.get(source);
         if (provider === undefined) continue;
-        return { source, bars: await provider.history(instrument, timeframe) };
+        return { source, bars: await provider.history(instrument, timeframe, limit, endDate) };
       } catch (error) {
         lastError = error;
       }
@@ -203,6 +292,14 @@ export class MarketService {
         { instrumentId, timeframe, source }
       )
       .map((row) => ({ date: row.trade_date, open: row.open, close: row.close, high: row.high, low: row.low, volume: row.volume }));
+  }
+
+  private takeRecentBars(bars: PriceBar[], limit: number): PriceBar[] {
+    return bars.length <= limit ? bars : bars.slice(-limit);
+  }
+
+  private shouldRefreshListedFundMock(instrument: Instrument, source: MarketSource, primary: MarketSource): boolean {
+    return source === "mock" && primary !== "mock" && listedFundExchange(instrument) !== undefined;
   }
 
   private cacheBars(instrumentId: string, timeframe: Timeframe, source: MarketSource, bars: PriceBar[]): void {
@@ -241,6 +338,22 @@ export class MarketService {
       updatedAt: row.updated_at
     };
   }
+}
+
+function isCalendarDate(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00.000Z`));
+}
+
+function barsInRange(bars: PriceBar[], startDate: string, endDate: string): PriceBar[] {
+  return bars.filter((bar) => bar.date >= startDate && bar.date <= endDate);
+}
+
+function isCompleteRange(bars: PriceBar[], startDate: string, endDate: string): boolean {
+  return bars[0]?.date !== undefined && bars[0].date <= startDate && bars.at(-1)?.date !== undefined && bars.at(-1)!.date >= endDate;
+}
+
+function previousCalendarDate(date: string): string {
+  return new Date(new Date(`${date}T00:00:00.000Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
 }
 
 function isDataSourceConfig(value: unknown): value is DataSourceConfig {

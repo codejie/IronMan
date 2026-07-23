@@ -23,7 +23,7 @@ async function submit(): Promise<void> {
     } else {
       await register(email.value, password.value, displayName.value);
     }
-    await router.replace("/settings/profile");
+    await router.replace("/holding/list");
   } catch (error) {
     errorMessage.value = error instanceof ApiError ? error.message : "暂时无法完成请求";
   } finally {
@@ -37,7 +37,7 @@ async function submit(): Promise<void> {
     <section class="auth-panel" aria-labelledby="auth-heading">
       <div class="auth-heading">
         <span class="eyebrow">IronMan</span>
-        <h1 id="auth-heading">投资工作台</h1>
+        <h1 id="auth-heading">投资数据工作台</h1>
       </div>
       <div class="mode-switch" role="tablist" aria-label="账户操作">
         <button :class="{ selected: mode === 'login' }" type="button" role="tab" @click="mode = 'login'">登录</button>

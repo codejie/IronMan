@@ -24,7 +24,7 @@ export interface PriceBar {
 
 export interface MarketDataProvider {
   readonly source: MarketSource;
-  history(instrument: Instrument, timeframe: Timeframe): Promise<PriceBar[]>;
+  history(instrument: Instrument, timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]>;
 }
 
 export interface DataSourceConfig {

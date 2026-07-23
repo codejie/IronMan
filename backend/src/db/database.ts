@@ -251,6 +251,113 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS notes_owner_idx ON notes(user_id, updated_at DESC);
     `
+  },
+  {
+    version: 6,
+    sql: `
+      ALTER TABLE cash_ledger ADD COLUMN holding_transaction_id TEXT;
+      CREATE INDEX IF NOT EXISTS cash_ledger_transaction_idx ON cash_ledger(user_id, holding_transaction_id);
+
+      UPDATE cash_ledger
+         SET holding_transaction_id = (
+           SELECT holding_transactions.id
+             FROM holding_transactions
+            WHERE holding_transactions.user_id = cash_ledger.user_id
+              AND holding_transactions.holding_id = cash_ledger.reference_id
+              AND holding_transactions.action = cash_ledger.category
+              AND holding_transactions.occurred_at = cash_ledger.occurred_at
+              AND ABS(cash_ledger.amount - CASE holding_transactions.action
+                WHEN 'buy' THEN -(holding_transactions.quantity * holding_transactions.price + holding_transactions.fee)
+                WHEN 'sell' THEN holding_transactions.quantity * holding_transactions.price - holding_transactions.fee
+                ELSE holding_transactions.price - holding_transactions.fee
+              END) < 0.000001
+            ORDER BY holding_transactions.id ASC
+            LIMIT 1
+         )
+       WHERE holding_transaction_id IS NULL
+         AND reference_id IS NOT NULL
+         AND category IN ('buy', 'sell', 'dividend');
+    `
+  },
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS trend_strategies (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        remarks TEXT NOT NULL DEFAULT '',
+        target_scope TEXT NOT NULL CHECK (target_scope IN ('holdings', 'watchlist', 'custom', 'all', 'holdings_watchlist')),
+        data_range_json TEXT NOT NULL,
+        report_window TEXT NOT NULL CHECK (report_window IN ('1d', '3d', '7d', '30d', 'all')),
+        backtest_config_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(user_id, name)
+      );
+      CREATE INDEX IF NOT EXISTS trend_strategies_owner_idx ON trend_strategies(user_id, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS trend_strategy_targets (
+        strategy_id TEXT NOT NULL REFERENCES trend_strategies(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY(strategy_id, instrument_id)
+      );
+      CREATE INDEX IF NOT EXISTS trend_strategy_targets_owner_idx ON trend_strategy_targets(user_id, strategy_id);
+
+      CREATE TABLE IF NOT EXISTS trend_strategy_indicators (
+        id TEXT PRIMARY KEY,
+        strategy_id TEXT NOT NULL REFERENCES trend_strategies(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        indicator_id TEXT NOT NULL,
+        parameters_json TEXT NOT NULL,
+        display_order INTEGER NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(strategy_id, indicator_id)
+      );
+      CREATE INDEX IF NOT EXISTS trend_strategy_indicators_owner_idx ON trend_strategy_indicators(user_id, strategy_id, display_order);
+
+      CREATE TABLE IF NOT EXISTS trend_runs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        strategy_id TEXT NOT NULL REFERENCES trend_strategies(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+        progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+        target_total INTEGER NOT NULL DEFAULT 0,
+        target_completed INTEGER NOT NULL DEFAULT 0,
+        target_snapshot_json TEXT NOT NULL,
+        error_message TEXT,
+        cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS trend_runs_owner_idx ON trend_runs(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS trend_run_reports (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES trend_runs(id) ON DELETE CASCADE,
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        result_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(run_id, instrument_id)
+      );
+      CREATE INDEX IF NOT EXISTS trend_run_reports_owner_idx ON trend_run_reports(user_id, run_id, created_at ASC);
+
+      CREATE TABLE IF NOT EXISTS trend_run_logs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES trend_runs(id) ON DELETE CASCADE,
+        level TEXT NOT NULL CHECK (level IN ('info', 'error')),
+        message TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS trend_run_logs_owner_idx ON trend_run_logs(user_id, run_id, created_at ASC);
+    `
   }
 ];
 

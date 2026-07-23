@@ -1,44 +1,33 @@
-import { createRouter, createWebHistory } from "vue-router";
+import { createRouter, createWebHashHistory } from "vue-router";
 import AppShell from "@/components/AppShell.vue";
 import { useSession } from "@/stores/session";
 
+const placeholder = () => import("@/views/BatmanPlaceholderView.vue");
+
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { path: "/login", component: () => import("@/views/LoginView.vue"), meta: { public: true, title: "登录" } },
     {
       path: "/",
       component: AppShell,
-      redirect: "/dashboard",
+      redirect: "/holding/list",
       meta: { title: "IronMan" },
       children: [
-        { path: "dashboard", component: () => import("@/views/DashboardView.vue"), meta: { title: "仪表盘" } },
-        { path: "assets/watchlist", component: () => import("@/views/WatchlistView.vue"), meta: { title: "自选" } },
-        { path: "assets/holdings", component: () => import("@/views/HoldingsView.vue"), meta: { title: "持仓" } },
-        { path: "assets/cash", component: () => import("@/views/CashView.vue"), meta: { title: "资金与流水" } },
-        { path: "market/instruments", component: () => import("@/views/InstrumentsView.vue"), meta: { title: "标的检索" } },
-        { path: "market/overview", component: () => import("@/views/MarketOverviewView.vue"), meta: { title: "市场概览" } },
-        { path: "market/signals", component: () => import("@/views/MarketSignalsView.vue"), meta: { title: "技术信号" } },
-        { path: "analysis/charts", component: () => import("@/views/ChartView.vue"), meta: { title: "技术图表" } },
-        { path: "analysis/strategies", component: () => import("@/views/StrategiesView.vue"), meta: { title: "策略方案" } },
-        { path: "analysis/tasks", component: () => import("@/views/TasksView.vue"), meta: { title: "分析任务" } },
-        { path: "analysis/reports", component: () => import("@/views/ReportsView.vue"), meta: { title: "分析报告" } },
-        { path: "automation/schedules", component: () => import("@/views/SchedulesView.vue"), meta: { title: "定时任务" } },
-        { path: "automation/alerts", component: () => import("@/views/AlertsView.vue"), meta: { title: "提醒告警" } },
-        { path: "automation/runs", component: () => import("@/views/RunsView.vue"), meta: { title: "执行记录" } },
-        { path: "settings/data-sources", component: () => import("@/views/DataSourcesView.vue"), meta: { title: "数据源" } },
-        { path: "settings/trading-calendar", component: () => import("@/views/TradingCalendarView.vue"), meta: { title: "交易日" } },
-        { path: "settings/data", component: () => import("@/views/DataManagementView.vue"), meta: { title: "数据管理" } },
-        { path: "settings/ai", component: () => import("@/views/AiSettingsView.vue"), meta: { title: "AI 配置" } },
-        { path: "assistant/chat", component: () => import("@/views/AiChatView.vue"), meta: { title: "AI 咨询" } },
-        { path: "notes", component: () => import("@/views/NotesView.vue"), meta: { title: "投资笔记" } },
-        { path: "settings/profile", component: () => import("@/views/ProfileView.vue"), meta: { title: "个人与安全" } },
-        { path: "admin/users", component: () => import("@/views/AdminUsersView.vue"), meta: { admin: true, title: "用户与角色" } },
-        { path: "admin/audit-logs", component: () => import("@/views/AdminAuditLogsView.vue"), meta: { admin: true, title: "审计日志" } },
-        { path: "admin/system", component: () => import("@/views/AdminSystemView.vue"), meta: { admin: true, title: "系统状态" } }
+        { path: "customized/list", component: () => import("@/views/WatchlistView.vue"), meta: { title: "自选列表" } },
+        { path: "holding/list", component: () => import("@/views/HoldingsView.vue"), meta: { title: "持仓信息" } },
+        { path: "holding/detail", component: () => import("@/views/HoldingDetailView.vue"), meta: { title: "持仓详情" } },
+        { path: "analysis/trend", component: () => import("@/views/TrendAnalysisView.vue"), meta: { title: "趋势计算" } },
+        { path: "analysis/agent", component: placeholder, props: { label: "AI咨询" }, meta: { title: "AI咨询" } },
+        { path: "data/third/technical-data", component: placeholder, props: { label: "技术数据" }, meta: { title: "技术数据" } },
+        { path: "data/third/info-links", component: placeholder, props: { label: "资讯链接" }, meta: { title: "资讯链接" } },
+        { path: "data/third/market-cloud", component: placeholder, props: { label: "大盘云图" }, meta: { title: "大盘云图" } },
+        { path: "notes/leek-notes", component: placeholder, props: { label: "韭菜笔记" }, meta: { title: "韭菜笔记" } },
+        { path: "system/configuration", component: () => import("@/views/SystemConfigurationView.vue"), meta: { title: "系统配置" } },
+        { path: "sytem/configuration", redirect: "/system/configuration" }
       ]
     },
-    { path: "/:pathMatch(.*)*", redirect: "/settings/profile" }
+    { path: "/:pathMatch(.*)*", redirect: "/holding/list" }
   ]
 });
 
@@ -49,9 +38,6 @@ router.beforeEach(async (to) => {
   }
   if (!(await validate())) {
     return "/login";
-  }
-  if (to.meta.admin === true && currentUser.value?.role !== "admin") {
-    return "/settings/profile";
   }
   return true;
 });

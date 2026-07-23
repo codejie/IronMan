@@ -174,7 +174,7 @@ describe("account and tenant isolation", () => {
     const systemBody = (await system.json()) as ResponseBody<{ database: string; migrationVersions: number[] }>;
     expect(system.status).toBe(200);
     expect(systemBody.result.database).toBe("sqlite");
-    expect(systemBody.result.migrationVersions).toEqual([1, 2, 3, 4, 5]);
+    expect(systemBody.result.migrationVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
     const wrongMethod = await runtime.app.request("/api/admin/system/status", { method: "GET" });
     expect(wrongMethod.status).toBe(404);

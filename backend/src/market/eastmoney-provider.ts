@@ -1,21 +1,23 @@
 import { errors } from "../errors";
+import { listedFundExchange } from "./listed-fund";
 import type { Instrument, MarketDataProvider, PriceBar, Timeframe } from "./types";
 
 interface EastmoneyPayload {
   data?: { klines?: string[] };
 }
 
-function securityId(instrument: Instrument): string {
-  const market = instrument.exchange === "sh" ? "1" : "0";
+export function eastmoneySecurityId(instrument: Instrument): string {
+  const exchange = listedFundExchange(instrument) ?? instrument.exchange;
+  const market = exchange === "sh" ? "1" : "0";
   return `${market}.${instrument.code}`;
 }
 
 export class EastmoneyMarketProvider implements MarketDataProvider {
   readonly source = "eastmoney" as const;
 
-  async history(instrument: Instrument, timeframe: Timeframe): Promise<PriceBar[]> {
+  async history(instrument: Instrument, timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]> {
     const klt = timeframe === "week" ? "102" : timeframe === "month" ? "103" : "101";
-    const query = new URLSearchParams({ secid: securityId(instrument), klt, fqt: "1", lmt: "180", end: "20500101", fields1: "f1,f2,f3,f4,f5,f6", fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61" });
+    const query = new URLSearchParams({ secid: eastmoneySecurityId(instrument), klt, fqt: "1", lmt: String(limit), end: endDate?.replaceAll("-", "") ?? "20500101", fields1: "f1,f2,f3,f4,f5,f6", fields2: "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61" });
     const response = await fetch(`https://push2his.eastmoney.com/api/qt/stock/kline/get?${query.toString()}`, { headers: { "user-agent": "IronMan/0.1 market-data" }, signal: AbortSignal.timeout(10_000) });
     if (!response.ok) throw errors.external("Eastmoney 行情服务暂不可用");
     const payload = (await response.json()) as EastmoneyPayload;
