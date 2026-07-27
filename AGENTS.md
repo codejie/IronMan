@@ -20,7 +20,7 @@ declare interface IResponse<T = any> {
   message?: string
   result: T extends any ? T : T & any
 }
-```
+```f
 
 类型定义、常量和枚举不必机械照搬 Batman，可按新的技术方案调整，但必须保持语义清晰、前后端一致并有测试覆盖。
 

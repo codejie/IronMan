@@ -136,7 +136,7 @@ onBeforeUnmount(() => { requestVersion += 1; });
       <p v-if="isLoading && !hasBars" class="batman-selected">正在加载 K 线行情...</p>
       <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
       <p v-else-if="!isLoading && !hasBars" class="batman-selected">暂无可展示的 K 线行情</p>
-      <KLineChart v-if="hasBars" :annotations="annotations" :bars="bars" :macd-lines="macdLines" :ma-periods="maPeriods" :overlays="overlays" :subchart="subchart" title="" />
+      <KLineChart v-if="hasBars" :annotations="annotations" :bars="bars" height="min(62vh, 520px)" :macd-lines="macdLines" :ma-periods="maPeriods" :overlays="overlays" :subchart="subchart" title="" />
     </section>
   </div>
 </template>

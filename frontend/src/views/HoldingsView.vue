@@ -2,8 +2,8 @@
 import { ChevronDown, ChevronRight, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
-import InstrumentSearch from "@/components/InstrumentSearch.vue";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
+import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
 import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type HoldingAction, type HoldingOperation, type Instrument } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
@@ -21,6 +21,7 @@ const operations = ref<Record<string, HoldingOperation[]>>({});
 const showClosed = ref(false);
 const useLocalData = ref(false);
 const dialog = ref<Dialog | null>(null);
+const isInstrumentPickerOpen = ref(false);
 const selectedHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const selectedOperation = ref<HoldingOperation | null>(null);
 const selectedInstrument = ref<Instrument | null>(null);
@@ -40,6 +41,7 @@ const isSaving = ref(false);
 const activeRecords = computed(() => workspace.value?.active ?? []);
 const closedRecords = computed(() => workspace.value?.closed ?? []);
 const profitSummary = computed(() => workspace.value === null ? null : holdingProfitSummary(workspace.value.summary, closedRecords.value));
+const dailyDifferenceTotal = computed(() => Number(activeRecords.value.reduce((sum, item) => sum + (item.dailyDifference ?? 0), 0).toFixed(6)));
 const overflowTitleObservers = new WeakMap<HTMLElement, ResizeObserver>();
 
 function updateOverflowTitles(element: HTMLElement): void {
@@ -104,7 +106,20 @@ function openCreate(): void {
   occurredAt.value = nowInputValue();
   note.value = "";
   errorMessage.value = "";
+  isInstrumentPickerOpen.value = true;
+}
+
+function selectHoldingInstrument(instrument: Instrument): void {
+  selectedInstrument.value = instrument;
+  errorMessage.value = "";
+  isInstrumentPickerOpen.value = false;
   dialog.value = "create";
+}
+
+function closeInstrumentPicker(): void {
+  isInstrumentPickerOpen.value = false;
+  selectedInstrument.value = null;
+  errorMessage.value = "";
 }
 
 function openOperation(holding: BatmanHoldingWorkspaceRecord): void {
@@ -141,6 +156,7 @@ function openDeleteOperation(holding: BatmanHoldingWorkspaceRecord, operation: H
 
 function closeDialog(): void {
   dialog.value = null;
+  isInstrumentPickerOpen.value = false;
   selectedHolding.value = null;
   selectedOperation.value = null;
   selectedInstrument.value = null;
@@ -262,16 +278,18 @@ onMounted(load);
           </template>
           <tr v-if="activeRecords.length === 0"><td class="batman-empty-cell" colspan="13">-</td></tr>
         </tbody>
-        <tfoot v-if="workspace"><tr><td colspan="8"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(activeRecords.reduce((sum, item) => sum + (item.dailyDifference ?? 0), 0)) }}</td><td></td></tr></tfoot>
+        <tfoot v-if="workspace"><tr><td colspan="8"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(dailyDifferenceTotal)">{{ signed(dailyDifferenceTotal) }}</td><td></td></tr></tfoot>
       </table>
     </div>
     <div class="batman-section-divider closed"><span>清仓记录</span><button class="batman-text-button" type="button" @click="showClosed = !showClosed">{{ showClosed ? '隐藏' : '显示' }}</button></div>
     <div v-if="showClosed" class="batman-table-frame"><table class="batman-table closed-holdings-table"><colgroup><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>名称/代码</th><th>持仓</th><th>成本</th><th>盈亏</th><th class="batman-action-header">操作</th></tr></thead><tbody v-overflow-title><tr v-for="(holding, index) in closedRecords" :key="holding.id"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }}</td><td>{{ money(holding.costCashFlow) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }}</td><td class="batman-actions"><div class="batman-action-controls"><button class="batman-text-button" type="button" @click="viewHoldingDetail(holding, closedRecords)">详情</button></div></td></tr><tr v-if="closedRecords.length === 0"><td class="batman-empty-cell" colspan="6">-</td></tr></tbody></table></div>
-    <div v-if="dialog" class="batman-dialog-backdrop" @click.self="closeDialog"><section class="batman-dialog" aria-modal="true" role="dialog"><header><strong>{{ dialog === 'create' ? '增加持股' : dialog === 'operation' ? `增加操作 · ${selectedHolding?.instrument.name ?? ''}` : dialog === 'capital' ? '资金调整' : '确认删除' }}</strong><button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button></header><form v-if="dialog === 'create'" class="batman-form" @submit.prevent="createHolding"><InstrumentSearch @select="selectedInstrument = $event" /><p v-if="selectedInstrument" class="batman-selected">{{ selectedInstrument.name }} / {{ selectedInstrument.code }}</p><label>数量<input v-model="quantity" min="0.0001" required step="any" type="number" /></label><label>价格<input v-model="price" min="0" required step="0.001" type="number" /></label><label>费用<input v-model="fee" min="0" required step="0.001" type="number" /></label><label>操作时间<input v-model="occurredAt" required type="datetime-local" /></label><label>备注<input v-model.trim="note" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="selectedInstrument === null || isSaving" type="submit" @click.prevent="createHolding">确定</button></footer></form><form v-else-if="dialog === 'operation'" class="batman-form" @submit.prevent="createOperation"><label>操作<select v-model="action"><option value="buy">买入</option><option value="sell">卖出</option><option value="interest">计息</option></select></label><label v-if="action !== 'interest'">数量<input v-model="quantity" min="0.0001" required step="any" type="number" /></label><label>{{ action === 'interest' ? '计息金额' : '价格' }}<input v-model="price" min="0" required step="0.001" type="number" /></label><label>费用<input v-model="fee" min="0" required step="0.001" type="number" /></label><label>操作时间<input v-model="occurredAt" required type="datetime-local" /></label><label>备注<input v-model.trim="note" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="createOperation">确定</button></footer></form><form v-else-if="dialog === 'capital'" class="batman-form" @submit.prevent="adjustCapital"><label>资金调整<input v-model="capitalAmount" placeholder="增加为正，提取为负" required step="0.01" type="number" /></label><label>备注<input v-model.trim="capitalNote" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="adjustCapital">确定</button></footer></form><div v-else class="batman-confirm"><p>{{ dialog === 'delete-holding' ? `删除“${selectedHolding?.instrument.name ?? ''}”及其全部操作记录？` : `删除${selectedOperation ? actionLabel(selectedOperation.action) : ''}操作记录？` }}</p><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="deleteCurrent">删除</button></footer></div></section></div>
+    <InstrumentPickerDialog :open="isInstrumentPickerOpen" title="新增持股记录" @close="closeInstrumentPicker" @confirm="selectHoldingInstrument" />
+    <div v-if="dialog" class="batman-dialog-backdrop" @click.self="closeDialog"><section class="batman-dialog" aria-modal="true" role="dialog"><header><strong>{{ dialog === 'create' ? '增加持股' : dialog === 'operation' ? `增加操作 · ${selectedHolding?.instrument.name ?? ''}` : dialog === 'capital' ? '资金调整' : '确认删除' }}</strong><button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button></header><form v-if="dialog === 'create'" class="batman-form" @submit.prevent="createHolding"><p v-if="selectedInstrument" class="batman-selected">{{ selectedInstrument.name }} / {{ selectedInstrument.code }}</p><label>数量<input v-model="quantity" min="0.0001" required step="any" type="number" /></label><label>价格<input v-model="price" min="0" required step="0.001" type="number" /></label><label>费用<input v-model="fee" min="0" required step="0.001" type="number" /></label><label>操作时间<input v-model="occurredAt" required type="datetime-local" /></label><label>备注<input v-model.trim="note" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="selectedInstrument === null || isSaving" type="submit" @click.prevent="createHolding">确定</button></footer></form><form v-else-if="dialog === 'operation'" class="batman-form" @submit.prevent="createOperation"><label>操作<select v-model="action"><option value="buy">买入</option><option value="sell">卖出</option><option value="interest">计息</option></select></label><label v-if="action !== 'interest'">数量<input v-model="quantity" min="0.0001" required step="any" type="number" /></label><label>{{ action === 'interest' ? '计息金额' : '价格' }}<input v-model="price" min="0" required step="0.001" type="number" /></label><label>费用<input v-model="fee" min="0" required step="0.001" type="number" /></label><label>操作时间<input v-model="occurredAt" required type="datetime-local" /></label><label>备注<input v-model.trim="note" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="createOperation">确定</button></footer></form><form v-else-if="dialog === 'capital'" class="batman-form" @submit.prevent="adjustCapital"><label>资金调整<input v-model="capitalAmount" placeholder="增加为正，提取为负" required step="0.01" type="number" /></label><label>备注<input v-model.trim="capitalNote" maxlength="500" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="adjustCapital">确定</button></footer></form><div v-else class="batman-confirm"><p>{{ dialog === 'delete-holding' ? `删除“${selectedHolding?.instrument.name ?? ''}”及其全部操作记录？` : `删除${selectedOperation ? actionLabel(selectedOperation.action) : ''}操作记录？` }}</p><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="deleteCurrent">删除</button></footer></div></section></div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
   </section>
 </template>
 
 <style scoped>
 .holding-profit-breakdown { color: #8fa1b4 !important; font-weight: 600; margin-left: 5px; }
+.batman-holdings :deep(.batman-table th) { font-size: 13px; }
 </style>

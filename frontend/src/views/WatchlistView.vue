@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { Plus, RefreshCw, Target, Trash2, Wifi, WifiOff, X } from "lucide-vue-next";
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import InstrumentSearch from "@/components/InstrumentSearch.vue";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
+import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
 import { api, ApiError, type Instrument, type WatchlistWorkspace, type WatchlistWorkspaceEntry } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
@@ -14,13 +14,11 @@ type SelectedInstrument = Pick<Instrument, "id" | "code" | "exchange" | "name" |
 const { token } = useSession();
 const items = ref<WatchlistWorkspaceEntry[]>([]);
 const dialog = ref<Dialog | null>(null);
-const selectedInstrument = ref<SelectedInstrument | null>(null);
 const selectedEntry = ref<WatchlistWorkspaceEntry | null>(null);
 const selectedKlineInstrument = ref<SelectedInstrument | null>(null);
 const useHistoricalData = ref(true);
 const realtimeEnabled = ref(DEFAULT_REALTIME_ENABLED);
 const updatedAt = ref<string | null>(null);
-const note = ref("");
 const targetPrice = ref("");
 const errorMessage = ref("");
 const isLoading = ref(false);
@@ -73,9 +71,6 @@ function applyWorkspace(workspace: WatchlistWorkspace, timestamp = new Date().to
 }
 
 function openCreate(): void {
-  selectedInstrument.value = null;
-  note.value = "";
-  targetPrice.value = "";
   errorMessage.value = "";
   dialog.value = "create";
 }
@@ -95,16 +90,15 @@ function openDelete(entry: WatchlistWorkspaceEntry): void {
 
 function closeDialog(): void {
   dialog.value = null;
-  selectedInstrument.value = null;
   selectedEntry.value = null;
   errorMessage.value = "";
 }
 
-async function create(): Promise<void> {
-  if (token.value === null || selectedInstrument.value === null || isSaving.value) return;
+async function create(instrument: SelectedInstrument): Promise<void> {
+  if (token.value === null || isSaving.value) return;
   isSaving.value = true;
   try {
-    await api.createWatchlist(token.value, { instrumentId: selectedInstrument.value.id, note: note.value, targetPrice: targetPrice.value === "" ? undefined : Number(targetPrice.value) });
+    await api.createWatchlist(token.value, { instrumentId: instrument.id, note: "" });
     closeDialog();
     await load();
   } catch (error) {
@@ -213,7 +207,8 @@ onBeforeUnmount(disconnectRealtime);
         </tbody>
       </table>
     </div>
-    <div v-if="dialog" class="batman-dialog-backdrop" @click.self="closeDialog"><section class="batman-dialog" aria-modal="true" role="dialog"><header><strong>{{ dialog === 'create' ? '新增自选' : dialog === 'target' ? '设置目标价格' : '删除自选' }}</strong><button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button></header><form v-if="dialog === 'create'" class="batman-form" @submit.prevent="create"><InstrumentSearch @select="selectedInstrument = $event" /><p v-if="selectedInstrument" class="batman-selected">{{ selectedInstrument.name }} / {{ selectedInstrument.code }}</p><label>备注<input v-model.trim="note" maxlength="500" /></label><label>目标价格<input v-model="targetPrice" min="0.0001" step="0.001" type="number" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="selectedInstrument === null || isSaving" type="submit" @click.prevent="create">确定</button></footer></form><form v-else-if="dialog === 'target'" class="batman-form" @submit.prevent="saveTarget"><label>目标价格<input v-model="targetPrice" min="0.0001" placeholder="留空清除" step="0.001" type="number" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="saveTarget">确定</button></footer></form><div v-else class="batman-confirm"><p>确认删除“{{ selectedEntry?.instrument.name }}”自选记录？</p><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="remove">删除</button></footer></div></section></div>
+    <InstrumentPickerDialog :busy="isSaving" :error-message="dialog === 'create' ? errorMessage : ''" :open="dialog === 'create'" title="新增自选" @close="closeDialog" @confirm="create" />
+    <div v-if="dialog && dialog !== 'create'" class="batman-dialog-backdrop" @click.self="closeDialog"><section class="batman-dialog" aria-modal="true" role="dialog"><header><strong>{{ dialog === 'target' ? '设置目标价格' : '删除自选' }}</strong><button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button></header><form v-if="dialog === 'target'" class="batman-form" @submit.prevent="saveTarget"><label>目标价格<input v-model="targetPrice" min="0.0001" placeholder="留空清除" step="0.001" type="number" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="saveTarget">确定</button></footer></form><div v-else class="batman-confirm"><p>确认删除“{{ selectedEntry?.instrument.name }}”自选记录？</p><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="remove">删除</button></footer></div></section></div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
   </section>
 </template>

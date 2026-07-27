@@ -1,6 +1,6 @@
 export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
-export type MarketSource = "mock" | "tencent" | "eastmoney";
+export type MarketSource = "mock" | "tencent" | "eastmoney" | "akshare";
 export type Timeframe = "day" | "week" | "month";
 
 export interface Instrument {
@@ -25,6 +25,17 @@ export interface PriceBar {
 export interface MarketDataProvider {
   readonly source: MarketSource;
   history(instrument: Instrument, timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]>;
+}
+
+export interface InstrumentCatalogEntry {
+  code: string;
+  exchange: Exchange;
+  name: string;
+  assetType: AssetType;
+}
+
+export interface InstrumentCatalogProvider {
+  searchInstruments(assetType: AssetType, query: string, limit?: number): Promise<InstrumentCatalogEntry[]>;
 }
 
 export interface DataSourceConfig {

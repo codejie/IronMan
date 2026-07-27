@@ -16,6 +16,8 @@ interface TableSpec {
 
 const exportTables: TableSpec[] = [
   { name: "user_settings", columns: ["id", "setting_key", "value_json", "created_at", "updated_at"] },
+  { name: "assistant_conversations", columns: ["id", "title", "created_at", "updated_at"] },
+  { name: "assistant_messages", columns: ["id", "conversation_id", "role", "content", "result_json", "created_at"] },
   { name: "notes", columns: ["id", "instrument_id", "title", "content", "tags_json", "created_at", "updated_at"] },
   { name: "watchlist_entries", columns: ["id", "instrument_id", "note", "target_price", "sort_order", "created_at", "updated_at"] },
   { name: "cash_accounts", columns: ["available", "updated_at"], userOwned: false },
@@ -31,7 +33,7 @@ const exportTables: TableSpec[] = [
   { name: "alert_events", columns: ["id", "alert_id", "price", "message", "created_at"] }
 ];
 
-const deletionOrder = ["task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alerts", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "user_settings"];
+const deletionOrder = ["task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alerts", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
 
 export class BackupService {
   constructor(private readonly database: IronManDatabase) {}

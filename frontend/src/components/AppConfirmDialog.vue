@@ -33,8 +33,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
         </header>
         <p id="batman-confirm-message">{{ confirmationState.message }}</p>
         <footer>
-          <button class="batman-button" type="button" @click="settleConfirmation(false)">{{ confirmationState.cancelLabel }}</button>
-          <button ref="confirmButton" :class="['batman-button', confirmationState.tone === 'danger' ? 'danger' : 'primary']" type="button" @click="settleConfirmation(true)">{{ confirmationState.confirmLabel }}</button>
+          <button class="batman-button" type="button" @click="settleConfirmation('cancel')">{{ confirmationState.cancelLabel }}</button>
+          <button v-if="confirmationState.discardLabel" data-confirm-discard class="batman-button" type="button" @click="settleConfirmation('discard')">{{ confirmationState.discardLabel }}</button>
+          <button ref="confirmButton" :class="['batman-button', confirmationState.tone === 'danger' ? 'danger' : 'primary']" type="button" @click="settleConfirmation('confirm')">{{ confirmationState.confirmLabel }}</button>
         </footer>
       </section>
     </div>

@@ -1,10 +1,21 @@
 import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { EastmoneyMarketProvider } from "../market/eastmoney-provider";
+import { AkShareMarketProvider } from "../market/akshare-provider";
 import { listedFundExchange } from "../market/listed-fund";
 import { MockMarketProvider } from "../market/mock-provider";
 import { TencentMarketProvider } from "../market/tencent-provider";
-import type { AssetType, DataSourceConfig, Exchange, Instrument, MarketDataProvider, MarketSource, PriceBar, Timeframe } from "../market/types";
+import type {
+  AssetType,
+  DataSourceConfig,
+  Exchange,
+  Instrument,
+  InstrumentCatalogProvider,
+  MarketDataProvider,
+  MarketSource,
+  PriceBar,
+  Timeframe
+} from "../market/types";
 import { SettingsService } from "./settings-service";
 
 interface InstrumentRow {
@@ -27,17 +38,19 @@ interface BarRow {
 }
 
 const defaultConfig: DataSourceConfig = { primary: "tencent", fallback: "mock" };
-const sourceNames = new Set<MarketSource>(["mock", "tencent", "eastmoney"]);
+const sourceNames = new Set<MarketSource>(["mock", "tencent", "eastmoney", "akshare"]);
 
 export class MarketService {
   private readonly providers: Map<MarketSource, MarketDataProvider>;
+  private readonly catalogProvider: (MarketDataProvider & InstrumentCatalogProvider) | undefined;
 
   constructor(
     private readonly database: IronManDatabase,
     private readonly settings: SettingsService,
-    providers: MarketDataProvider[] = [new TencentMarketProvider(), new EastmoneyMarketProvider(), new MockMarketProvider()]
+    providers: MarketDataProvider[] = [new AkShareMarketProvider(), new TencentMarketProvider(), new EastmoneyMarketProvider(), new MockMarketProvider()]
   ) {
     this.providers = new Map(providers.map((provider) => [provider.source, provider]));
+    this.catalogProvider = providers.find(isInstrumentCatalogProvider);
   }
 
   upsertInstrument(input: { code: string; exchange: Exchange; name: string; assetType: AssetType }): Instrument {
@@ -80,14 +93,35 @@ export class MarketService {
     return this.toInstrument(created);
   }
 
-  search(query: string): Instrument[] {
+  async search(query: string, assetType?: AssetType): Promise<Instrument[]> {
+    const local = this.searchLocal(query, assetType);
+    if (local.length > 0 || assetType === undefined || this.catalogProvider === undefined) return local;
+
+    try {
+      const catalogItems = await this.catalogProvider.searchInstruments(assetType, query);
+      return catalogItems.map((item) => this.upsertInstrument(item));
+    } catch (error) {
+      if (error instanceof Error) throw error;
+      throw errors.external("标的目录暂不可用，请稍后重试");
+    }
+  }
+
+  private searchLocal(query: string, assetType?: AssetType): Instrument[] {
     const normalized = `%${query.trim()}%`;
-    return this.database
-      .all<InstrumentRow>(
-        "SELECT * FROM instruments WHERE code LIKE $query OR name LIKE $query ORDER BY code ASC LIMIT 50",
-        { query: normalized }
-      )
-      .map((row) => this.toInstrument(row));
+    const rows = assetType === undefined
+      ? this.database.all<InstrumentRow>(
+          `SELECT * FROM instruments
+            WHERE code LIKE $query OR name LIKE $query
+            ORDER BY code ASC LIMIT 50`,
+          { query: normalized }
+        )
+      : this.database.all<InstrumentRow>(
+          `SELECT * FROM instruments
+            WHERE (code LIKE $query OR name LIKE $query) AND asset_type = $assetType
+            ORDER BY code ASC LIMIT 50`,
+          { query: normalized, assetType }
+        );
+    return rows.map((row) => this.toInstrument(row));
   }
 
   getInstrument(id: string): Instrument {
@@ -360,4 +394,8 @@ function isDataSourceConfig(value: unknown): value is DataSourceConfig {
   if (typeof value !== "object" || value === null) return false;
   const config = value as Partial<DataSourceConfig>;
   return sourceNames.has(config.primary as MarketSource) && sourceNames.has(config.fallback as MarketSource);
+}
+
+function isInstrumentCatalogProvider(provider: MarketDataProvider): provider is MarketDataProvider & InstrumentCatalogProvider {
+  return typeof (provider as Partial<InstrumentCatalogProvider>).searchInstruments === "function";
 }

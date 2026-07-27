@@ -28,8 +28,9 @@ const props = withDefaults(
     overlays?: KlineOverlay[];
     annotations?: KlineAnnotation[];
     title?: string;
+    height?: string;
   }>(),
-  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "" }
+  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px" }
 );
 
 const maColors = ["#6581da", "#92c978", "#ffbd4b", "#c985d7", "#56c4c9", "#ed7777"];
@@ -314,7 +315,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="kline-chart-shell">
+  <div class="kline-chart-shell" :style="{ height: props.height }">
     <div ref="element" class="kline-chart" />
     <div v-if="annotationLabels.length > 0" class="kline-annotation-label-layer" aria-hidden="true">
       <svg v-if="activeAnnotationConnectors.length > 0" class="kline-annotation-connector-layer" preserveAspectRatio="none">

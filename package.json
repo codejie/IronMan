@@ -7,7 +7,10 @@
   ],
   "scripts": {
     "build": "bun run --cwd backend build && bun run --cwd frontend build",
-    "dev:backend": "bun run --cwd backend dev",
+    "akshare:setup": "bun ./scripts/setup-akshare-provider.ts",
+    "dev:akshare": "bun ./scripts/run-akshare-provider.ts",
+    "dev:backend": "bun ./scripts/run-backend-with-akshare.ts",
+    "start:backend": "bun ./scripts/run-backend-with-akshare.ts start",
     "dev:frontend": "bun run --cwd frontend dev",
     "lint": "bun run --cwd backend lint && bun run --cwd frontend lint",
     "test": "bun run --cwd backend test && bun run --cwd frontend test"

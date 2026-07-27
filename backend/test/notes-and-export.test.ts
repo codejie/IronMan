@@ -28,13 +28,49 @@ describe("notes and user data portability", () => {
     expect(((await bobNotes.json()) as ApiResponse<{ items: unknown[] }>).result.items).toHaveLength(0);
 
     await post("/api/settings/upsert", { key: "workspace.density", value: "compact" }, alice.token);
+    const conversation = await post("/api/assistant/conversations/create", {}, alice.token);
+    const conversationBody = (await conversation.json()) as ApiResponse<{ id: string }>;
+    expect((await post("/api/assistant/chat", { message: "请总结我的资产", conversationId: conversationBody.result.id }, alice.token)).status).toBe(200);
     const exported = await post("/api/settings/data/export", {}, alice.token);
-    const body = (await exported.json()) as ApiResponse<{ version: number; data: { notes: Array<{ title: string }>; settings: Array<{ key: string }> } }>;
+    const body = (await exported.json()) as ApiResponse<{
+      version: number;
+      data: {
+        notes: Array<{ title: string }>;
+        settings: Array<{ key: string }>;
+        assistant_conversations: Array<{ id: string }>;
+        assistant_messages: Array<{ conversation_id: string; role: string }>;
+      };
+    }>;
     expect(exported.status).toBe(200);
     expect(body.result.version).toBe(1);
     expect(body.result.data.notes[0]?.title).toBe("复盘");
     expect(body.result.data.settings[0]?.key).toBe("workspace.density");
+    expect(body.result.data.assistant_conversations[0]?.id).toBe(conversationBody.result.id);
+    expect(body.result.data.assistant_messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(JSON.stringify(body)).not.toContain("password_hash");
     expect(JSON.stringify(body)).not.toContain("bob@example.com");
+  });
+
+  test("prevents one user from updating or deleting another user's note", async () => {
+    const alice = await register("alice@example.com");
+    const bob = await register("bob@example.com");
+    const created = await post(
+      "/api/notes/create",
+      { title: "仅 Alice 可见", content: "private", tags: [], instrumentId: null },
+      alice.token
+    );
+    const body = (await created.json()) as ApiResponse<{ id: string }>;
+
+    const update = await post(
+      "/api/notes/update",
+      { id: body.result.id, title: "篡改", content: "changed", tags: [], instrumentId: null },
+      bob.token
+    );
+    const deletion = await post("/api/notes/delete", { id: body.result.id }, bob.token);
+    const aliceNotes = await post("/api/notes/list", {}, alice.token);
+
+    expect(update.status).toBe(404);
+    expect(deletion.status).toBe(404);
+    expect(((await aliceNotes.json()) as ApiResponse<{ items: Array<{ title: string }> }>).result.items[0]?.title).toBe("仅 Alice 可见");
   });
 });

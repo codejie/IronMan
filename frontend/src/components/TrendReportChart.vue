@@ -82,6 +82,7 @@ watch(
     <KLineChart
       :annotations="presentation.annotations"
       :bars="report.result.bars"
+      height="472px"
       :ma-periods="mode === 'kline' ? selectedMaPeriods : []"
       :overlays="[...presentation.mainOverlays, ...presentation.subOverlays]"
       :subchart="mode === 'kline' || !hasSubIndicators ? 'volume' : 'macd'"
@@ -107,6 +108,6 @@ watch(
 .trend-chart-mode-buttons button, .trend-ma-picker button, .trend-indicator-picker button { background: #162236; border: 1px solid #344963; color: #b9c8d9; cursor: pointer; font-size: 11px; min-height: 26px; padding: 0 8px; }
 .trend-chart-mode-buttons button + button, .trend-ma-picker button + button, .trend-indicator-picker button + button { margin-left: -1px; }.trend-chart-mode-buttons button:first-child, .trend-ma-picker button:first-child, .trend-indicator-picker button:first-child { border-radius: 4px 0 0 4px; }.trend-chart-mode-buttons button:last-child, .trend-ma-picker button:last-child, .trend-indicator-picker button:last-child { border-radius: 0 4px 4px 0; }
 .trend-chart-mode-buttons button.active, .trend-ma-picker button.active, .trend-indicator-picker button.active { background: #267b83; border-color: #58cfc6; color: #efffff; position: relative; z-index: 1; }
-.trend-report-chart :deep(.kline-chart-shell) { min-width: 0; width: 100%; }.trend-report-chart :deep(.kline-chart) { height: 472px; width: 100%; }.trend-chart-legend { color: #94a9bd; display: flex; flex-wrap: wrap; font-size: 10px; gap: 11px; margin-top: 6px; }.trend-chart-legend i { border-radius: 50%; display: inline-block; height: 7px; margin-right: 4px; width: 7px; }.trend-chart-legend .bullish { background: #fa7575; }.trend-chart-legend .bearish { background: #68d991; }
+.trend-report-chart :deep(.kline-chart-shell) { min-width: 0; width: 100%; }.trend-report-chart :deep(.kline-chart) { width: 100%; }.trend-chart-legend { color: #94a9bd; display: flex; flex-wrap: wrap; font-size: 10px; gap: 11px; margin-top: 6px; }.trend-chart-legend i { border-radius: 50%; display: inline-block; height: 7px; margin-right: 4px; width: 7px; }.trend-chart-legend .bullish { background: #fa7575; }.trend-chart-legend .bearish { background: #68d991; }
 @media (max-width: 700px) { .trend-report-chart-header { align-items: flex-start; display: flex; flex-direction: column; }.trend-chart-instrument { max-width: 100%; }.trend-chart-middle { justify-content: flex-start; width: 100%; }.trend-indicator-controls { justify-content: flex-start; }.trend-indicator-summary { max-width: 100%; text-align: left; }.trend-chart-mode-buttons { margin-left: 0; } }
 </style>

@@ -22,7 +22,7 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly code: number,
-    public readonly status: number
+    public readonly status: number,
   ) {
     super(message);
     this.name = "ApiError";
@@ -48,7 +48,7 @@ export interface SystemStatus {
 
 export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
-export type MarketSource = "mock" | "tencent" | "eastmoney";
+export type MarketSource = "mock" | "tencent" | "eastmoney" | "akshare";
 
 export interface Instrument {
   id: string;
@@ -65,7 +65,10 @@ export interface WatchlistEntry {
   note: string;
   targetPrice: number | null;
   sortOrder: number;
-  instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">;
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  >;
 }
 
 export interface WatchlistWorkspaceEntry extends WatchlistEntry {
@@ -94,7 +97,10 @@ export interface HoldingSummary {
   quantity: number;
   cost: number;
   averageCost: number;
-  instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">;
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  >;
   createdAt: string;
   updatedAt: string;
 }
@@ -206,6 +212,13 @@ export interface AiModelConfig {
 
 export interface AiModelsConfig {
   models: AiModelConfig[];
+  systemPrompt: string;
+  defaultSystemPrompt: string;
+}
+
+export interface AiModelsConfigInput {
+  models: AiModelConfig[];
+  systemPrompt?: string;
 }
 
 export type IndicatorType = "MA" | "MACD" | "RSI" | "BOLL";
@@ -213,6 +226,85 @@ export type IndicatorType = "MA" | "MACD" | "RSI" | "BOLL";
 export interface IndicatorResult {
   type: IndicatorType;
   lines: Record<string, Array<number | null>>;
+}
+
+export type AssistantToolName =
+  | "resolve_instrument"
+  | "get_account_overview"
+  | "get_watchlist"
+  | "get_market_snapshot"
+  | "get_market_history"
+  | "get_technical_indicators"
+  | "get_technical_ranking"
+  | "get_market_information_links"
+  | "get_market_cloud"
+  | "calculate_trend"
+  | "build_chart";
+
+export interface AssistantToolEvent {
+  id: string;
+  name: AssistantToolName;
+  status: "completed" | "failed";
+  summary: string;
+}
+
+export interface AssistantChart {
+  id: string;
+  title: string;
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  >;
+  source: MarketSource;
+  bars: PriceBar[];
+  indicators: IndicatorResult[];
+  trend?: AssistantTrendChart;
+}
+
+export interface AssistantTrendChart {
+  indicators: TrendIndicatorRunResult[];
+  turningPoints: TrendTurningPoint[];
+  assessment: {
+    direction: TrendDirection;
+    turningPoints: TrendTurningPoint[];
+    risk: TrendRiskAssessment;
+  };
+}
+
+export interface AssistantReplyMetadata {
+  provider: AiProvider;
+  modelId: string;
+  modelName: string;
+  tools: AssistantToolEvent[];
+  charts: AssistantChart[];
+  fallbackReason?: string;
+}
+
+export interface AssistantConversationMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  result?: AssistantReplyMetadata;
+  createdAt: string;
+}
+
+export interface AssistantConversationSummary {
+  id: string;
+  title: string;
+  lastMessagePreview: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssistantConversationDetail extends AssistantConversationSummary {
+  messages: AssistantConversationMessage[];
+}
+
+export interface AssistantChatResult extends AssistantReplyMetadata {
+  content: string;
+  conversation: AssistantConversationSummary;
+  userMessage: AssistantConversationMessage;
+  assistantMessage: AssistantConversationMessage;
 }
 
 export interface Strategy {
@@ -293,16 +385,83 @@ export interface MarketSignal {
   source: MarketSource;
 }
 
-export type TrendTargetScope = "holdings" | "watchlist" | "custom" | "all" | "holdings_watchlist";
+export type ThirdPartyTechnicalKind =
+  | "new_high"
+  | "uptrend"
+  | "high_volume"
+  | "rise_volume_price"
+  | "limit_up_pool";
+export type ThirdPartyTableValue = string | number | null;
+
+export interface ThirdPartyTechnicalRow {
+  values: Record<string, ThirdPartyTableValue>;
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  > | null;
+}
+
+export interface ThirdPartyTechnicalTable {
+  columns: string[];
+  rows: ThirdPartyTechnicalRow[];
+  source: "akshare" | "tonghuashun" | "eastmoney" | "local";
+  updatedAt: string;
+  notice?: string;
+}
+
+export interface ThirdPartyInfoLink {
+  name: string;
+  url: string;
+  needCode: boolean;
+  openInNewWindow: boolean;
+}
+
+export interface ThirdPartyInfoGroup {
+  label: string;
+  links: ThirdPartyInfoLink[];
+}
+
+export interface ThirdPartyMarketCloud {
+  title: string;
+  url: string;
+  openUrl: string;
+}
+
+export type TrendTargetScope =
+  "holdings" | "watchlist" | "custom" | "all" | "holdings_watchlist";
 export type TrendRangePreset = "3m" | "6m" | "1y" | "2y" | "custom";
 export type TrendReportWindow = "1d" | "3d" | "7d" | "30d" | "all";
 export type TrendDirection = "bullish" | "bearish" | "neutral";
-export type TrendRunStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type TrendRunStatus =
+  "queued" | "running" | "completed" | "failed" | "cancelled";
 
-export interface TrendDateRange { preset: TrendRangePreset; startDate?: string; endDate?: string; }
-export interface TrendIndicatorParameter { key: string; label: string; defaultValue: number; min: number; max: number; step?: number; }
-export interface TrendIndicatorDefinition { id: string; label: string; category: string; parameters: TrendIndicatorParameter[]; lines: string[]; chart: "main" | "sub" | "hidden"; }
-export interface TrendIndicatorSelection { indicatorId: string; parameters?: Record<string, number>; enabled?: boolean; displayOrder?: number; }
+export interface TrendDateRange {
+  preset: TrendRangePreset;
+  startDate?: string;
+  endDate?: string;
+}
+export interface TrendIndicatorParameter {
+  key: string;
+  label: string;
+  defaultValue: number;
+  min: number;
+  max: number;
+  step?: number;
+}
+export interface TrendIndicatorDefinition {
+  id: string;
+  label: string;
+  category: string;
+  parameters: TrendIndicatorParameter[];
+  lines: string[];
+  chart: "main" | "sub" | "hidden";
+}
+export interface TrendIndicatorSelection {
+  indicatorId: string;
+  parameters?: Record<string, number>;
+  enabled?: boolean;
+  displayOrder?: number;
+}
 export interface TrendStrategy {
   id: string;
   name: string;
@@ -330,18 +489,57 @@ export interface TrendRun {
   completedAt: string | null;
   overallDirection: TrendDirection | null;
 }
-export interface TrendStrategyTarget { instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">; currentPrice: number | null; }
-export interface TrendStrategyTargets { targetScope: TrendTargetScope; items: TrendStrategyTarget[]; }
-export interface TrendSignal { date: string; direction: TrendDirection; strength: number; reason: string; }
-export interface TrendTurningPoint { date: string; direction: Exclude<TrendDirection, "neutral">; level: "info" | "warning" | "risk"; title: string; reason: string; price: number | null; indicatorId: string; }
-export interface TrendRiskReminder { direction: "above" | "below"; threshold: number; cooldownMinutes: number; }
-export interface TrendRiskAssessment { level: "high" | "medium" | "low"; evidence: string[]; suggestedAction: string; reminder: TrendRiskReminder | null; }
-export interface TrendIndicatorRunResult { indicatorId: string; lines: Record<string, Array<number | null>>; signals: TrendSignal[]; turningPoints: TrendTurningPoint[]; }
+export interface TrendStrategyTarget {
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  >;
+  currentPrice: number | null;
+}
+export interface TrendStrategyTargets {
+  targetScope: TrendTargetScope;
+  items: TrendStrategyTarget[];
+}
+export interface TrendSignal {
+  date: string;
+  direction: TrendDirection;
+  strength: number;
+  reason: string;
+}
+export interface TrendTurningPoint {
+  date: string;
+  direction: Exclude<TrendDirection, "neutral">;
+  level: "info" | "warning" | "risk";
+  title: string;
+  reason: string;
+  price: number | null;
+  indicatorId: string;
+}
+export interface TrendRiskReminder {
+  direction: "above" | "below";
+  threshold: number;
+  cooldownMinutes: number;
+}
+export interface TrendRiskAssessment {
+  level: "high" | "medium" | "low";
+  evidence: string[];
+  suggestedAction: string;
+  reminder: TrendRiskReminder | null;
+}
+export interface TrendIndicatorRunResult {
+  indicatorId: string;
+  lines: Record<string, Array<number | null>>;
+  signals: TrendSignal[];
+  turningPoints: TrendTurningPoint[];
+}
 export interface TrendRunReport {
   id: string;
   instrumentId: string;
   result: {
-    instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">;
+    instrument: Pick<
+      Instrument,
+      "id" | "code" | "exchange" | "name" | "assetType"
+    >;
     source: MarketSource | null;
     bars: PriceBar[];
     indicators: TrendIndicatorRunResult[];
@@ -352,124 +550,475 @@ export interface TrendRunReport {
   };
   createdAt: string;
 }
-export interface TrendRunLog { id: string; level: "info" | "error"; message: string; createdAt: string; }
+export interface TrendRunLog {
+  id: string;
+  level: "info" | "error";
+  message: string;
+  createdAt: string;
+}
 export interface TrendRunSummary {
   total: number;
   direction: Record<TrendDirection, number>;
   risk: Record<TrendRiskAssessment["level"], number>;
   turningPointCount: number;
-  riskItems: Array<{ reportId: string; instrument: TrendRunReport["result"]["instrument"]; risk: TrendRiskAssessment }>;
+  riskItems: Array<{
+    reportId: string;
+    instrument: TrendRunReport["result"]["instrument"];
+    risk: TrendRiskAssessment;
+  }>;
 }
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
-async function post<T>(path: string, body: unknown, token?: string): Promise<T> {
+async function post<T>(
+  path: string,
+  body: unknown,
+  token?: string,
+): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      ...(token === undefined ? {} : { authorization: `Bearer ${token}` })
+      ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   const payload = (await response.json()) as ApiResponse<T>;
   if (!response.ok || payload.code !== 0) {
-    throw new ApiError(payload.message ?? "请求失败", payload.code, response.status);
+    throw new ApiError(
+      payload.message ?? "请求失败",
+      payload.code,
+      response.status,
+    );
   }
   return payload.result;
 }
 
 export const api = {
-  login: (email: string, password: string) => post<Session>("/auth/login", { email, password }),
+  login: (email: string, password: string) =>
+    post<Session>("/auth/login", { email, password }),
   register: (email: string, password: string, displayName: string) =>
     post<Session>("/auth/register", { email, password, displayName }),
-  logout: (token: string) => post<{ loggedOut: true }>("/auth/logout", {}, token),
+  logout: (token: string) =>
+    post<{ loggedOut: true }>("/auth/logout", {}, token),
   me: (token: string) => post<User>("/account/me", {}, token),
-  updateProfile: (token: string, displayName: string) => post<User>("/account/profile/update", { displayName }, token),
-  changePassword: (token: string, currentPassword: string, newPassword: string) =>
-    post<{ changed: true }>("/account/password/change", { currentPassword, newPassword }, token),
-  listUsers: (token: string) => post<{ items: User[] }>("/admin/users/list", {}, token),
+  updateProfile: (token: string, displayName: string) =>
+    post<User>("/account/profile/update", { displayName }, token),
+  changePassword: (
+    token: string,
+    currentPassword: string,
+    newPassword: string,
+  ) =>
+    post<{ changed: true }>(
+      "/account/password/change",
+      { currentPassword, newPassword },
+      token,
+    ),
+  listUsers: (token: string) =>
+    post<{ items: User[] }>("/admin/users/list", {}, token),
   updateUserStatus: (token: string, userId: string, status: User["status"]) =>
     post<{ updated: true }>("/admin/users/status", { userId, status }, token),
-  listAuditLogs: (token: string, limit = 50) => post<{ items: AuditLog[] }>("/admin/audit-logs/list", { limit }, token),
-  systemStatus: (token: string) => post<SystemStatus>("/admin/system/status", {}, token),
-  upsertInstrument: (token: string, input: { code: string; exchange: Exchange; name: string; assetType: AssetType }) =>
-    post<Instrument>("/market/instruments/upsert", input, token),
-  searchInstruments: (token: string, query: string) => post<{ items: Instrument[] }>("/market/instruments/search", { query }, token),
-  getDataSourceConfig: (token: string) => post<DataSourceConfig>("/settings/data-sources/get", {}, token),
-  updateDataSourceConfig: (token: string, config: DataSourceConfig) => post<DataSourceConfig>("/settings/data-sources/update", config, token),
-  getTradingCalendar: (token: string, year: number) => post<TradingCalendar>("/settings/trading-calendar/get", { year }, token),
-  updateTradingCalendar: (token: string, input: { year: number; tradeDays: string[] }) => post<TradingCalendar>("/settings/trading-calendar/update", input, token),
-  refreshReferencedMarketData: (token: string) => post<{ requested: number; refreshed: number; failed: number }>("/settings/market/refresh", {}, token),
-  history: (token: string, instrumentId: string, refresh = false, limit = 180) =>
-    post<{ source: MarketSource; bars: PriceBar[] }>("/market/history", { instrumentId, timeframe: "day", refresh, limit }, token),
-  calculateIndicators: (token: string, instrumentId: string, indicators: IndicatorType[], refresh = false, limit = 180) =>
-    post<{ source: MarketSource; bars: PriceBar[]; results: IndicatorResult[] }>("/analysis/indicators/calculate", { instrumentId, indicators, refresh, limit }, token),
-  listWatchlist: (token: string) => post<{ items: WatchlistEntry[] }>("/assets/watchlist/list", {}, token),
-  createWatchlist: (token: string, input: { instrumentId: string; note: string; targetPrice?: number }) =>
-    post<WatchlistEntry>("/assets/watchlist/create", input, token),
-  watchlistWorkspace: (token: string, refresh = false) => post<WatchlistWorkspace>("/assets/watchlist/workspace", { refresh }, token),
-  updateWatchlist: (token: string, input: { id: string; note?: string; targetPrice?: number | null }) =>
-    post<WatchlistEntry>("/assets/watchlist/update", input, token),
-  deleteWatchlist: (token: string, id: string) => post<{ deleted: true }>("/assets/watchlist/delete", { id }, token),
-  cashSummary: (token: string) => post<{ available: number }>("/assets/cash/summary", {}, token),
-  adjustCash: (token: string, amount: number, note: string) => post<{ available: number }>("/assets/cash/adjust", { amount, note }, token),
-  listHoldings: (token: string) => post<{ items: HoldingSummary[]; cashAvailable: number }>("/assets/holdings/list", {}, token),
-  holdingWorkspace: (token: string, refresh = false) => post<HoldingWorkspace>("/assets/holdings/workspace", { refresh }, token),
-  batmanHoldingWorkspace: (token: string, refresh = false) => post<BatmanHoldingWorkspace>("/assets/holdings/batman-workspace", { refresh }, token),
-  createHolding: (token: string, input: { instrumentId: string; quantity: number; price: number; fee: number; occurredAt: string; note?: string }) =>
-    post<HoldingSummary>("/assets/holdings/create", input, token),
-  holdingDetail: (token: string, id: string) => post<{ holding: HoldingSummary; transactions: HoldingOperation[] }>("/assets/holdings/detail", { id }, token),
-  holdingChart: (token: string, id: string, refresh = false) => post<HoldingChartData>("/assets/holdings/detail/chart", { id, refresh }, token),
-  deleteHolding: (token: string, id: string) => post<{ deleted: true }>("/assets/holdings/delete", { id }, token),
-  addHoldingTransaction: (token: string, input: { holdingId: string; action: HoldingAction; quantity: number; price: number; fee: number; occurredAt: string; note?: string }) =>
-    post<{ id: string }>("/assets/holdings/transaction", input, token),
-  deleteHoldingTransaction: (token: string, holdingId: string, transactionId: string) => post<{ deleted: true }>("/assets/holdings/transaction/delete", { holdingId, transactionId }, token),
-  createStrategy: (token: string, input: { name: string; instrumentIds: string[]; indicators: IndicatorType[] }) => post<Strategy>("/analysis/strategies/create", input, token),
-  listStrategies: (token: string) => post<{ items: Strategy[] }>("/analysis/strategies/list", {}, token),
-  startAnalysis: (token: string, strategyId: string) => post<AnalysisTask>("/analysis/tasks/start", { strategyId }, token),
-  listAnalysisTasks: (token: string) => post<{ items: AnalysisTask[] }>("/analysis/tasks/list", {}, token),
-  retryAnalysis: (token: string, taskId: string) => post<AnalysisTask>("/analysis/tasks/retry", { taskId }, token),
-  listTaskLogs: (token: string, taskId: string) => post<{ items: Array<{ id: string; level: "info" | "error"; message: string; createdAt: string }> }>("/analysis/tasks/logs/list", { taskId }, token),
-  listReports: (token: string, taskId: string) => post<{ items: Array<{ id: string; instrumentId: string; result: { source: string; results: IndicatorResult[] }; createdAt: string }> }>("/analysis/reports/list", { taskId }, token),
-  trendIndicatorCatalog: (token: string) => post<{ items: TrendIndicatorDefinition[] }>("/analysis/trend/indicators/catalog", {}, token),
-  createTrendStrategy: (token: string, input: Omit<TrendStrategy, "id" | "createdAt" | "updatedAt">) => post<TrendStrategy>("/analysis/trend/strategies/create", input, token),
-  updateTrendStrategy: (token: string, input: TrendStrategy) => post<TrendStrategy>("/analysis/trend/strategies/update", input, token),
-  deleteTrendStrategy: (token: string, id: string) => post<{ deleted: true }>("/analysis/trend/strategies/delete", { id }, token),
-  getTrendStrategy: (token: string, id: string) => post<TrendStrategy>("/analysis/trend/strategies/get", { id }, token),
-  listTrendStrategies: (token: string) => post<{ items: TrendStrategy[] }>("/analysis/trend/strategies/list", {}, token),
-  updateTrendStrategyTargets: (token: string, strategyId: string, instrumentIds: string[]) => post<TrendStrategy>("/analysis/trend/strategies/targets/update", { strategyId, instrumentIds }, token),
-  listTrendStrategyTargets: (token: string, strategyId: string) => post<TrendStrategyTargets>("/analysis/trend/strategies/targets/list", { strategyId }, token),
-  estimateTrendRun: (token: string, strategyId: string) => post<{ targetTotal: number; confirmationToken: string | null; expiresAt: string | null }>("/analysis/trend/runs/estimate", { strategyId }, token),
-  startTrendRun: (token: string, strategyId: string, confirmationToken?: string) => post<TrendRun>("/analysis/trend/runs/start", { strategyId, confirmationToken }, token),
-  cancelTrendRun: (token: string, runId: string) => post<TrendRun>("/analysis/trend/runs/cancel", { runId }, token),
-  deleteTrendRun: (token: string, runId: string) => post<{ deleted: true }>("/analysis/trend/runs/delete", { runId }, token),
-  getTrendRun: (token: string, runId: string) => post<TrendRun>("/analysis/trend/runs/get", { runId }, token),
-  listTrendRuns: (token: string, strategyId?: string) => post<{ items: TrendRun[] }>("/analysis/trend/runs/list", { strategyId }, token),
-  listTrendReports: (token: string, runId: string) => post<{ items: TrendRunReport[] }>("/analysis/trend/reports/list", { runId }, token),
-  trendRunSummary: (token: string, runId: string) => post<TrendRunSummary>("/analysis/trend/runs/summary", { runId }, token),
-  interpretTrendReport: (token: string, runId: string, reportId: string) => post<{ provider: AiProvider; content: string }>("/analysis/trend/reports/interpret", { runId, reportId }, token),
-  listTrendLogs: (token: string, runId: string) => post<{ items: TrendRunLog[] }>("/analysis/trend/logs/list", { runId }, token),
-  createSchedule: (token: string, input: { name: string; kind: "analysis" | "alert-scan"; intervalMinutes: number; strategyId: string | null }) => post<ScheduledJob>("/automation/schedules/create", input, token),
-  listSchedules: (token: string) => post<{ items: ScheduledJob[] }>("/automation/schedules/list", {}, token),
-  createAlert: (token: string, input: { instrumentId: string; direction: "above" | "below"; threshold: number; cooldownMinutes: number }) => post<AlertRule>("/automation/alerts/create", input, token),
-  listAlerts: (token: string) => post<{ items: AlertRule[] }>("/automation/alerts/list", {}, token),
-  evaluateAlerts: (token: string) => post<{ triggered: number }>("/automation/alerts/evaluate", {}, token),
-  listAlertEvents: (token: string) => post<{ items: AlertEvent[] }>("/automation/alerts/events/list", {}, token),
-  createNote: (token: string, input: { title: string; content: string; tags: string[]; instrumentId: string | null }) => post<Note>("/notes/create", input, token),
-  listNotes: (token: string) => post<{ items: Note[] }>("/notes/list", {}, token),
-  updateNote: (token: string, input: { id: string; title: string; content: string; tags: string[]; instrumentId: string | null }) => post<Note>("/notes/update", input, token),
-  deleteNote: (token: string, id: string) => post<{ deleted: true }>("/notes/delete", { id }, token),
-  exportData: (token: string) => post<UserExport>("/settings/data/export", {}, token),
-  importData: (token: string, data: unknown) => post<{ imported: true }>("/settings/data/import", { data }, token),
-  getAiConfig: (token: string) => post<AiModelsConfig>("/settings/ai/get", {}, token),
-  updateAiConfig: (token: string, input: AiModelsConfig) => post<AiModelsConfig>("/settings/ai/update", input, token),
-  chat: (token: string, message: string) => post<{ provider: AiProvider; content: string }>("/assistant/chat", { message }, token),
-  clearMarketCache: (token: string) => post<{ deletedBars: number }>("/admin/market/cache/clear", {}, token),
-  marketOverview: (token: string) => post<{ instrumentCount: number; cachedBarCount: number; latestCacheAt: string | null }>("/market/overview", {}, token),
-  marketSignals: (token: string) => post<{ items: MarketSignal[] }>("/market/signals", {}, token),
-  informationLinks: (token: string) => post<{ groups: Array<{ label: string; links: Array<{ name: string; url: string }> }> }>("/market/info-links", {}, token),
-  streamTask: (token: string, taskId: string) => new EventSource(`${apiBaseUrl}/stream/tasks/${encodeURIComponent(taskId)}?token=${encodeURIComponent(token)}`),
-  streamTrendRun: (token: string, runId: string) => new EventSource(`${apiBaseUrl}/analysis/trend/runs/${encodeURIComponent(runId)}/events?token=${encodeURIComponent(token)}`),
-  streamWatchlist: (token: string) => new EventSource(`${apiBaseUrl}/stream/watchlist?token=${encodeURIComponent(token)}`)
+  listAuditLogs: (token: string, limit = 50) =>
+    post<{ items: AuditLog[] }>("/admin/audit-logs/list", { limit }, token),
+  systemStatus: (token: string) =>
+    post<SystemStatus>("/admin/system/status", {}, token),
+  upsertInstrument: (
+    token: string,
+    input: {
+      code: string;
+      exchange: Exchange;
+      name: string;
+      assetType: AssetType;
+    },
+  ) => post<Instrument>("/market/instruments/upsert", input, token),
+  searchInstruments: (token: string, query: string, assetType?: AssetType) =>
+    post<{ items: Instrument[] }>(
+      "/market/instruments/search",
+      { query, ...(assetType === undefined ? {} : { assetType }) },
+      token,
+    ),
+  getDataSourceConfig: (token: string) =>
+    post<DataSourceConfig>("/settings/data-sources/get", {}, token),
+  updateDataSourceConfig: (token: string, config: DataSourceConfig) =>
+    post<DataSourceConfig>("/settings/data-sources/update", config, token),
+  getTradingCalendar: (token: string, year: number) =>
+    post<TradingCalendar>("/settings/trading-calendar/get", { year }, token),
+  updateTradingCalendar: (
+    token: string,
+    input: { year: number; tradeDays: string[] },
+  ) => post<TradingCalendar>("/settings/trading-calendar/update", input, token),
+  refreshReferencedMarketData: (token: string) =>
+    post<{ requested: number; refreshed: number; failed: number }>(
+      "/settings/market/refresh",
+      {},
+      token,
+    ),
+  history: (
+    token: string,
+    instrumentId: string,
+    refresh = false,
+    limit = 180,
+  ) =>
+    post<{ source: MarketSource; bars: PriceBar[] }>(
+      "/market/history",
+      { instrumentId, timeframe: "day", refresh, limit },
+      token,
+    ),
+  calculateIndicators: (
+    token: string,
+    instrumentId: string,
+    indicators: IndicatorType[],
+    refresh = false,
+    limit = 180,
+  ) =>
+    post<{
+      source: MarketSource;
+      bars: PriceBar[];
+      results: IndicatorResult[];
+    }>(
+      "/analysis/indicators/calculate",
+      { instrumentId, indicators, refresh, limit },
+      token,
+    ),
+  listWatchlist: (token: string) =>
+    post<{ items: WatchlistEntry[] }>("/assets/watchlist/list", {}, token),
+  createWatchlist: (
+    token: string,
+    input: { instrumentId: string; note: string; targetPrice?: number },
+  ) => post<WatchlistEntry>("/assets/watchlist/create", input, token),
+  watchlistWorkspace: (token: string, refresh = false) =>
+    post<WatchlistWorkspace>("/assets/watchlist/workspace", { refresh }, token),
+  updateWatchlist: (
+    token: string,
+    input: { id: string; note?: string; targetPrice?: number | null },
+  ) => post<WatchlistEntry>("/assets/watchlist/update", input, token),
+  deleteWatchlist: (token: string, id: string) =>
+    post<{ deleted: true }>("/assets/watchlist/delete", { id }, token),
+  cashSummary: (token: string) =>
+    post<{ available: number }>("/assets/cash/summary", {}, token),
+  adjustCash: (token: string, amount: number, note: string) =>
+    post<{ available: number }>("/assets/cash/adjust", { amount, note }, token),
+  listHoldings: (token: string) =>
+    post<{ items: HoldingSummary[]; cashAvailable: number }>(
+      "/assets/holdings/list",
+      {},
+      token,
+    ),
+  holdingWorkspace: (token: string, refresh = false) =>
+    post<HoldingWorkspace>("/assets/holdings/workspace", { refresh }, token),
+  batmanHoldingWorkspace: (token: string, refresh = false) =>
+    post<BatmanHoldingWorkspace>(
+      "/assets/holdings/batman-workspace",
+      { refresh },
+      token,
+    ),
+  createHolding: (
+    token: string,
+    input: {
+      instrumentId: string;
+      quantity: number;
+      price: number;
+      fee: number;
+      occurredAt: string;
+      note?: string;
+    },
+  ) => post<HoldingSummary>("/assets/holdings/create", input, token),
+  holdingDetail: (token: string, id: string) =>
+    post<{ holding: HoldingSummary; transactions: HoldingOperation[] }>(
+      "/assets/holdings/detail",
+      { id },
+      token,
+    ),
+  holdingChart: (token: string, id: string, refresh = false) =>
+    post<HoldingChartData>(
+      "/assets/holdings/detail/chart",
+      { id, refresh },
+      token,
+    ),
+  deleteHolding: (token: string, id: string) =>
+    post<{ deleted: true }>("/assets/holdings/delete", { id }, token),
+  addHoldingTransaction: (
+    token: string,
+    input: {
+      holdingId: string;
+      action: HoldingAction;
+      quantity: number;
+      price: number;
+      fee: number;
+      occurredAt: string;
+      note?: string;
+    },
+  ) => post<{ id: string }>("/assets/holdings/transaction", input, token),
+  deleteHoldingTransaction: (
+    token: string,
+    holdingId: string,
+    transactionId: string,
+  ) =>
+    post<{ deleted: true }>(
+      "/assets/holdings/transaction/delete",
+      { holdingId, transactionId },
+      token,
+    ),
+  createStrategy: (
+    token: string,
+    input: {
+      name: string;
+      instrumentIds: string[];
+      indicators: IndicatorType[];
+    },
+  ) => post<Strategy>("/analysis/strategies/create", input, token),
+  listStrategies: (token: string) =>
+    post<{ items: Strategy[] }>("/analysis/strategies/list", {}, token),
+  startAnalysis: (token: string, strategyId: string) =>
+    post<AnalysisTask>("/analysis/tasks/start", { strategyId }, token),
+  listAnalysisTasks: (token: string) =>
+    post<{ items: AnalysisTask[] }>("/analysis/tasks/list", {}, token),
+  retryAnalysis: (token: string, taskId: string) =>
+    post<AnalysisTask>("/analysis/tasks/retry", { taskId }, token),
+  listTaskLogs: (token: string, taskId: string) =>
+    post<{
+      items: Array<{
+        id: string;
+        level: "info" | "error";
+        message: string;
+        createdAt: string;
+      }>;
+    }>("/analysis/tasks/logs/list", { taskId }, token),
+  listReports: (token: string, taskId: string) =>
+    post<{
+      items: Array<{
+        id: string;
+        instrumentId: string;
+        result: { source: string; results: IndicatorResult[] };
+        createdAt: string;
+      }>;
+    }>("/analysis/reports/list", { taskId }, token),
+  trendIndicatorCatalog: (token: string) =>
+    post<{ items: TrendIndicatorDefinition[] }>(
+      "/analysis/trend/indicators/catalog",
+      {},
+      token,
+    ),
+  createTrendStrategy: (
+    token: string,
+    input: Omit<TrendStrategy, "id" | "createdAt" | "updatedAt">,
+  ) => post<TrendStrategy>("/analysis/trend/strategies/create", input, token),
+  updateTrendStrategy: (token: string, input: TrendStrategy) =>
+    post<TrendStrategy>("/analysis/trend/strategies/update", input, token),
+  deleteTrendStrategy: (token: string, id: string) =>
+    post<{ deleted: true }>("/analysis/trend/strategies/delete", { id }, token),
+  getTrendStrategy: (token: string, id: string) =>
+    post<TrendStrategy>("/analysis/trend/strategies/get", { id }, token),
+  listTrendStrategies: (token: string) =>
+    post<{ items: TrendStrategy[] }>(
+      "/analysis/trend/strategies/list",
+      {},
+      token,
+    ),
+  updateTrendStrategyTargets: (
+    token: string,
+    strategyId: string,
+    instrumentIds: string[],
+  ) =>
+    post<TrendStrategy>(
+      "/analysis/trend/strategies/targets/update",
+      { strategyId, instrumentIds },
+      token,
+    ),
+  listTrendStrategyTargets: (token: string, strategyId: string) =>
+    post<TrendStrategyTargets>(
+      "/analysis/trend/strategies/targets/list",
+      { strategyId },
+      token,
+    ),
+  estimateTrendRun: (token: string, strategyId: string) =>
+    post<{
+      targetTotal: number;
+      confirmationToken: string | null;
+      expiresAt: string | null;
+    }>("/analysis/trend/runs/estimate", { strategyId }, token),
+  startTrendRun: (
+    token: string,
+    strategyId: string,
+    confirmationToken?: string,
+  ) =>
+    post<TrendRun>(
+      "/analysis/trend/runs/start",
+      { strategyId, confirmationToken },
+      token,
+    ),
+  cancelTrendRun: (token: string, runId: string) =>
+    post<TrendRun>("/analysis/trend/runs/cancel", { runId }, token),
+  deleteTrendRun: (token: string, runId: string) =>
+    post<{ deleted: true }>("/analysis/trend/runs/delete", { runId }, token),
+  getTrendRun: (token: string, runId: string) =>
+    post<TrendRun>("/analysis/trend/runs/get", { runId }, token),
+  listTrendRuns: (token: string, strategyId?: string) =>
+    post<{ items: TrendRun[] }>(
+      "/analysis/trend/runs/list",
+      { strategyId },
+      token,
+    ),
+  listTrendReports: (token: string, runId: string) =>
+    post<{ items: TrendRunReport[] }>(
+      "/analysis/trend/reports/list",
+      { runId },
+      token,
+    ),
+  trendRunSummary: (token: string, runId: string) =>
+    post<TrendRunSummary>("/analysis/trend/runs/summary", { runId }, token),
+  interpretTrendReport: (token: string, runId: string, reportId: string) =>
+    post<{ provider: AiProvider; content: string }>(
+      "/analysis/trend/reports/interpret",
+      { runId, reportId },
+      token,
+    ),
+  listTrendLogs: (token: string, runId: string) =>
+    post<{ items: TrendRunLog[] }>(
+      "/analysis/trend/logs/list",
+      { runId },
+      token,
+    ),
+  createSchedule: (
+    token: string,
+    input: {
+      name: string;
+      kind: "analysis" | "alert-scan";
+      intervalMinutes: number;
+      strategyId: string | null;
+    },
+  ) => post<ScheduledJob>("/automation/schedules/create", input, token),
+  listSchedules: (token: string) =>
+    post<{ items: ScheduledJob[] }>("/automation/schedules/list", {}, token),
+  createAlert: (
+    token: string,
+    input: {
+      instrumentId: string;
+      direction: "above" | "below";
+      threshold: number;
+      cooldownMinutes: number;
+    },
+  ) => post<AlertRule>("/automation/alerts/create", input, token),
+  listAlerts: (token: string) =>
+    post<{ items: AlertRule[] }>("/automation/alerts/list", {}, token),
+  evaluateAlerts: (token: string) =>
+    post<{ triggered: number }>("/automation/alerts/evaluate", {}, token),
+  listAlertEvents: (token: string) =>
+    post<{ items: AlertEvent[] }>("/automation/alerts/events/list", {}, token),
+  createNote: (
+    token: string,
+    input: {
+      title: string;
+      content: string;
+      tags: string[];
+      instrumentId: string | null;
+    },
+  ) => post<Note>("/notes/create", input, token),
+  listNotes: (token: string) =>
+    post<{ items: Note[] }>("/notes/list", {}, token),
+  updateNote: (
+    token: string,
+    input: {
+      id: string;
+      title: string;
+      content: string;
+      tags: string[];
+      instrumentId: string | null;
+    },
+  ) => post<Note>("/notes/update", input, token),
+  deleteNote: (token: string, id: string) =>
+    post<{ deleted: true }>("/notes/delete", { id }, token),
+  exportData: (token: string) =>
+    post<UserExport>("/settings/data/export", {}, token),
+  importData: (token: string, data: unknown) =>
+    post<{ imported: true }>("/settings/data/import", { data }, token),
+  getAiConfig: (token: string) =>
+    post<AiModelsConfig>("/settings/ai/get", {}, token),
+  updateAiConfig: (token: string, input: AiModelsConfigInput) =>
+    post<AiModelsConfig>("/settings/ai/update", input, token),
+  createAssistantConversation: (token: string) =>
+    post<AssistantConversationDetail>(
+      "/assistant/conversations/create",
+      {},
+      token,
+    ),
+  listAssistantConversations: (token: string) =>
+    post<{ items: AssistantConversationSummary[] }>(
+      "/assistant/conversations/list",
+      {},
+      token,
+    ),
+  getAssistantConversation: (token: string, id: string) =>
+    post<AssistantConversationDetail>(
+      "/assistant/conversations/get",
+      { id },
+      token,
+    ),
+  deleteAssistantConversation: (token: string, id: string) =>
+    post<{ deleted: true }>("/assistant/conversations/delete", { id }, token),
+  chat: (
+    token: string,
+    message: string,
+    options: {
+      modelId?: string;
+      autoChart?: boolean;
+      conversationId?: string;
+    } = {},
+  ) =>
+    post<AssistantChatResult>(
+      "/assistant/chat",
+      { message, ...options },
+      token,
+    ),
+  clearMarketCache: (token: string) =>
+    post<{ deletedBars: number }>("/admin/market/cache/clear", {}, token),
+  marketOverview: (token: string) =>
+    post<{
+      instrumentCount: number;
+      cachedBarCount: number;
+      latestCacheAt: string | null;
+    }>("/market/overview", {}, token),
+  marketSignals: (token: string) =>
+    post<{ items: MarketSignal[] }>("/market/signals", {}, token),
+  informationLinks: (token: string) =>
+    post<{
+      groups: Array<{
+        label: string;
+        links: Array<{ name: string; url: string }>;
+      }>;
+    }>("/market/info-links", {}, token),
+  thirdPartyTechnical: (
+    token: string,
+    input: {
+      kind: ThirdPartyTechnicalKind;
+      category?: number;
+      days?: number;
+      date?: string;
+    },
+  ) =>
+    post<ThirdPartyTechnicalTable>(
+      "/third-party/technical/query",
+      input,
+      token,
+    ),
+  thirdPartyInfoLinks: (token: string) =>
+    post<{ groups: ThirdPartyInfoGroup[] }>(
+      "/third-party/info-links",
+      {},
+      token,
+    ),
+  thirdPartyMarketCloud: (token: string) =>
+    post<ThirdPartyMarketCloud>("/third-party/market-cloud", {}, token),
+  streamTask: (token: string, taskId: string) =>
+    new EventSource(
+      `${apiBaseUrl}/stream/tasks/${encodeURIComponent(taskId)}?token=${encodeURIComponent(token)}`,
+    ),
+  streamTrendRun: (token: string, runId: string) =>
+    new EventSource(
+      `${apiBaseUrl}/analysis/trend/runs/${encodeURIComponent(runId)}/events?token=${encodeURIComponent(token)}`,
+    ),
+  streamWatchlist: (token: string) =>
+    new EventSource(
+      `${apiBaseUrl}/stream/watchlist?token=${encodeURIComponent(token)}`,
+    ),
 };

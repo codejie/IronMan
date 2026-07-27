@@ -358,6 +358,30 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS trend_run_logs_owner_idx ON trend_run_logs(user_id, run_id, created_at ASC);
     `
+  },
+  {
+    version: 8,
+    sql: `
+      CREATE TABLE IF NOT EXISTS assistant_conversations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS assistant_conversations_owner_idx ON assistant_conversations(user_id, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS assistant_messages (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        conversation_id TEXT NOT NULL REFERENCES assistant_conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+        content TEXT NOT NULL,
+        result_json TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS assistant_messages_conversation_idx ON assistant_messages(user_id, conversation_id, created_at ASC);
+    `
   }
 ];
 
