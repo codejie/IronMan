@@ -2112,6 +2112,13 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     id: z.string(),
     label: z.string(),
     category: z.string(),
+    description: z.string(),
+    usageHint: z.string(),
+    detail: z.object({
+      meaning: z.string(),
+      usage: z.string(),
+      trend: z.string(),
+    }),
     parameters: z.array(
       z.object({
         key: z.string(),

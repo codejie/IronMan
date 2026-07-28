@@ -23,6 +23,18 @@ describe("trend indicator registry", () => {
     expect(new Set(trendIndicatorCatalog.map((item) => item.id)).size).toBe(26);
     expect(trendIndicatorCatalog.find((item) => item.id === "MACD")?.lines).toEqual(["dif", "dea", "hist"]);
     expect(trendIndicatorCatalog.find((item) => item.id === "BOLL")?.chart).toBe("main");
+    expect(new Set(trendIndicatorCatalog.map((item) => item.category))).toEqual(new Set([
+      "overlap", "momentum", "volatility", "volume", "price", "pattern", "cycle"
+    ]));
+    expect(trendIndicatorCatalog.every((item) => (
+      item.description.trim().length > 0 &&
+      item.usageHint.trim().length > 0 &&
+      item.detail.meaning.trim().length > 0 &&
+      item.detail.usage.trim().length > 0 &&
+      item.detail.trend.trim().length > 0
+    ))).toBe(true);
+    expect(trendIndicatorCatalog.find((item) => item.id === "MACD")?.description).toContain("快慢均线");
+    expect(trendIndicatorCatalog.find((item) => item.id === "MACD")?.detail.trend).toContain("DIF");
   });
 
   test("calculates normalized values and signal records for the full registry", () => {

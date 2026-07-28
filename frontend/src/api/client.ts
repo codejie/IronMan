@@ -448,10 +448,18 @@ export interface TrendIndicatorParameter {
   max: number;
   step?: number;
 }
+export interface TrendIndicatorDetail {
+  meaning: string;
+  usage: string;
+  trend: string;
+}
 export interface TrendIndicatorDefinition {
   id: string;
   label: string;
   category: string;
+  description: string;
+  usageHint: string;
+  detail: TrendIndicatorDetail;
   parameters: TrendIndicatorParameter[];
   lines: string[];
   chart: "main" | "sub" | "hidden";
