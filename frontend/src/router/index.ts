@@ -34,6 +34,11 @@ const router = createRouter({
           meta: { title: "持仓详情" },
         },
         {
+          path: "holding/funds/trend",
+          component: () => import("@/views/FundsTrendView.vue"),
+          meta: { title: "资金趋势" },
+        },
+        {
           path: "analysis/trend/strategy/new",
           component: () => import("@/views/TrendStrategyEditorView.vue"),
           meta: { title: "新建趋势策略" },

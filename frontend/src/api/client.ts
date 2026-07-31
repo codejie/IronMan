@@ -176,6 +176,65 @@ export interface BatmanHoldingWorkspace {
   closed: BatmanHoldingWorkspaceRecord[];
 }
 
+export type FundHistoryStatus = "idle" | "calculating" | "dirty" | "failed";
+export type FundDataStatus = "complete" | "partial";
+
+export interface FundHistoryState {
+  coveredFrom: string | null;
+  coveredTo: string | null;
+  dirtyFrom: string | null;
+  status: FundHistoryStatus;
+  lastError: string | null;
+  calculationVersion: number;
+  updatedAt: string;
+  tradeDayCount: number;
+}
+
+export interface FundHistoryPoint {
+  tradeDate: string;
+  cashAvailable: number;
+  principal: number;
+  marketValue: number;
+  totalAssets: number;
+  externalCashFlow: number;
+  dailyProfit: number | null;
+  dailyReturn: number | null;
+  performanceIndex: number;
+  cumulativeProfit: number;
+  cumulativeProfitRate: number | null;
+  instrumentCount: number;
+  pricedCount: number;
+  carriedPriceCount: number;
+  missingPriceCount: number;
+  dataStatus: FundDataStatus;
+  calculationVersion: number;
+  calculatedAt: string;
+}
+
+export interface FundHistoryEvent {
+  id: string;
+  tradeDate: string;
+  kind: "adjustment" | "buy" | "sell" | "close" | "dividend";
+  label: string;
+  amount: number;
+  instrumentName: string | null;
+}
+
+export interface FundHistoryResult {
+  summary: {
+    totalAssets: number;
+    marketValue: number;
+    cashAvailable: number;
+    principal: number;
+    cumulativeProfit: number;
+    cumulativeProfitRate: number | null;
+    maxDrawdown: number | null;
+  };
+  points: FundHistoryPoint[];
+  events: FundHistoryEvent[];
+  state: FundHistoryState;
+}
+
 export interface PriceBar {
   date: string;
   open: number;
@@ -778,6 +837,16 @@ export const api = {
     post<{ available: number }>("/assets/cash/summary", {}, token),
   adjustCash: (token: string, amount: number, note: string) =>
     post<{ available: number }>("/assets/cash/adjust", { amount, note }, token),
+  fundHistory: (token: string, startDate: string, endDate: string) =>
+    post<FundHistoryResult>(
+      "/assets/funds/history",
+      { startDate, endDate },
+      token,
+    ),
+  fundHistoryStatus: (token: string) =>
+    post<FundHistoryState>("/assets/funds/history/status", {}, token),
+  recalculateFundHistory: (token: string) =>
+    post<FundHistoryResult>("/assets/funds/history/recalculate", {}, token),
   listHoldings: (token: string) =>
     post<{ items: HoldingSummary[]; cashAvailable: number }>(
       "/assets/holdings/list",

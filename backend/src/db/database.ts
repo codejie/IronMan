@@ -508,6 +508,45 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
     `
+  },
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE IF NOT EXISTS fund_daily_metrics (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        trade_date TEXT NOT NULL,
+        cash_available REAL NOT NULL,
+        principal REAL NOT NULL,
+        market_value REAL NOT NULL,
+        total_assets REAL NOT NULL,
+        external_cash_flow REAL NOT NULL,
+        daily_profit REAL,
+        daily_return REAL,
+        performance_index REAL NOT NULL,
+        cumulative_profit REAL NOT NULL,
+        cumulative_profit_rate REAL,
+        instrument_count INTEGER NOT NULL,
+        priced_count INTEGER NOT NULL,
+        carried_price_count INTEGER NOT NULL,
+        missing_price_count INTEGER NOT NULL,
+        data_status TEXT NOT NULL CHECK (data_status IN ('complete', 'partial')),
+        calculation_version INTEGER NOT NULL,
+        calculated_at TEXT NOT NULL,
+        PRIMARY KEY(user_id, trade_date)
+      );
+      CREATE INDEX IF NOT EXISTS fund_daily_metrics_owner_idx ON fund_daily_metrics(user_id, trade_date DESC);
+
+      CREATE TABLE IF NOT EXISTS fund_history_state (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        covered_from TEXT,
+        covered_to TEXT,
+        dirty_from TEXT,
+        status TEXT NOT NULL CHECK (status IN ('idle', 'calculating', 'dirty', 'failed')) DEFAULT 'idle',
+        last_error TEXT,
+        calculation_version INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL
+      );
+    `
   }
 ];
 

@@ -2,6 +2,7 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import type { Instrument } from "../market/types";
 import { IndicatorService } from "./indicator-service";
+import { fundBusinessDate, type FundHistoryService } from "./fund-history-service";
 import { MarketService } from "./market-service";
 
 type StoredHoldingAction = "buy" | "sell" | "dividend";
@@ -163,7 +164,8 @@ export interface BatmanHoldingWorkspace {
 export class AssetsService {
   constructor(
     private readonly database: IronManDatabase,
-    private readonly market: MarketService
+    private readonly market: MarketService,
+    private readonly fundHistory?: Pick<FundHistoryService, "markDirty">,
   ) {}
 
   createWatchlistEntry(userId: string, input: { instrumentId: string; note: string; targetPrice?: number | null }): WatchlistEntry {
@@ -302,7 +304,12 @@ export class AssetsService {
   }
 
   adjustCash(userId: string, amount: number, note: string): number {
-    return this.database.transaction(() => this.applyCash(userId, amount, "adjustment", null, note, new Date().toISOString()));
+    const occurredAt = new Date().toISOString();
+    return this.database.transaction(() => {
+      const available = this.applyCash(userId, amount, "adjustment", null, note, occurredAt);
+      this.fundHistory?.markDirty(userId, fundBusinessDate(occurredAt));
+      return available;
+    });
   }
 
   getCash(userId: string): number {
@@ -357,6 +364,7 @@ export class AssetsService {
       this.removeCashForTransaction(userId, holdingId, transaction);
       this.database.run("DELETE FROM holding_transactions WHERE id = $id AND user_id = $userId", { id: transaction.id, userId });
       this.syncHoldingStatus(userId, holding, Math.max(nextQuantity, 0));
+      this.fundHistory?.markDirty(userId, fundBusinessDate(transaction.occurred_at));
       return { deleted: true };
     });
   }
@@ -365,10 +373,12 @@ export class AssetsService {
     return this.database.transaction(() => {
       this.getHoldingRecord(userId, id);
       const transactions = this.listHoldingTransactions(userId, id);
+      const affectedDate = transactions.map((transaction) => fundBusinessDate(transaction.occurred_at)).sort()[0];
       for (const transaction of transactions) {
         this.removeCashForTransaction(userId, id, transaction);
       }
       this.database.run("DELETE FROM holdings WHERE id = $id AND user_id = $userId", { id, userId });
+      if (affectedDate !== undefined) this.fundHistory?.markDirty(userId, affectedDate);
       return { deleted: true };
     });
   }
@@ -551,6 +561,7 @@ export class AssetsService {
       userId,
       updatedAt: new Date().toISOString()
     });
+    this.fundHistory?.markDirty(userId, fundBusinessDate(occurredAt));
     return id;
   }
 

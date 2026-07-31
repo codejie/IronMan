@@ -34,7 +34,7 @@ const exportTables: TableSpec[] = [
   { name: "alert_suggestions", columns: ["id", "source", "instrument_id", "title", "message", "severity", "rule_kind", "condition_json", "cooldown_minutes", "status", "created_at", "updated_at", "accepted_at", "ignored_at"] }
 ];
 
-const deletionOrder = ["task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alert_suggestions", "alert_rules", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
+const deletionOrder = ["fund_daily_metrics", "fund_history_state", "task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alert_suggestions", "alert_rules", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
 
 export class BackupService {
   constructor(private readonly database: IronManDatabase) {}

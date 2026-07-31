@@ -25,6 +25,7 @@ import {
 import { BackupService } from "./services/backup-service";
 import { AuthService, type PublicUser } from "./services/auth-service";
 import { IndicatorService } from "./services/indicator-service";
+import { FundHistoryService } from "./services/fund-history-service";
 import { MarketService } from "./services/market-service";
 import { NoteService } from "./services/note-service";
 import { SettingsService } from "./services/settings-service";
@@ -36,6 +37,7 @@ import {
 import { TrendRunService } from "./services/trend-run-service";
 import { TrendStrategyService } from "./services/trend-strategy-service";
 import { ThirdPartyDataService } from "./services/third-party-data-service";
+import { TradingCalendarService } from "./services/trading-calendar-service";
 
 type AppVariables = {
   currentUser: PublicUser;
@@ -87,6 +89,58 @@ const priceBarSchema = z.object({
   high: z.number(),
   low: z.number(),
   volume: z.number(),
+});
+const fundHistoryDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const fundHistoryStateSchema = z.object({
+  coveredFrom: fundHistoryDateSchema.nullable(),
+  coveredTo: fundHistoryDateSchema.nullable(),
+  dirtyFrom: fundHistoryDateSchema.nullable(),
+  status: z.enum(["idle", "calculating", "dirty", "failed"]),
+  lastError: z.string().nullable(),
+  calculationVersion: z.number().int(),
+  updatedAt: z.string().datetime(),
+  tradeDayCount: z.number().int().nonnegative(),
+});
+const fundHistoryPointSchema = z.object({
+  tradeDate: fundHistoryDateSchema,
+  cashAvailable: z.number(),
+  principal: z.number(),
+  marketValue: z.number(),
+  totalAssets: z.number(),
+  externalCashFlow: z.number(),
+  dailyProfit: z.number().nullable(),
+  dailyReturn: z.number().nullable(),
+  performanceIndex: z.number(),
+  cumulativeProfit: z.number(),
+  cumulativeProfitRate: z.number().nullable(),
+  instrumentCount: z.number().int().nonnegative(),
+  pricedCount: z.number().int().nonnegative(),
+  carriedPriceCount: z.number().int().nonnegative(),
+  missingPriceCount: z.number().int().nonnegative(),
+  dataStatus: z.enum(["complete", "partial"]),
+  calculationVersion: z.number().int(),
+  calculatedAt: z.string().datetime(),
+});
+const fundHistoryResultSchema = z.object({
+  summary: z.object({
+    totalAssets: z.number(),
+    marketValue: z.number(),
+    cashAvailable: z.number(),
+    principal: z.number(),
+    cumulativeProfit: z.number(),
+    cumulativeProfitRate: z.number().nullable(),
+    maxDrawdown: z.number().nullable(),
+  }),
+  points: z.array(fundHistoryPointSchema),
+  events: z.array(z.object({
+    id: z.string(),
+    tradeDate: fundHistoryDateSchema,
+    kind: z.enum(["adjustment", "buy", "sell", "close", "dividend"]),
+    label: z.string(),
+    amount: z.number(),
+    instrumentName: z.string().nullable(),
+  })),
+  state: fundHistoryStateSchema,
 });
 const thirdPartyTechnicalKindSchema = z.enum([
   "new_high",
@@ -183,6 +237,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const database = new IronManDatabase(config.databasePath);
   const auth = new AuthService(database, config);
   const settings = new SettingsService(database);
+  const tradingCalendar = new TradingCalendarService(settings);
   const market = new MarketService(database, settings, [
     new AkShareMarketProvider({
       baseUrl: config.akshareProviderUrl,
@@ -201,7 +256,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       timeoutMs: config.akshareProviderTimeoutMs,
     }),
   );
-  const assets = new AssetsService(database, market);
+  const fundHistory = new FundHistoryService(database, market, tradingCalendar);
+  const assets = new AssetsService(database, market, fundHistory);
   const indicators = new IndicatorService();
   const trendIndicators = new TrendIndicatorService();
   const assistantConversations = new AssistantConversationService(database);
@@ -781,14 +837,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     }),
     (context) => {
       const input = context.req.valid("json");
-      const stored = settings.get(
-        context.get("currentUser").id,
-        "market.trading-calendar",
-      )?.value;
       return context.json(
-        success(
-          readTradingCalendar(stored, input.year ?? currentCalendarYear()),
-        ),
+        success(tradingCalendar.getYear(context.get("currentUser").id, input.year)),
         200,
       );
     },
@@ -814,15 +864,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     (context) => {
       const input = context.req.valid("json");
       const userId = context.get("currentUser").id;
-      const current = settings.get(userId, "market.trading-calendar")?.value;
-      const setting = mergeTradingCalendar(current, input);
-      settings.upsert(userId, "market.trading-calendar", setting);
-      return context.json(
-        success(
-          readTradingCalendar(setting, input.year ?? currentCalendarYear()),
-        ),
-        200,
-      );
+      return context.json(success(tradingCalendar.update(userId, input)), 200);
     },
   );
 
@@ -1432,6 +1474,65 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
         success({ available: assets.getCash(context.get("currentUser").id) }),
         200,
       ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/assets/funds/history",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(z.object({
+          startDate: fundHistoryDateSchema,
+          endDate: fundHistoryDateSchema,
+        })),
+      },
+      responses: {
+        200: {
+          description: "User fund history",
+          content: { "application/json": { schema: responseSchema(fundHistoryResultSchema) } },
+        },
+      },
+    }),
+    async (context) => context.json(
+      success(await fundHistory.getHistory(context.get("currentUser").id, context.req.valid("json"))),
+      200,
+    ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/assets/funds/history/status",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "User fund history status",
+          content: { "application/json": { schema: responseSchema(fundHistoryStateSchema) } },
+        },
+      },
+    }),
+    (context) => context.json(success(fundHistory.getStatus(context.get("currentUser").id)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/assets/funds/history/recalculate",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Recalculated user fund history",
+          content: { "application/json": { schema: responseSchema(fundHistoryResultSchema) } },
+        },
+      },
+    }),
+    async (context) => context.json(
+      success(await fundHistory.recalculate(context.get("currentUser").id)),
+      200,
+    ),
   );
 
   const holdingInputSchema = z.object({
@@ -4175,146 +4276,4 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     },
     startScheduler: () => scheduler.start(),
   };
-}
-
-interface CalendarOverride {
-  tradeDays: string[];
-  nonTradingDays: string[];
-}
-
-interface TradingCalendarSetting {
-  version: 2;
-  overrides: Record<string, CalendarOverride>;
-}
-
-interface TradingCalendarUpdate {
-  year?: number;
-  tradeDays?: string[];
-  nonTradingDays?: string[];
-}
-
-function currentCalendarYear(): number {
-  return new Date().getFullYear();
-}
-
-function readTradingCalendar(
-  value: unknown,
-  year: number,
-): { year: number; tradeDays: string[]; nonTradingDays: string[] } {
-  const override = normalizeTradingCalendar(value).overrides[String(year)];
-  const tradeDays = new Set(defaultTradeDays(year));
-  if (override !== undefined) {
-    override.nonTradingDays.forEach((day) => tradeDays.delete(day));
-    override.tradeDays.forEach((day) => tradeDays.add(day));
-  }
-  return {
-    year,
-    tradeDays: [...tradeDays].sort(),
-    nonTradingDays: override?.nonTradingDays ?? [],
-  };
-}
-
-function mergeTradingCalendar(
-  value: unknown,
-  input: TradingCalendarUpdate,
-): TradingCalendarSetting {
-  const setting = normalizeTradingCalendar(value);
-  if (input.tradeDays !== undefined) {
-    const year = input.year ?? currentCalendarYear();
-    const days = yearDays(year);
-    const selected = new Set(input.tradeDays);
-    if (input.tradeDays.some((day) => !days.includes(day))) {
-      throw errors.validation("交易日必须属于所选年份");
-    }
-    const defaults = new Set(defaultTradeDays(year));
-    setting.overrides[String(year)] = {
-      tradeDays: [...selected].filter((day) => !defaults.has(day)).sort(),
-      nonTradingDays: [...defaults].filter((day) => !selected.has(day)).sort(),
-    };
-    return setting;
-  }
-
-  const legacyDays = input.nonTradingDays ?? [];
-  const grouped = new Map<string, string[]>();
-  for (const day of legacyDays) {
-    const year = day.slice(0, 4);
-    grouped.set(year, [...(grouped.get(year) ?? []), day]);
-  }
-  for (const [year, days] of grouped) {
-    setting.overrides[year] = {
-      tradeDays: [],
-      nonTradingDays: [...new Set(days)].sort(),
-    };
-  }
-  return setting;
-}
-
-function normalizeTradingCalendar(value: unknown): TradingCalendarSetting {
-  if (typeof value !== "object" || value === null)
-    return { version: 2, overrides: {} };
-  const raw = value as {
-    version?: unknown;
-    overrides?: unknown;
-    nonTradingDays?: unknown;
-  };
-  if (
-    raw.version === 2 &&
-    typeof raw.overrides === "object" &&
-    raw.overrides !== null
-  ) {
-    const overrides: Record<string, CalendarOverride> = {};
-    for (const [year, candidate] of Object.entries(raw.overrides)) {
-      if (typeof candidate !== "object" || candidate === null) continue;
-      const item = candidate as Partial<CalendarOverride>;
-      if (!Array.isArray(item.tradeDays) || !Array.isArray(item.nonTradingDays))
-        continue;
-      if (![...item.tradeDays, ...item.nonTradingDays].every(isCalendarDate))
-        continue;
-      overrides[year] = {
-        tradeDays: [...new Set(item.tradeDays)].sort(),
-        nonTradingDays: [...new Set(item.nonTradingDays)].sort(),
-      };
-    }
-    return { version: 2, overrides };
-  }
-  if (
-    Array.isArray(raw.nonTradingDays) &&
-    raw.nonTradingDays.every(isCalendarDate)
-  ) {
-    const overrides: Record<string, CalendarOverride> = {};
-    for (const day of raw.nonTradingDays) {
-      const year = day.slice(0, 4);
-      const current = overrides[year] ?? { tradeDays: [], nonTradingDays: [] };
-      current.nonTradingDays.push(day);
-      overrides[year] = current;
-    }
-    Object.values(overrides).forEach((override) => {
-      override.nonTradingDays = [...new Set(override.nonTradingDays)].sort();
-    });
-    return { version: 2, overrides };
-  }
-  return { version: 2, overrides: {} };
-}
-
-function defaultTradeDays(year: number): string[] {
-  return yearDays(year).filter((day) => {
-    const weekday = new Date(`${day}T00:00:00`).getDay();
-    return weekday !== 0 && weekday !== 6;
-  });
-}
-
-function yearDays(year: number): string[] {
-  const days: string[] = [];
-  const current = new Date(year, 0, 1);
-  while (current.getFullYear() === year) {
-    days.push(
-      `${current.getFullYear()}-${`${current.getMonth() + 1}`.padStart(2, "0")}-${`${current.getDate()}`.padStart(2, "0")}`,
-    );
-    current.setDate(current.getDate() + 1);
-  }
-  return days;
-}
-
-function isCalendarDate(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 }

@@ -344,7 +344,13 @@ export class TrendRunService {
       this.writeLog(userId, runId, "error", `${instrument.name}：${report.error}`);
     }
     const createdAt = new Date().toISOString();
-    const item: TrendRunReport = { id: crypto.randomUUID(), instrumentId, result: report, createdAt };
+    const item: TrendRunReport = {
+      id: crypto.randomUUID(),
+      instrumentId,
+      aiInterpretation: null,
+      result: report,
+      createdAt,
+    };
     this.database.run(
       `INSERT INTO trend_run_reports (id, user_id, run_id, instrument_id, result_json, created_at)
        VALUES ($id, $userId, $runId, $instrumentId, $result, $createdAt)

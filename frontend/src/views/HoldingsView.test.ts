@@ -1,4 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import type { BatmanHoldingWorkspace, BatmanHoldingWorkspaceRecord } from "@/api/client";
@@ -123,13 +125,35 @@ describe("HoldingsView", () => {
     expect(deleteButton.attributes("data-hint")).toBe("删除持仓");
     expect(deleteButton.attributes("data-hint-position")).toBe("top");
     expect(deleteButton.attributes("title")).toBeUndefined();
+    expect(wrapper.find(".batman-expander").exists()).toBe(false);
+    expect(wrapper.find(".batman-operations-row").exists()).toBe(false);
+    expect(wrapper.findAll(".holdings-table thead th")).toHaveLength(12);
   });
 
-  test("uses a hint-based icon to delete an operation record", async () => {
+  test("does not keep the nested operation table behavior in the holdings list", async () => {
     const source = await import("./HoldingsView.vue?raw");
 
-    expect(source.default).toContain('data-hint="删除操作"');
-    expect(source.default).toContain('class="batman-icon-button danger"');
+    expect(source.default).not.toContain("toggleDetails");
+    expect(source.default).not.toContain("batman-operations-row");
+    expect(source.default).not.toContain("holdingDetail(token.value");
+  });
+
+  test("keeps a readable name column after removing the expander column", async () => {
+    const styles = await readFile(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+    expect(styles).toContain(".holdings-table col:nth-child(2) { width: 10.5%; }");
+    expect(styles).toContain(".holdings-table col:nth-child(8) { width: 10.2%; }");
+    expect(styles).toContain(".holdings-table col:nth-child(9) { width: 10.2%; }");
+    expect(styles).not.toContain(".holdings-table col:nth-child(13)");
+  });
+
+  test("provides a compact funds trend entry beside the funds heading", async () => {
+    const source = await import("./HoldingsView.vue?raw");
+
+    expect(source.default).toContain('aria-label="查看资金趋势"');
+    expect(source.default).toContain('data-hint="查看资金趋势"');
+    expect(source.default).toContain("<ChartNoAxesCombined");
+    expect(source.default).toContain('router.push("/holding/funds/trend")');
   });
 
   test("places the holdings refresh action at the right end of the toolbar", async () => {

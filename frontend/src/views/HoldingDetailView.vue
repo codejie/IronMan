@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronLeft, ChevronRight, RefreshCw } from "lucide-vue-next";
+import { ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import HoldingPerformanceChart from "@/components/HoldingPerformanceChart.vue";
@@ -10,6 +10,7 @@ import {
   type KlineSubchart
 } from "@/components/kline-analysis";
 import { api, ApiError, type HoldingChartData } from "@/api/client";
+import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
 import { formatDate, formatDateTime } from "@/utils/date-format";
 import { instrumentTypeLabel } from "./instrument-kline-presentation";
@@ -26,7 +27,16 @@ const maPeriods = ref<number[]>(initialPreferences.maPeriods);
 const subchart = ref<KlineSubchart>(initialPreferences.subchart);
 const macdLines = ref<Record<string, Array<number | null>> | null>(null);
 const selectedTable = ref<DetailTable>("operations");
+const operationDialogOpen = ref(false);
+const operationAction = ref<"buy" | "sell" | "interest">("buy");
+const operationQuantity = ref("100");
+const operationPrice = ref("");
+const operationFee = ref("0");
+const operationOccurredAt = ref(nowInputValue());
+const operationNote = ref("");
 const isLoading = ref(false);
+const isSavingOperation = ref(false);
+const deletingOperationId = ref<string | null>(null);
 const errorMessage = ref("");
 let requestVersion = 0;
 
@@ -92,11 +102,79 @@ function navigate(offset: number): void {
   void router.push({ path: "/holding/detail", query: holdingDetailRouteQuery(id, holdingIds.value) });
 }
 
+function openOperation(): void {
+  if (data.value?.holding.status !== "active") return;
+  operationAction.value = "buy";
+  operationQuantity.value = "100";
+  operationPrice.value = "";
+  operationFee.value = "0";
+  operationOccurredAt.value = nowInputValue();
+  operationNote.value = "";
+  errorMessage.value = "";
+  operationDialogOpen.value = true;
+}
+
+function closeOperationDialog(): void {
+  if (isSavingOperation.value) return;
+  operationDialogOpen.value = false;
+  errorMessage.value = "";
+}
+
+async function createOperation(): Promise<void> {
+  const accessToken = token.value;
+  const holding = data.value?.holding;
+  if (accessToken === null || holding === undefined || holding.status !== "active" || isSavingOperation.value) return;
+  isSavingOperation.value = true;
+  errorMessage.value = "";
+  try {
+    await api.addHoldingTransaction(accessToken, {
+      holdingId: holding.id,
+      action: operationAction.value,
+      quantity: operationAction.value === "interest" ? 0 : Number(operationQuantity.value),
+      price: Number(operationPrice.value),
+      fee: Number(operationFee.value),
+      occurredAt: toIso(operationOccurredAt.value),
+      note: operationNote.value,
+    });
+    operationDialogOpen.value = false;
+    await load();
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError ? error.message : "增加操作失败";
+  } finally {
+    isSavingOperation.value = false;
+  }
+}
+
+async function deleteOperation(transaction: HoldingChartData["transactions"][number]): Promise<void> {
+  const accessToken = token.value;
+  const holding = data.value?.holding;
+  if (accessToken === null || holding === undefined || deletingOperationId.value !== null) return;
+  const confirmed = await requestConfirmation({
+    title: "删除操作记录",
+    message: `删除这条${actionLabel(transaction.action)}操作后，将同步回滚持仓数量和资金流水；受影响日期的资金趋势会标记为待重新计算。确定删除吗？`,
+    confirmLabel: "删除",
+    tone: "danger",
+  });
+  if (!confirmed) return;
+  deletingOperationId.value = transaction.id;
+  errorMessage.value = "";
+  try {
+    await api.deleteHoldingTransaction(accessToken, holding.id, transaction.id);
+    await load();
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError ? error.message : "删除操作记录失败";
+  } finally {
+    deletingOperationId.value = null;
+  }
+}
+
 function money(value: number | null): string { return value === null ? "-" : value.toFixed(2); }
 function signed(value: number | null): string { return value === null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`; }
 function percent(value: number | null): string { return value === null ? "-" : `${value.toFixed(2)}%`; }
 function tone(value: number | null): "up" | "down" | "" { return value === null || value === 0 ? "" : value > 0 ? "up" : "down"; }
 function actionLabel(value: "buy" | "sell" | "interest"): string { return value === "buy" ? "买入" : value === "sell" ? "卖出" : "计息"; }
+function nowInputValue(): string { const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 16); }
+function toIso(value: string): string { return new Date(value).toISOString(); }
 
 watch(subchart, savePreferences);
 watch(holdingId, () => { void load(); });
@@ -140,11 +218,31 @@ onMounted(() => { void load(); });
       <p v-else class="batman-selected">暂无可展示的历史行情。</p>
 
       <div class="batman-section-divider"><span>明细记录</span><div class="holding-detail-tabs"><button :class="{ active: selectedTable === 'operations' }" type="button" @click="selectedTable = 'operations'">操作记录</button><button :class="{ active: selectedTable === 'trace' }" type="button" @click="selectedTable = 'trace'">每日跟踪</button></div></div>
+      <div v-if="selectedTable === 'operations'" class="holding-detail-operations-toolbar">
+        <strong>操作记录（{{ data.transactions.length }}）</strong>
+        <button v-if="data.holding.status === 'active'" :aria-label="`为 ${data.holding.instrument.name} 增加操作`" class="batman-button primary" type="button" @click="openOperation"><CirclePlus :size="15" />增加操作</button>
+      </div>
       <div class="batman-table-frame holding-detail-table-frame">
-        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th></tr></thead><tbody><tr v-for="item in data.transactions" :key="item.id"><td>{{ formatDateTime(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td></tr><tr v-if="data.transactions.length === 0"><td class="batman-empty-cell" colspan="7">暂无操作记录</td></tr></tbody></table>
+        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th><th class="batman-action-header">操作</th></tr></thead><tbody><tr v-for="item in data.transactions" :key="item.id"><td>{{ formatDateTime(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`删除${actionLabel(item.action)}操作`" class="batman-icon-button danger" data-hint="删除操作" data-hint-position="top" :disabled="deletingOperationId !== null" type="button" @click="deleteOperation(item)"><Trash2 :size="14" /></button></div></td></tr><tr v-if="data.transactions.length === 0"><td class="batman-empty-cell" colspan="8">暂无操作记录</td></tr></tbody></table>
         <table v-else class="batman-table holding-detail-table"><thead><tr><th>日期</th><th>数量</th><th>净成本</th><th>均价</th><th>收盘价</th><th>市值</th><th>盈亏</th></tr></thead><tbody><tr v-for="item in visibleTrace" :key="item.date"><td>{{ item.date }}</td><td>{{ item.quantity }}</td><td>{{ money(item.netCost) }}</td><td>{{ money(item.averageCost) }}</td><td>{{ money(visibleBars.find((bar) => bar.date === item.date)?.close ?? null) }}</td><td>{{ money(item.marketValue) }}</td><td :class="tone(item.profit)">{{ signed(item.profit) }}</td></tr><tr v-if="visibleTrace.length === 0"><td class="batman-empty-cell" colspan="7">暂无持仓跟踪数据</td></tr></tbody></table>
       </div>
     </template>
+
+    <div v-if="operationDialogOpen" class="batman-dialog-backdrop" @click.self="closeOperationDialog">
+      <section class="batman-dialog" aria-modal="true" role="dialog">
+        <header><strong>增加操作 · {{ data?.holding.instrument.name }}</strong><button aria-label="关闭对话框" class="batman-icon-button" :disabled="isSavingOperation" title="关闭" type="button" @click="closeOperationDialog"><X :size="17" /></button></header>
+        <form aria-label="新增操作" class="batman-form" @submit.prevent="createOperation">
+          <label>操作<select v-model="operationAction"><option value="buy">买入</option><option value="sell">卖出</option><option value="interest">计息</option></select></label>
+          <label v-if="operationAction !== 'interest'">数量<input v-model="operationQuantity" aria-label="数量" min="0.0001" required step="any" type="number" /></label>
+          <label>{{ operationAction === 'interest' ? '计息金额' : '价格' }}<input v-model="operationPrice" :aria-label="operationAction === 'interest' ? '计息金额' : '价格'" min="0" required step="0.001" type="number" /></label>
+          <label>费用<input v-model="operationFee" aria-label="费用" min="0" required step="0.001" type="number" /></label>
+          <label>操作时间<input v-model="operationOccurredAt" aria-label="操作时间" required type="datetime-local" /></label>
+          <label>备注<input v-model.trim="operationNote" aria-label="备注" maxlength="500" /></label>
+          <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
+          <footer><button class="batman-button" :disabled="isSavingOperation" type="button" @click="closeOperationDialog">取消</button><button class="batman-button primary" :disabled="isSavingOperation" type="submit">确定</button></footer>
+        </form>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -162,6 +260,7 @@ onMounted(() => { void load(); });
 .holding-detail-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 0 0 7px; }
 .kline-control-group { display: inline-flex; }.kline-control-group button { background: #162236; border: 1px solid #344963; color: #b9c8d9; cursor: pointer; font-size: 12px; min-width: 44px; padding: 4px 7px; }
 .kline-control-group button + button { border-left-color: #2b3d54; margin-left: -1px; }.kline-control-group button:first-child { border-radius: 5px 0 0 5px; }.kline-control-group button:last-child { border-radius: 0 5px 5px 0; }.kline-control-group button.active { background: #2673bd; border-color: #4598eb; color: #fff; position: relative; z-index: 1; }
-.holding-detail-subchart { margin-left: auto; }.holding-detail-chart-frame { background: #121b2b; border: 1px solid #2d4059; border-radius: 7px; padding: 2px 6px; }.holding-detail-tabs { display: inline-flex; margin-left: auto; }.holding-detail-tabs button { background: #162236; border: 1px solid #344963; color: #b9c8d9; font-size: 12px; padding: 4px 8px; }.holding-detail-tabs button + button { margin-left: -1px; }.holding-detail-tabs button.active { background: #2673bd; color: #fff; position: relative; }.holding-detail-table { min-width: 900px; width: 100%; }.holding-detail-table-frame { margin-bottom: 24px; }
+.holding-detail-subchart { margin-left: auto; }.holding-detail-chart-frame { background: #121b2b; border: 1px solid #2d4059; border-radius: 7px; padding: 2px 6px; }.holding-detail-tabs { display: inline-flex; margin-left: auto; }.holding-detail-tabs button { background: #162236; border: 1px solid #344963; color: #b9c8d9; font-size: 12px; padding: 4px 8px; }.holding-detail-tabs button + button { margin-left: -1px; }.holding-detail-tabs button.active { background: #2673bd; color: #fff; position: relative; }.holding-detail-operations-toolbar { align-items: center; display: flex; justify-content: space-between; margin: 8px 0; min-height: 32px; }.holding-detail-operations-toolbar strong { color: #dbe8f5; font-size: 13px; }.holding-detail-table { min-width: 900px; width: 100%; }.holding-detail-table-frame { margin-bottom: 24px; }
 @media (max-width: 1200px) { .holding-detail-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }.holding-detail-summary > div { border-right: 1px solid #2d4059; }.holding-detail-summary > div:nth-child(4) { border-radius: 0 7px 0 0; }.holding-detail-summary > div:nth-child(5) { border-radius: 0 0 0 7px; }.holding-detail-summary > div:last-child { border-radius: 0 0 7px 0; }.holding-detail-subchart { margin-left: 0; } }
+@media (max-width: 680px) { .holding-detail-operations-toolbar { align-items: flex-start; flex-direction: column; } }
 </style>
