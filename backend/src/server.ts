@@ -1,17 +1,18 @@
-import { loadRuntimeConfig } from "./config";
+import { loadRuntimeConfig, loadServerConfig } from "./config";
 import { createApp } from "./app";
 
 const config = loadRuntimeConfig();
+const serverConfig = loadServerConfig();
 const runtime = createApp(config);
 runtime.startScheduler();
-const port = Number(process.env.PORT ?? 3000);
 
 const server = Bun.serve({
   fetch: runtime.app.fetch,
-  port
+  hostname: serverConfig.host,
+  port: serverConfig.port,
 });
 
-console.info(`IronMan backend listening on http://localhost:${server.port}`);
+console.info(`IronMan backend listening on http://${serverConfig.host}:${server.port}`);
 
 function shutdown(): void {
   server.stop();

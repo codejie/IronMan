@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Search, X } from "lucide-vue-next";
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { api, ApiError, type AssetType, type Instrument } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "@/views/instrument-kline-presentation";
@@ -31,6 +31,7 @@ const results = ref<Instrument[]>([]);
 const selectedInstrument = ref<Instrument | null>(null);
 const errorMessage = ref("");
 const isSearching = ref(false);
+const searchInput = ref<HTMLInputElement | null>(null);
 let searchTimer: number | undefined;
 let searchVersion = 0;
 
@@ -54,6 +55,14 @@ function close(): void {
 
 function selectInstrument(instrument: Instrument): void {
   selectedInstrument.value = instrument;
+}
+
+function clearSelectedInstrument(): void {
+  selectedInstrument.value = null;
+  query.value = "";
+  results.value = [];
+  errorMessage.value = "";
+  void nextTick(() => searchInput.value?.focus());
 }
 
 function confirm(): void {
@@ -119,7 +128,7 @@ onBeforeUnmount(clearSearchTimer);
     <section aria-modal="true" class="batman-dialog instrument-picker-dialog" role="dialog">
       <header>
         <strong>{{ title }}</strong>
-        <button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="close"><X :size="18" /></button>
+        <button aria-label="关闭对话框" class="batman-icon-button" data-hint="关闭" type="button" @click="close"><X :size="18" /></button>
       </header>
 
       <div class="instrument-picker-form">
@@ -136,19 +145,21 @@ onBeforeUnmount(clearSearchTimer);
           <span>名称/代码</span>
           <div class="instrument-picker-search-field">
             <Search :class="{ spinning: isSearching }" :size="16" />
-            <input v-model.trim="query" autocomplete="off" placeholder="输入代码或名称" />
+            <template v-if="selectedInstrument">
+              <span data-instrument-picker-selected-value class="instrument-picker-selected-value">{{ selectedInstrument.name }} {{ instrumentCodeLabel(selectedInstrument) }}</span>
+              <button :aria-label="`清除已选标的 ${selectedInstrument.name}`" class="batman-icon-button instrument-picker-clear-selection" data-hint="清除已选标的" data-instrument-picker-clear type="button" @click="clearSelectedInstrument"><X :size="15" /></button>
+            </template>
+            <input v-else ref="searchInput" v-model.trim="query" autocomplete="off" placeholder="输入代码或名称" />
           </div>
         </label>
 
         <p v-if="displayedErrorMessage" class="batman-error">{{ displayedErrorMessage }}</p>
         <p v-else-if="results.length > 0 && filteredResults.length === 0" class="instrument-picker-empty">没有匹配当前类型的标的</p>
 
-        <div v-if="filteredResults.length > 0" class="instrument-picker-results" role="listbox">
+        <div v-if="selectedInstrument === null && filteredResults.length > 0" class="instrument-picker-results" role="listbox">
           <button
             v-for="instrument in filteredResults"
             :key="instrument.id"
-            :aria-selected="selectedInstrument?.id === instrument.id"
-            :class="{ selected: selectedInstrument?.id === instrument.id }"
             :data-instrument-picker-result="instrument.id"
             role="option"
             type="button"
@@ -158,8 +169,6 @@ onBeforeUnmount(clearSearchTimer);
             <span>{{ instrumentCodeLabel(instrument) }}</span>
           </button>
         </div>
-
-        <p v-if="selectedInstrument" class="instrument-picker-selection">已选择：{{ selectedInstrument.name }} {{ instrumentCodeLabel(selectedInstrument) }}</p>
 
         <footer>
           <button class="batman-button" type="button" @click="close">取消</button>
@@ -182,7 +191,7 @@ onBeforeUnmount(clearSearchTimer);
 .instrument-picker-search-field:focus-within { border-color: #65d7ca; outline: 1px solid #65d7ca; }
 .instrument-picker-search-field > svg { color: #8da4bb; flex: 0 0 auto; }
 .instrument-picker-search-field input { background: transparent; border: 0; border-radius: 0; flex: 1; min-width: 0; outline: 0; padding-left: 0; }
-.instrument-picker-search-field input:focus { border: 0; outline: 0; }
+.instrument-picker-search-field input:focus { border: 0; outline: 0; }.instrument-picker-selected-value { color: #eaf3fb; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.instrument-picker-clear-selection { flex: 0 0 auto; margin-right: 4px; }
 .instrument-picker-results { background: #111b2b; border: 1px solid #30445e; border-radius: 6px; display: grid; max-height: 224px; overflow-y: auto; }
 .instrument-picker-results button { background: transparent; border: 0; border-bottom: 1px solid #273950; color: #d7e5ef; display: grid; font-size: 14px; gap: 3px; min-height: 56px; padding: 9px 12px; text-align: left; }
 .instrument-picker-results button:last-child { border-bottom: 0; }
@@ -190,9 +199,8 @@ onBeforeUnmount(clearSearchTimer);
 .instrument-picker-results button.selected { box-shadow: inset 3px 0 #65d7ca; }
 .instrument-picker-results strong { color: #eef8ff; font-size: 14px; font-weight: 700; }
 .instrument-picker-results span { color: #91a6bb; font-size: 14px; }
-.instrument-picker-empty, .instrument-picker-selection { color: #9eb3c8; font-size: 14px; margin: 0; }
+.instrument-picker-empty { color: #9eb3c8; font-size: 14px; margin: 0; }
 .instrument-picker-dialog .batman-error { font-size: 14px; }
-.instrument-picker-selection { color: #83d1c8; }
 .instrument-picker-form footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
 .instrument-picker-form footer .batman-button { font-size: 14px; }
 .spinning { animation: instrument-picker-spin 0.8s linear infinite; }

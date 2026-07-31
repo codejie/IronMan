@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,13 +72,14 @@ describe("trend analysis", () => {
     expect((await waitForRun(alice.token, run.result.id)).status).toBe("completed");
 
     const reports = await post("/api/analysis/trend/reports/list", { runId: run.result.id }, alice.token);
-    const reportBody = (await reports.json()) as ApiResponse<{ items: Array<{ id: string; result: { bars: unknown[]; indicators: unknown[]; risk: { evidence: string[]; reminder: { threshold: number } | null }; error: string | null } }> }>;
+    const reportBody = (await reports.json()) as ApiResponse<{ items: Array<{ id: string; aiInterpretation: { provider: string; createdAt: string } | null; result: { bars: unknown[]; indicators: unknown[]; risk: { evidence: string[]; reminder: { threshold: number } | null }; error: string | null } }> }>;
     expect(reports.status).toBe(200);
     expect(reportBody.result.items).toHaveLength(1);
     expect(reportBody.result.items[0]?.result.bars.length).toBeGreaterThan(0);
     expect(reportBody.result.items[0]?.result.indicators).toHaveLength(3);
     expect(reportBody.result.items[0]?.result.risk.evidence.length).toBeGreaterThan(0);
     expect(reportBody.result.items[0]?.result.error).toBeNull();
+    expect(reportBody.result.items[0]?.aiInterpretation).toBeNull();
 
     const summary = await post("/api/analysis/trend/runs/summary", { runId: run.result.id }, alice.token);
     const summaryBody = (await summary.json()) as ApiResponse<{ total: number; risk: { high: number; medium: number; low: number }; turningPointCount: number }>;
@@ -91,9 +93,27 @@ describe("trend analysis", () => {
     expect(runsBody.result.items.find((item) => item.id === run.result.id)?.overallDirection).not.toBeNull();
 
     const interpretation = await post("/api/analysis/trend/reports/interpret", { runId: run.result.id, reportId: reportBody.result.items[0]!.id }, alice.token);
-    const interpretationBody = (await interpretation.json()) as ApiResponse<{ provider: string; content: string }>;
+    const interpretationBody = (await interpretation.json()) as ApiResponse<{ provider: string; content: string; cached: boolean; createdAt: string }>;
     expect(interpretation.status).toBe(200);
     expect(interpretationBody.result.content.length).toBeGreaterThan(0);
+    expect(interpretationBody.result.cached).toBe(false);
+    expect(interpretationBody.result.createdAt).toBeDefined();
+
+    const database = new Database(join(tempDirectory, "ironman.sqlite"), { strict: true });
+    const aiMessageCount = database.query("SELECT COUNT(*) AS count FROM assistant_messages").get() as { count: number };
+    const savedInterpretation = database.query("SELECT COUNT(*) AS count FROM trend_run_report_interpretations WHERE report_id = $reportId").get({ reportId: reportBody.result.items[0]!.id }) as { count: number };
+    expect(aiMessageCount.count).toBeGreaterThan(0);
+    expect(savedInterpretation.count).toBe(1);
+
+    const cachedInterpretation = await post("/api/analysis/trend/reports/interpret", { runId: run.result.id, reportId: reportBody.result.items[0]!.id }, alice.token);
+    const cachedInterpretationBody = (await cachedInterpretation.json()) as ApiResponse<{ provider: string; content: string; cached: boolean; createdAt: string }>;
+    expect(cachedInterpretation.status).toBe(200);
+    expect(cachedInterpretationBody.result).toMatchObject({ content: interpretationBody.result.content, provider: interpretationBody.result.provider, createdAt: interpretationBody.result.createdAt, cached: true });
+    expect((database.query("SELECT COUNT(*) AS count FROM assistant_messages").get() as { count: number }).count).toBe(aiMessageCount.count);
+
+    const reportsWithInterpretation = await post("/api/analysis/trend/reports/list", { runId: run.result.id }, alice.token);
+    const reportsWithInterpretationBody = (await reportsWithInterpretation.json()) as ApiResponse<{ items: Array<{ aiInterpretation: { provider: string; createdAt: string } | null }> }>;
+    expect(reportsWithInterpretationBody.result.items[0]?.aiInterpretation).toMatchObject({ provider: interpretationBody.result.provider, createdAt: interpretationBody.result.createdAt });
 
     const privateReports = await post("/api/analysis/trend/reports/list", { runId: run.result.id }, bob.token);
     expect(privateReports.status).toBe(404);
@@ -105,6 +125,8 @@ describe("trend analysis", () => {
     const deleted = await post("/api/analysis/trend/runs/delete", { runId: run.result.id }, alice.token);
     expect(deleted.status).toBe(200);
     expect(((await deleted.json()) as ApiResponse<{ deleted: boolean }>).result.deleted).toBe(true);
+    expect((database.query("SELECT COUNT(*) AS count FROM trend_run_report_interpretations WHERE report_id = $reportId").get({ reportId: reportBody.result.items[0]!.id }) as { count: number }).count).toBe(0);
+    database.close();
     const removedReports = await post("/api/analysis/trend/reports/list", { runId: run.result.id }, alice.token);
     expect(removedReports.status).toBe(404);
   });

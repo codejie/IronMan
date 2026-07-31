@@ -1,3 +1,5 @@
+import { resolveAkshareProviderUrl } from "../config";
+
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export type AkShareTechnicalKind = "new_high" | "uptrend" | "high_volume" | "rise_volume_price" | "limit_up_pool";
@@ -37,7 +39,7 @@ export class AkShareTechnicalProvider implements TechnicalRankingProvider {
   private readonly request: Fetcher;
 
   constructor(options: AkShareTechnicalProviderOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? process.env.AKSHARE_PROVIDER_URL ?? "http://127.0.0.1:8001").replace(/\/$/, "");
+    this.baseUrl = (options.baseUrl ?? resolveAkshareProviderUrl()).replace(/\/$/, "");
     this.timeoutMs = options.timeoutMs ?? Number(process.env.AKSHARE_PROVIDER_TIMEOUT_MS ?? 8_000);
     this.request = options.fetcher ?? fetch;
   }

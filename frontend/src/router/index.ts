@@ -54,6 +54,11 @@ const router = createRouter({
           meta: { title: "AI咨询" },
         },
         {
+          path: "automation/alerts",
+          component: () => import("@/views/AlertCenterView.vue"),
+          meta: { title: "提醒" },
+        },
+        {
           path: "data/third/technical-data",
           component: () => import("@/views/third/ThirdTechnicalDataView.vue"),
           meta: { title: "技术数据" },
@@ -77,6 +82,12 @@ const router = createRouter({
           path: "system/configuration",
           component: () => import("@/views/SystemConfigurationView.vue"),
           meta: { title: "系统配置" },
+        },
+        {
+          path: "settings/profile",
+          component: placeholder(),
+          props: { label: "用户" },
+          meta: { title: "用户" },
         },
         { path: "sytem/configuration", redirect: "/system/configuration" },
       ],

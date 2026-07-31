@@ -13,9 +13,9 @@ bun run dev:backend
 bun run dev:frontend
 ```
 
-前端默认地址为 `http://localhost:5173`，后端 OpenAPI 为 `http://localhost:3000/openapi.json`。开发环境 SQLite 默认写入 `data/ironman.sqlite`；生产环境必须设置强随机 `JWT_SECRET`。
+应用的主机与端口统一在根目录 [`.env`](.env.example) 中配置：默认前端为 `http://127.0.0.1:6100`，后端 OpenAPI 为 `http://127.0.0.1:6101/openapi.json`，AKShareProvider 为 `http://127.0.0.1:6102`。开发环境 SQLite 默认写入 `data/ironman.sqlite`；生产环境必须设置强随机 `JWT_SECRET`。
 
-`bun run dev:backend` 会先在 `127.0.0.1:8001` 启动隔离的 AKShareProvider，再启动 Bun backend。Provider 只供 backend 内部调用；在“系统配置 > 行情与日历”中选择“AkShare 本地服务”即可使用。设置 `AKSHARE_PROVIDER_AUTOSTART=false` 可改为连接已运行的 Provider，地址由 `AKSHARE_PROVIDER_URL` 指定。
+`bun run dev:backend` 会先按 `.env` 中的 `AKSHARE_PROVIDER_HOST` 与 `AKSHARE_PROVIDER_PORT` 启动隔离的 AKShareProvider，再启动 Bun backend。Provider 只供 backend 内部调用；在“系统配置 > 行情与日历”中选择“AkShare 本地服务”即可使用。设置 `AKSHARE_PROVIDER_AUTOSTART=false` 可改为连接已运行的 Provider；如需指定完整地址，可设置 `AKSHARE_PROVIDER_URL` 覆盖主机与端口配置。
 
 ## 测试与构建
 
@@ -33,4 +33,4 @@ cp .env.example .env
 docker compose up --build
 ```
 
-访问 `http://localhost:8080`。Compose 只运行前端与单个后端实例，SQLite 数据、WAL 文件和备份目录均由 `IRONMAN_DATA_DIR` 持久化。
+访问 `http://127.0.0.1:6100`。Compose 只运行前端与单个后端实例，SQLite 数据、WAL 文件和备份目录均由 `IRONMAN_DATA_DIR` 持久化。

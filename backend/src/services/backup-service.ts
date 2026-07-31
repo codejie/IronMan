@@ -29,11 +29,12 @@ const exportTables: TableSpec[] = [
   { name: "analysis_reports", columns: ["id", "task_id", "instrument_id", "result_json", "created_at"] },
   { name: "task_logs", columns: ["id", "task_id", "level", "message", "created_at"] },
   { name: "scheduled_jobs", columns: ["id", "name", "kind", "strategy_id", "interval_minutes", "enabled", "last_run_at", "next_run_at", "created_at", "updated_at"] },
-  { name: "alerts", columns: ["id", "instrument_id", "direction", "threshold", "cooldown_minutes", "enabled", "last_triggered_at", "created_at", "updated_at"] },
-  { name: "alert_events", columns: ["id", "alert_id", "price", "message", "created_at"] }
+  { name: "alert_rules", columns: ["id", "name", "kind", "source", "severity", "instrument_id", "scope_type", "condition_json", "cooldown_minutes", "enabled", "last_triggered_at", "created_at", "updated_at"] },
+  { name: "alert_events", columns: ["id", "rule_id", "instrument_id", "severity", "status", "title", "message", "price", "snapshot_json", "dedupe_key", "triggered_at", "read_at", "acknowledged_at", "resolved_at", "snoozed_until", "created_at"] },
+  { name: "alert_suggestions", columns: ["id", "source", "instrument_id", "title", "message", "severity", "rule_kind", "condition_json", "cooldown_minutes", "status", "created_at", "updated_at", "accepted_at", "ignored_at"] }
 ];
 
-const deletionOrder = ["task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alerts", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
+const deletionOrder = ["task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alert_suggestions", "alert_rules", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
 
 export class BackupService {
   constructor(private readonly database: IronManDatabase) {}

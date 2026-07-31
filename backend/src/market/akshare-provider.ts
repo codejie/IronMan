@@ -1,4 +1,5 @@
 import { errors } from "../errors";
+import { resolveAkshareProviderUrl } from "../config";
 import type { AssetType, Instrument, InstrumentCatalogEntry, InstrumentCatalogProvider, MarketDataProvider, PriceBar, Timeframe } from "./types";
 
 type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
@@ -26,7 +27,7 @@ export class AkShareMarketProvider implements MarketDataProvider, InstrumentCata
   private readonly request: Fetcher;
 
   constructor(options: AkShareMarketProviderOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? process.env.AKSHARE_PROVIDER_URL ?? "http://127.0.0.1:8001").replace(/\/$/, "");
+    this.baseUrl = (options.baseUrl ?? resolveAkshareProviderUrl()).replace(/\/$/, "");
     this.timeoutMs = options.timeoutMs ?? Number(process.env.AKSHARE_PROVIDER_TIMEOUT_MS ?? 8_000);
     this.request = options.fetcher ?? fetch;
   }

@@ -43,6 +43,7 @@ function detail(meaning: string, usage: string, trend: string) {
 const report: TrendRunReport = {
   id: "report-1",
   instrumentId: "instrument-1",
+  aiInterpretation: null,
   createdAt: "2026-07-23T00:00:00.000Z",
   result: {
     instrument: {

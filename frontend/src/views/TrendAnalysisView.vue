@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import {
   BarChart3,
+  Bell,
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
   CirclePlus,
   ClipboardList,
+  Ellipsis,
   LoaderCircle,
   Play,
   RotateCcw,
@@ -13,7 +16,7 @@ import {
   Square,
   Trash2,
 } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import TrendReportChart from "@/components/TrendReportChart.vue";
 import {
@@ -52,6 +55,7 @@ const reportFilter = ref<ReportFilter>("all");
 const isLoading = ref(false);
 const isRunning = ref(false);
 const isGeneratingAi = ref(false);
+const generatingReportId = ref<string | null>(null);
 const isLogsOpen = ref(false);
 const deletingRunId = ref<string | null>(null);
 const aiAvailable = ref(false);
@@ -59,6 +63,7 @@ const aiInterpretation = ref("");
 const errorMessage = ref("");
 const noticeMessage = ref("");
 const toastMessage = ref("");
+const aiInterpretationCard = ref<HTMLElement | null>(null);
 let stream: EventSource | undefined;
 let toastTimer: number | undefined;
 const selectedStrategy = computed(
@@ -101,7 +106,7 @@ const scopeOptions: Array<{ value: TrendTargetScope; label: string }> = [
   { value: "holdings", label: "持仓记录" },
   { value: "watchlist", label: "自选列表" },
   { value: "holdings_watchlist", label: "持仓 + 自选" },
-  { value: "custom", label: "自定义标的" },
+  { value: "custom", label: "自定义" },
   { value: "all", label: "全市场" },
 ];
 const rangeOptions: Array<{ value: TrendDateRange["preset"]; label: string }> =
@@ -152,7 +157,8 @@ function typeLabel(
   return type === "fund" ? "基金" : type === "index" ? "指数" : "股票";
 }
 function strategyOptionLabel(strategy: TrendStrategy): string {
-  return `[${scopeLabel(strategy.targetScope)}] ${strategy.name}: ${strategy.remarks.trim() || "未填写描述"}`;
+  const remarks = strategy.remarks.trim();
+  return `[${scopeLabel(strategy.targetScope)}] ${strategy.name}${remarks === "" ? "" : `: ${remarks}`}`;
 }
 function runTitle(run: TrendRun): string {
   if (run.status === "completed")
@@ -431,24 +437,44 @@ async function interpretSelectedReport(): Promise<void> {
     isGeneratingAi.value
   )
     return;
+  const runId = selectedRunId.value;
+  const reportId = selectedReport.value.id;
   isGeneratingAi.value = true;
+  generatingReportId.value = reportId;
   try {
     const result = await api.interpretTrendReport(
       token.value,
-      selectedRunId.value,
-      selectedReport.value.id,
+      runId,
+      reportId,
     );
-    aiInterpretation.value = result.content;
+    if (selectedRunId.value === runId) {
+      reports.value = reports.value.map((report) =>
+        report.id === reportId
+          ? { ...report, aiInterpretation: { provider: result.provider, createdAt: result.createdAt } }
+          : report,
+      );
+      if (selectedReport.value?.id === reportId) aiInterpretation.value = result.content;
+    }
+    if (!result.cached) noticeMessage.value = "AI 解读已生成并保存";
   } catch (error) {
     errorMessage.value = message(error, "AI 解读失败");
   } finally {
     isGeneratingAi.value = false;
+    generatingReportId.value = null;
   }
 }
 
 function selectReport(report: TrendRunReport): void {
   selectedReportId.value = report.id;
   aiInterpretation.value = "";
+}
+async function openAiInterpretation(report: TrendRunReport): Promise<void> {
+  selectReport(report);
+  if (report.aiInterpretation !== null) {
+    await nextTick();
+    aiInterpretationCard.value?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  await interpretSelectedReport();
 }
 function connect(runId: string): void {
   if (token.value === null || stream !== undefined) return;
@@ -803,29 +829,32 @@ onBeforeUnmount(() => {
                   </td>
                   <td class="trend-report-actions">
                     <button
-                      class="batman-text-button"
+                      :aria-label="`为 ${report.result.instrument.name} 创建风险提醒`"
+                      class="batman-icon-button trend-reminder-button"
                       :disabled="
                         report.result.error !== null ||
                         report.result.risk.reminder === null
                       "
+                      data-hint="创建风险提醒"
+                      data-hint-position="top"
                       type="button"
                       @click.stop="createReminder(report)"
                     >
-                      创建提醒</button
+                      <Bell :size="14" /></button
                     ><button
-                      class="batman-text-button"
+                      :aria-label="`${generatingReportId === report.id ? '正在生成' : report.aiInterpretation ? '查看已缓存' : '生成'} ${report.result.instrument.name} 趋势报告 AI 解读`"
+                      :class="['batman-icon-button', 'trend-ai-interpret-button', { 'has-cached-interpretation': report.aiInterpretation !== null, 'is-generating-interpretation': generatingReportId === report.id }]"
+                      :data-hint="generatingReportId === report.id ? '正在生成 AI 解读' : report.aiInterpretation ? '查看已缓存 AI 解读' : '生成 AI 解读'"
+                      data-hint-position="top"
                       :disabled="
                         report.result.error !== null ||
-                        !aiAvailable ||
+                        (report.aiInterpretation === null && !aiAvailable) ||
                         isGeneratingAi
                       "
                       type="button"
-                      @click.stop="
-                        selectReport(report);
-                        interpretSelectedReport();
-                      "
+                      @click.stop="openAiInterpretation(report)"
                     >
-                      <Bot :size="13" />AI 解读
+                      <Bot :size="14" /><Check v-if="report.aiInterpretation" aria-hidden="true" class="trend-ai-cache-marker" :size="9" /><Ellipsis v-else-if="generatingReportId === report.id" aria-hidden="true" class="trend-ai-generating-marker" :size="12" />
                     </button>
                   </td>
                 </tr>
@@ -851,20 +880,20 @@ onBeforeUnmount(() => {
           :report="selectedReport"
           :strategy="selectedStrategy"
         />
-        <section v-if="selectedReport" class="trend-ai-card">
+        <section v-if="selectedReport" ref="aiInterpretationCard" class="trend-ai-card">
           <header>
             <strong><Bot :size="14" />AI 解读</strong
             ><button
-              v-if="aiAvailable"
+              v-if="aiAvailable || selectedReport.aiInterpretation"
               :disabled="selectedReport.result.error !== null || isGeneratingAi"
               class="batman-text-button"
               type="button"
               @click="interpretSelectedReport"
             >
-              {{ isGeneratingAi ? "生成中" : "生成解读" }}
+              {{ isGeneratingAi ? "生成中" : selectedReport.aiInterpretation ? "查看解读" : "生成解读" }}
             </button>
           </header>
-          <p v-if="!aiAvailable">
+          <p v-if="!aiAvailable && selectedReport.aiInterpretation === null">
             配置远程 AI 模型后，可基于本地趋势和风险证据生成补充解读。
           </p>
           <p v-else-if="selectedReport.result.error !== null">
@@ -1932,6 +1961,41 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.trend-ai-interpret-button {
+  overflow: visible;
+  position: relative;
+}
+.trend-ai-interpret-button.has-cached-interpretation {
+  border-color: #4aaeb0;
+  color: #75e1d7;
+}
+.trend-ai-cache-marker {
+  background: #132238;
+  border: 1px solid #65d7ca;
+  border-radius: 50%;
+  bottom: -4px;
+  color: #7ae3d7;
+  padding: 1px;
+  pointer-events: none;
+  position: absolute;
+  right: -4px;
+}
+.trend-ai-generating-marker {
+  animation: trend-ai-generating-pulse 1.1s ease-in-out infinite;
+  background: #132238;
+  border: 1px solid #65d7ca;
+  border-radius: 50%;
+  bottom: -4px;
+  color: #a8c8d5;
+  padding: 0;
+  pointer-events: none;
+  position: absolute;
+  right: -4px;
+}
+@keyframes trend-ai-generating-pulse {
+  0%, 100% { opacity: 0.42; transform: scale(0.84); }
+  50% { opacity: 1; transform: scale(1); }
+}
 .trend-report-layout {
   grid-template-columns: 260px minmax(0, 1fr);
 }
@@ -2207,15 +2271,24 @@ onBeforeUnmount(() => {
 }
 .trend-report-actions {
   cursor: default;
+  overflow: visible;
   white-space: nowrap;
 }
-.trend-report-actions .batman-text-button {
-  align-items: center;
-  display: inline-flex;
-  gap: 3px;
-  margin-right: 7px;
+.trend-report-actions .batman-icon-button {
+  margin-right: 5px;
+  position: relative;
+  z-index: 2;
 }
-.trend-report-actions .batman-text-button:disabled {
+.trend-report-actions .batman-icon-button[data-hint][data-hint-position="top"]::after {
+  bottom: calc(100% + 6px);
+  top: auto;
+  transform: translate(-50%, 2px);
+}
+.trend-report-actions .batman-icon-button[data-hint][data-hint-position="top"]:hover::after,
+.trend-report-actions .batman-icon-button[data-hint][data-hint-position="top"]:focus-visible::after {
+  transform: translate(-50%, 0);
+}
+.trend-report-actions .batman-icon-button:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }

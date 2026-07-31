@@ -6,7 +6,7 @@
 
 ## 边界
 
-- Provider 默认仅监听 `127.0.0.1:8001`。
+- Provider 默认按根目录 `.env` 中的 `AKSHARE_PROVIDER_HOST` 与 `AKSHARE_PROVIDER_PORT` 监听，即 `127.0.0.1:6102`。
 - Provider 不提供任意 AkShare 函数透传；只暴露 `/health`、`/v1/market/history` 和 `/v1/market/spot`。
 - backend 负责用户隔离、`market_bars` 缓存、数据源优先级、错误转换与回退。
 - `fund` 请求使用 ETF 专用 AkShare 接口；开放式基金不在本期范围内。

@@ -88,6 +88,10 @@ describe("TrendStrategyEditorView", () => {
     expect(wrapper.get(".strategy-settings-column").text()).toContain(
       "标的范围",
     );
+    expect(wrapper.get(".strategy-settings-column").text()).toContain("自定义");
+    expect(wrapper.get(".strategy-settings-column").text()).not.toContain(
+      "自定义标的",
+    );
     expect(wrapper.get(".strategy-indicator-column").text()).toContain(
       "指标库",
     );

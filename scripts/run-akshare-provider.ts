@@ -12,9 +12,10 @@ if (!existsSync(virtualPython)) {
   process.exit(1);
 }
 
-const port = process.env.AKSHARE_PROVIDER_PORT ?? "8001";
+const host = process.env.AKSHARE_PROVIDER_HOST ?? "127.0.0.1";
+const port = process.env.AKSHARE_PROVIDER_PORT ?? "6102";
 const provider = Bun.spawn({
-  cmd: [virtualPython, "-m", "uvicorn", "akshare_provider.main:app", "--host", "127.0.0.1", "--port", port],
+  cmd: [virtualPython, "-m", "uvicorn", "akshare_provider.main:app", "--host", host, "--port", port],
   cwd: providerDirectory,
   env: { ...process.env, PYTHONPATH: [providerDirectory, process.env.PYTHONPATH].filter(Boolean).join(delimiter) },
   stdout: "inherit",

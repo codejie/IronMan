@@ -340,11 +340,40 @@ export interface ScheduledJob {
   updatedAt: string;
 }
 
+export type AlertDirection = "above" | "below";
+export type AlertRuleKind = "price_threshold" | "target_price" | "trade_plan";
+export type AlertRuleSource = "manual" | "system";
+export type AlertSeverity = "info" | "warning" | "risk";
+export type AlertScopeType = "instrument" | "watchlist" | "holdings" | "custom";
+export type AlertEventStatus =
+  | "unread"
+  | "read"
+  | "acknowledged"
+  | "snoozed"
+  | "resolved";
+export type AlertSuggestionSource = "trend" | "watchlist" | "holding" | "system";
+export type AlertSuggestionStatus = "pending" | "accepted" | "ignored";
+export type AlertSystemMode = "off" | "suggest" | "auto";
+export type AlertCondition =
+  | { direction: AlertDirection; threshold: number }
+  | { direction: AlertDirection; targetPrice: number }
+  | {
+      action: "buy" | "sell" | "review" | "note";
+      note: string;
+      scheduledAt: string;
+    };
+
 export interface AlertRule {
   id: string;
-  instrumentId: string;
-  direction: "above" | "below";
-  threshold: number;
+  name: string;
+  kind: AlertRuleKind;
+  source: AlertRuleSource;
+  severity: AlertSeverity;
+  instrumentId: string | null;
+  scopeType: AlertScopeType;
+  condition: AlertCondition;
+  direction: AlertDirection | null;
+  threshold: number | null;
   cooldownMinutes: number;
   enabled: boolean;
   lastTriggeredAt: string | null;
@@ -354,10 +383,46 @@ export interface AlertRule {
 
 export interface AlertEvent {
   id: string;
-  alertId: string;
-  price: number;
+  alertId: string | null;
+  ruleId: string | null;
+  instrumentId: string | null;
+  severity: AlertSeverity;
+  status: AlertEventStatus;
+  title: string;
   message: string;
+  price: number | null;
+  snapshot: Record<string, unknown>;
+  triggeredAt: string;
+  readAt: string | null;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  snoozedUntil: string | null;
   createdAt: string;
+}
+
+export interface AlertSuggestion {
+  id: string;
+  source: AlertSuggestionSource;
+  instrumentId: string | null;
+  title: string;
+  message: string;
+  severity: AlertSeverity;
+  ruleKind: AlertRuleKind;
+  condition: AlertCondition;
+  cooldownMinutes: number;
+  status: AlertSuggestionStatus;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  ignoredAt: string | null;
+}
+
+export interface AlertSettings {
+  systemMode: AlertSystemMode;
+  defaultCooldownMinutes: number;
+  autoScanEnabled: boolean;
+  scanIntervalMinutes: number;
+  quietHours: { start: string; end: string } | null;
 }
 
 export interface Note {
@@ -543,6 +608,7 @@ export interface TrendIndicatorRunResult {
 export interface TrendRunReport {
   id: string;
   instrumentId: string;
+  aiInterpretation: Pick<TrendRunReportInterpretation, "provider" | "createdAt"> | null;
   result: {
     instrument: Pick<
       Instrument,
@@ -556,6 +622,12 @@ export interface TrendRunReport {
     risk: TrendRiskAssessment;
     error: string | null;
   };
+  createdAt: string;
+}
+
+export interface TrendRunReportInterpretation {
+  provider: AiProvider;
+  content: string;
   createdAt: string;
 }
 export interface TrendRunLog {
@@ -876,7 +948,7 @@ export const api = {
   trendRunSummary: (token: string, runId: string) =>
     post<TrendRunSummary>("/analysis/trend/runs/summary", { runId }, token),
   interpretTrendReport: (token: string, runId: string, reportId: string) =>
-    post<{ provider: AiProvider; content: string }>(
+    post<TrendRunReportInterpretation & { cached: boolean }>(
       "/analysis/trend/reports/interpret",
       { runId, reportId },
       token,
@@ -902,17 +974,80 @@ export const api = {
     token: string,
     input: {
       instrumentId: string;
-      direction: "above" | "below";
+      direction: AlertDirection;
       threshold: number;
       cooldownMinutes: number;
     },
   ) => post<AlertRule>("/automation/alerts/create", input, token),
   listAlerts: (token: string) =>
     post<{ items: AlertRule[] }>("/automation/alerts/list", {}, token),
+  createAlertRule: (
+    token: string,
+    input: {
+      name: string;
+      kind: AlertRuleKind;
+      instrumentId?: string | null;
+      condition: AlertCondition;
+      severity?: AlertSeverity;
+      cooldownMinutes?: number;
+      enabled?: boolean;
+      scopeType?: AlertScopeType;
+    },
+  ) => post<AlertRule>("/automation/alerts/rules/create", input, token),
+  listAlertRules: (token: string) =>
+    post<{ items: AlertRule[] }>("/automation/alerts/rules/list", {}, token),
+  deleteAlertRule: (token: string, id: string) =>
+    post<{ deleted: true }>("/automation/alerts/rules/delete", { id }, token),
   evaluateAlerts: (token: string) =>
     post<{ triggered: number }>("/automation/alerts/evaluate", {}, token),
-  listAlertEvents: (token: string) =>
-    post<{ items: AlertEvent[] }>("/automation/alerts/events/list", {}, token),
+  listAlertEvents: (token: string, status?: AlertEventStatus) =>
+    post<{ items: AlertEvent[] }>(
+      "/automation/alerts/events/list",
+      { status },
+      token,
+    ),
+  updateAlertEventStatus: (
+    token: string,
+    input: {
+      id: string;
+      status: AlertEventStatus;
+      snoozedUntil?: string | null;
+    },
+  ) => post<AlertEvent>("/automation/alerts/events/update-status", input, token),
+  createAlertSuggestion: (
+    token: string,
+    input: {
+      source: AlertSuggestionSource;
+      instrumentId?: string | null;
+      title: string;
+      message: string;
+      severity: AlertSeverity;
+      ruleKind: AlertRuleKind;
+      condition: AlertCondition;
+      cooldownMinutes?: number;
+    },
+  ) =>
+    post<AlertSuggestion>(
+      "/automation/alerts/suggestions/create",
+      input,
+      token,
+    ),
+  listAlertSuggestions: (token: string, status?: AlertSuggestionStatus) =>
+    post<{ items: AlertSuggestion[] }>(
+      "/automation/alerts/suggestions/list",
+      { status },
+      token,
+    ),
+  acceptAlertSuggestion: (token: string, id: string) =>
+    post<{ suggestion: AlertSuggestion; rule: AlertRule }>(
+      "/automation/alerts/suggestions/accept",
+      { id },
+      token,
+    ),
+  getAlertSettings: (token: string) =>
+    post<AlertSettings>("/automation/alerts/settings/get", {}, token),
+  updateAlertSettings: (token: string, input: Partial<AlertSettings>) =>
+    post<AlertSettings>("/automation/alerts/settings/update", input, token),
   createNote: (
     token: string,
     input: {

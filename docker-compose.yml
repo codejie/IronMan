@@ -6,7 +6,8 @@ services:
     environment:
       DATABASE_PATH: /app/data/ironman.sqlite
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting IronMan}
-      PORT: 3000
+      IRONMAN_BACKEND_HOST: 0.0.0.0
+      IRONMAN_BACKEND_PORT: ${IRONMAN_BACKEND_PORT:-6101}
       TOKEN_TTL_SECONDS: 604800
     volumes:
       - ${IRONMAN_DATA_DIR:-./data}:/app/data
@@ -16,7 +17,7 @@ services:
           "CMD",
           "bun",
           "-e",
-          "const response = await fetch('http://127.0.0.1:3000/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); if (!response.ok) process.exit(1);"
+          "const response = await fetch('http://127.0.0.1:${IRONMAN_BACKEND_PORT:-6101}/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); if (!response.ok) process.exit(1);"
         ]
       interval: 15s
       timeout: 5s
@@ -31,6 +32,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    environment:
+      BACKEND_UPSTREAM_HOST: backend
+      BACKEND_UPSTREAM_PORT: ${IRONMAN_BACKEND_PORT:-6101}
     ports:
-      - ${IRONMAN_PORT:-8080}:80
+      - ${IRONMAN_FRONTEND_PORT:-6100}:80
     restart: unless-stopped

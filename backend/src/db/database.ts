@@ -382,6 +382,132 @@ const migrations: Migration[] = [
       );
       CREATE INDEX IF NOT EXISTS assistant_messages_conversation_idx ON assistant_messages(user_id, conversation_id, created_at ASC);
     `
+  },
+  {
+    version: 9,
+    sql: `
+      ALTER TABLE alert_events RENAME TO legacy_alert_events;
+      ALTER TABLE alerts RENAME TO legacy_alerts;
+
+      CREATE TABLE IF NOT EXISTS alert_rules (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('price_threshold', 'target_price', 'trade_plan')),
+        source TEXT NOT NULL CHECK (source IN ('manual', 'system')),
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'risk')),
+        instrument_id TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        scope_type TEXT NOT NULL CHECK (scope_type IN ('instrument', 'watchlist', 'holdings', 'custom')),
+        condition_json TEXT NOT NULL,
+        cooldown_minutes INTEGER NOT NULL DEFAULT 60 CHECK (cooldown_minutes BETWEEN 1 AND 10080),
+        enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        last_triggered_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS alert_rules_owner_idx ON alert_rules(user_id, enabled, updated_at DESC);
+      CREATE INDEX IF NOT EXISTS alert_rules_instrument_idx ON alert_rules(user_id, instrument_id, kind);
+
+      CREATE TABLE IF NOT EXISTS alert_events (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        rule_id TEXT REFERENCES alert_rules(id) ON DELETE SET NULL,
+        instrument_id TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'risk')),
+        status TEXT NOT NULL CHECK (status IN ('unread', 'read', 'acknowledged', 'snoozed', 'resolved')),
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        price REAL,
+        snapshot_json TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        triggered_at TEXT NOT NULL,
+        read_at TEXT,
+        acknowledged_at TEXT,
+        resolved_at TEXT,
+        snoozed_until TEXT,
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, dedupe_key)
+      );
+      CREATE INDEX IF NOT EXISTS alert_events_owner_idx ON alert_events(user_id, status, triggered_at DESC);
+      CREATE INDEX IF NOT EXISTS alert_events_rule_idx ON alert_events(user_id, rule_id, triggered_at DESC);
+
+      CREATE TABLE IF NOT EXISTS alert_suggestions (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source TEXT NOT NULL CHECK (source IN ('trend', 'watchlist', 'holding', 'system')),
+        instrument_id TEXT REFERENCES instruments(id) ON DELETE SET NULL,
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'risk')),
+        rule_kind TEXT NOT NULL CHECK (rule_kind IN ('price_threshold', 'target_price', 'trade_plan')),
+        condition_json TEXT NOT NULL,
+        cooldown_minutes INTEGER NOT NULL DEFAULT 60 CHECK (cooldown_minutes BETWEEN 1 AND 10080),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'accepted', 'ignored')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        accepted_at TEXT,
+        ignored_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS alert_suggestions_owner_idx ON alert_suggestions(user_id, status, updated_at DESC);
+
+      INSERT OR IGNORE INTO alert_rules (
+        id, user_id, name, kind, source, severity, instrument_id, scope_type, condition_json, cooldown_minutes, enabled, last_triggered_at, created_at, updated_at
+      )
+      SELECT
+        legacy_alerts.id,
+        legacy_alerts.user_id,
+        instruments.name || ' 价格提醒',
+        'price_threshold',
+        'manual',
+        'warning',
+        legacy_alerts.instrument_id,
+        'instrument',
+        json_object('direction', legacy_alerts.direction, 'threshold', legacy_alerts.threshold),
+        legacy_alerts.cooldown_minutes,
+        legacy_alerts.enabled,
+        legacy_alerts.last_triggered_at,
+        legacy_alerts.created_at,
+        legacy_alerts.updated_at
+      FROM legacy_alerts
+      JOIN instruments ON instruments.id = legacy_alerts.instrument_id;
+
+      INSERT OR IGNORE INTO alert_events (
+        id, user_id, rule_id, instrument_id, severity, status, title, message, price, snapshot_json, dedupe_key, triggered_at, created_at
+      )
+      SELECT
+        legacy_alert_events.id,
+        legacy_alert_events.user_id,
+        legacy_alert_events.alert_id,
+        legacy_alerts.instrument_id,
+        'warning',
+        'unread',
+        instruments.name || ' 价格提醒',
+        legacy_alert_events.message,
+        legacy_alert_events.price,
+        json_object('legacyAlertId', legacy_alert_events.alert_id),
+        legacy_alert_events.alert_id || ':' || legacy_alert_events.created_at,
+        legacy_alert_events.created_at,
+        legacy_alert_events.created_at
+      FROM legacy_alert_events
+      JOIN legacy_alerts ON legacy_alerts.id = legacy_alert_events.alert_id
+      JOIN instruments ON instruments.id = legacy_alerts.instrument_id;
+    `
+  },
+  {
+    version: 10,
+    sql: `
+      CREATE TABLE IF NOT EXISTS trend_run_report_interpretations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES trend_runs(id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES trend_run_reports(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK (provider IN ('local', 'deepseek', 'ollama', 'openai_compatible')),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(report_id)
+      );
+      CREATE INDEX IF NOT EXISTS trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
+    `
   }
 ];
 

@@ -32,7 +32,7 @@ describe("InstrumentPickerDialog", () => {
     vi.useRealTimers();
   });
 
-  test("filters search results by selected type and emits the selected instrument", async () => {
+  test("fills the selected instrument into the search field, clears it, and emits the replacement selection", async () => {
     const stock = instrument({ assetType: "stock", code: "600519", id: "stock-1", name: "贵州茅台" });
     mocks.searchInstruments.mockResolvedValue({
       items: [stock, instrument({ assetType: "index", code: "000300", id: "index-1", name: "沪深300" })]
@@ -48,6 +48,22 @@ describe("InstrumentPickerDialog", () => {
     expect(wrapper.text()).toContain("贵州茅台");
     expect(wrapper.text()).not.toContain("沪深300");
 
+    await wrapper.get("[data-instrument-picker-result='stock-1']").trigger("click");
+
+    expect(wrapper.get("[data-instrument-picker-selected-value]").text()).toContain("贵州茅台 600519 [股票]");
+    expect(wrapper.find("input[placeholder='输入代码或名称']").exists()).toBe(false);
+    const clearButton = wrapper.get("button[data-instrument-picker-clear]");
+    expect(clearButton.attributes("data-hint")).toBe("清除已选标的");
+    expect(clearButton.attributes("title")).toBeUndefined();
+
+    await clearButton.trigger("click");
+    expect(wrapper.find("[data-instrument-picker-selected-value]").exists()).toBe(false);
+    expect((wrapper.get("input[placeholder='输入代码或名称']").element as HTMLInputElement).value).toBe("");
+    expect(wrapper.get("button[data-instrument-picker-confirm]").attributes("disabled")).toBeDefined();
+
+    await wrapper.get("input[placeholder='输入代码或名称']").setValue("茅台");
+    await vi.advanceTimersByTimeAsync(240);
+    await flushPromises();
     await wrapper.get("[data-instrument-picker-result='stock-1']").trigger("click");
     await wrapper.get("button[data-instrument-picker-confirm]").trigger("click");
 

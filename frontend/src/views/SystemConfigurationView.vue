@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import {
   ArchiveRestore,
+  Bell,
   BrainCircuit,
   CalendarDays,
   Check,
   ChevronRight,
   CirclePlus,
+  Clock3,
   DatabaseBackup,
   Download,
   Eraser,
@@ -27,6 +29,7 @@ import {
   ApiError,
   type AiModelConfig,
   type AiProvider,
+  type AlertSettings,
   type DataSourceConfig,
   type MarketSource,
   type TradingCalendar,
@@ -36,7 +39,7 @@ import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
 
-type SectionId = "backup" | "market" | "ai" | "maintenance";
+type SectionId = "backup" | "market" | "rules" | "ai" | "maintenance";
 type Dialog = "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
 
 interface SectionItem {
@@ -89,10 +92,13 @@ const calendarLoading = ref(false);
 const aiModels = ref<AiModelConfig[]>([]);
 const aiSystemPrompt = ref("");
 const defaultAiSystemPrompt = ref("");
+const autoScanEnabledDraft = ref(false);
+const scanIntervalMinutesDraft = ref("5");
 
 const sections: SectionItem[] = [
   { id: "backup", label: "数据与备份", icon: DatabaseBackup },
   { id: "market", label: "行情与日历", icon: CalendarDays },
+  { id: "rules", label: "规则", icon: Bell },
   { id: "ai", label: "AI 服务", icon: BrainCircuit },
   { id: "maintenance", label: "维护", icon: ShieldAlert, adminOnly: true },
 ];
@@ -165,6 +171,38 @@ async function loadMarketConfig(): Promise<void> {
   ]);
   sourceDraft.value = { ...config };
   marketOverview.value = overview;
+}
+
+function applyRuleSettings(settings: AlertSettings): void {
+  autoScanEnabledDraft.value = settings.autoScanEnabled;
+  scanIntervalMinutesDraft.value = String(settings.scanIntervalMinutes);
+}
+
+async function loadRuleSettings(): Promise<void> {
+  if (token.value === null) return;
+  applyRuleSettings(await api.getAlertSettings(token.value));
+}
+
+async function saveRuleSettings(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  const scanIntervalMinutes = Number(scanIntervalMinutesDraft.value);
+  if (!Number.isInteger(scanIntervalMinutes) || scanIntervalMinutes < 1 || scanIntervalMinutes > 10_080) {
+    notify("error", "扫描间隔必须在 1 到 10080 分钟之间");
+    return;
+  }
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    applyRuleSettings(await api.updateAlertSettings(token.value, {
+      autoScanEnabled: autoScanEnabledDraft.value,
+      scanIntervalMinutes,
+    }));
+    notify("success", autoScanEnabledDraft.value ? "规则自动扫描已保存" : "规则自动扫描已关闭");
+  } catch (error) {
+    notify("error", message(error, "保存规则扫描配置失败"));
+  } finally {
+    isBusy.value = false;
+  }
 }
 
 async function openSourceDialog(): Promise<void> {
@@ -500,7 +538,7 @@ function closeDialog(): void {
 
 onMounted(async () => {
   try {
-    await loadMarketConfig();
+    await Promise.all([loadMarketConfig(), loadRuleSettings()]);
   } catch (error) {
     notify("error", message(error, "加载系统配置失败"));
   }
@@ -679,6 +717,34 @@ function buildCalendarMonths(
               </button>
             </section>
           </div>
+        </template>
+
+        <template v-else-if="activeSection === 'rules'">
+          <header class="system-configuration-heading">
+            <div>
+              <h1>规则</h1>
+              <p>配置当前账户提醒规则的自动扫描频率。</p>
+            </div>
+          </header>
+          <form aria-label="规则配置" class="system-configuration-rows system-rule-settings" @submit.prevent="saveRuleSettings">
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><Bell :size="18" /></div>
+              <div>
+                <h2>自动扫描</h2>
+                <p>按设定间隔检查当前账户已启用的提醒规则。</p>
+              </div>
+              <label class="batman-checkbox system-rule-toggle"><input v-model="autoScanEnabledDraft" aria-label="自动扫描" :disabled="isBusy" type="checkbox" /><span>{{ autoScanEnabledDraft ? "已开启" : "已关闭" }}</span></label>
+            </section>
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><Clock3 :size="18" /></div>
+              <div>
+                <h2>扫描间隔</h2>
+                <p>自动扫描开启后，按此周期检查一次提醒规则。</p>
+              </div>
+              <label class="system-rule-interval"><span>分钟</span><input v-model="scanIntervalMinutesDraft" aria-label="扫描间隔" :disabled="isBusy" max="10080" min="1" required step="1" type="number" /></label>
+            </section>
+            <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存规则配置</button></footer>
+          </form>
         </template>
 
         <template v-else-if="activeSection === 'ai'">
@@ -1514,6 +1580,35 @@ function buildCalendarMonths(
 .system-ai-grid input:disabled {
   color: #6f8193;
   opacity: 0.72;
+}
+.system-rule-settings-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+.system-rule-toggle {
+  justify-self: end;
+}
+.system-rule-interval {
+  align-items: center;
+  color: #a9bed1;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+}
+.system-rule-interval input {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  min-height: 36px;
+  padding: 0 9px;
+  text-align: right;
+  width: 96px;
+}
+.system-rule-interval input:focus {
+  border-color: #65d7ca;
+  outline: 1px solid #65d7ca;
 }
 @media (max-width: 1220px) {
   .system-calendar-grid {

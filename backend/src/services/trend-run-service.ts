@@ -2,6 +2,7 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import type { Instrument, MarketSource, PriceBar } from "../market/types";
 import { MarketService } from "./market-service";
+import type { AiProvider } from "./assistant-service";
 import {
   summarizeTrendReport,
   TrendIndicatorService,
@@ -34,6 +35,7 @@ export interface TrendRun {
 export interface TrendRunReport {
   id: string;
   instrumentId: string;
+  aiInterpretation: Pick<TrendRunReportInterpretation, "provider" | "createdAt"> | null;
   result: {
     instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">;
     source: MarketSource | null;
@@ -44,6 +46,12 @@ export interface TrendRunReport {
     risk: TrendRiskAssessment;
     error: string | null;
   };
+  createdAt: string;
+}
+
+export interface TrendRunReportInterpretation {
+  provider: AiProvider;
+  content: string;
   createdAt: string;
 }
 
@@ -83,6 +91,15 @@ interface RunRow {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+}
+
+interface ReportRow {
+  id: string;
+  instrument_id: string;
+  result_json: string;
+  created_at: string;
+  interpretation_provider: AiProvider | null;
+  interpretation_created_at: string | null;
 }
 
 interface Confirmation {
@@ -167,17 +184,52 @@ export class TrendRunService {
 
   listReports(userId: string, runId: string): TrendRunReport[] {
     this.get(userId, runId);
-    return this.database.all<{ id: string; instrument_id: string; result_json: string; created_at: string }>("SELECT id, instrument_id, result_json, created_at FROM trend_run_reports WHERE user_id = $userId AND run_id = $runId ORDER BY created_at ASC", { userId, runId }).map((row) => ({ id: row.id, instrumentId: row.instrument_id, result: normalizeReportResult(JSON.parse(row.result_json) as TrendRunReport["result"]), createdAt: row.created_at }));
+    return this.database.all<ReportRow>(
+      `SELECT reports.id, reports.instrument_id, reports.result_json, reports.created_at,
+              interpretations.provider AS interpretation_provider,
+              interpretations.created_at AS interpretation_created_at
+         FROM trend_run_reports AS reports
+         LEFT JOIN trend_run_report_interpretations AS interpretations ON interpretations.report_id = reports.id
+        WHERE reports.user_id = $userId AND reports.run_id = $runId
+        ORDER BY reports.created_at ASC`,
+      { userId, runId },
+    ).map((row) => this.toReport(row));
   }
 
   getReport(userId: string, runId: string, reportId: string): TrendRunReport {
     this.get(userId, runId);
-    const row = this.database.get<{ id: string; instrument_id: string; result_json: string; created_at: string }>(
-      "SELECT id, instrument_id, result_json, created_at FROM trend_run_reports WHERE id = $reportId AND user_id = $userId AND run_id = $runId",
+    const row = this.database.get<ReportRow>(
+      `SELECT reports.id, reports.instrument_id, reports.result_json, reports.created_at,
+              interpretations.provider AS interpretation_provider,
+              interpretations.created_at AS interpretation_created_at
+         FROM trend_run_reports AS reports
+         LEFT JOIN trend_run_report_interpretations AS interpretations ON interpretations.report_id = reports.id
+        WHERE reports.id = $reportId AND reports.user_id = $userId AND reports.run_id = $runId`,
       { reportId, userId, runId }
     );
     if (row === undefined) throw errors.notFound("趋势报告不存在");
-    return { id: row.id, instrumentId: row.instrument_id, result: normalizeReportResult(JSON.parse(row.result_json) as TrendRunReport["result"]), createdAt: row.created_at };
+    return this.toReport(row);
+  }
+
+  getReportInterpretation(userId: string, runId: string, reportId: string): TrendRunReportInterpretation | null {
+    this.getReport(userId, runId, reportId);
+    const row = this.database.get<{ provider: AiProvider; content: string; created_at: string }>(
+      "SELECT provider, content, created_at FROM trend_run_report_interpretations WHERE user_id = $userId AND run_id = $runId AND report_id = $reportId",
+      { userId, runId, reportId },
+    );
+    return row === undefined ? null : { provider: row.provider, content: row.content, createdAt: row.created_at };
+  }
+
+  saveReportInterpretation(userId: string, runId: string, reportId: string, input: Pick<TrendRunReportInterpretation, "provider" | "content">): TrendRunReportInterpretation {
+    this.getReport(userId, runId, reportId);
+    const createdAt = new Date().toISOString();
+    this.database.run(
+      `INSERT INTO trend_run_report_interpretations (id, user_id, run_id, report_id, provider, content, created_at)
+       VALUES ($id, $userId, $runId, $reportId, $provider, $content, $createdAt)
+       ON CONFLICT(report_id) DO NOTHING`,
+      { id: crypto.randomUUID(), userId, runId, reportId, provider: input.provider, content: input.content, createdAt },
+    );
+    return this.getReportInterpretation(userId, runId, reportId)!;
   }
 
   summarize(userId: string, runId: string): TrendRunSummary {
@@ -342,6 +394,18 @@ export class TrendRunService {
       startedAt: row.started_at,
       completedAt: row.completed_at,
       overallDirection: this.readOverallDirection(userId, row.id)
+    };
+  }
+
+  private toReport(row: ReportRow): TrendRunReport {
+    return {
+      id: row.id,
+      instrumentId: row.instrument_id,
+      aiInterpretation: row.interpretation_provider === null || row.interpretation_created_at === null
+        ? null
+        : { provider: row.interpretation_provider, createdAt: row.interpretation_created_at },
+      result: normalizeReportResult(JSON.parse(row.result_json) as TrendRunReport["result"]),
+      createdAt: row.created_at,
     };
   }
 

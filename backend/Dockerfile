@@ -20,7 +20,8 @@ RUN bun install --frozen-lockfile --production
 COPY --from=build /app/backend/dist backend/dist
 RUN mkdir -p /app/data
 
-ENV PORT=3000
+ENV IRONMAN_BACKEND_HOST=0.0.0.0
+ENV IRONMAN_BACKEND_PORT=6101
 ENV DATABASE_PATH=/app/data/ironman.sqlite
-EXPOSE 3000
+EXPOSE 6101
 CMD ["bun", "backend/dist/server.js"]

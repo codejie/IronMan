@@ -1,7 +1,9 @@
 import { setTimeout } from "node:timers/promises";
 
 const backendMode = process.argv[2] === "start" ? "start" : "dev";
-const providerUrl = process.env.AKSHARE_PROVIDER_URL ?? "http://127.0.0.1:8001";
+const providerHost = process.env.AKSHARE_PROVIDER_HOST ?? "127.0.0.1";
+const providerPort = process.env.AKSHARE_PROVIDER_PORT ?? "6102";
+const providerUrl = process.env.AKSHARE_PROVIDER_URL ?? `http://${providerHost}:${providerPort}`;
 const autoStart = process.env.AKSHARE_PROVIDER_AUTOSTART !== "false";
 
 let provider: ReturnType<typeof Bun.spawn> | null = null;

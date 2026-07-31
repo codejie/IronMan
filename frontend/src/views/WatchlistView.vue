@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Plus, RefreshCw, Target, Trash2, Wifi, WifiOff, X } from "lucide-vue-next";
+import { Bell, Plus, RefreshCw, Target, Trash2, Wifi, WifiOff, X } from "lucide-vue-next";
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
 import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
+import QuickAlertDialog from "@/components/QuickAlertDialog.vue";
 import { api, ApiError, type Instrument, type WatchlistWorkspace, type WatchlistWorkspaceEntry } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
@@ -15,6 +16,7 @@ const { token } = useSession();
 const items = ref<WatchlistWorkspaceEntry[]>([]);
 const dialog = ref<Dialog | null>(null);
 const selectedEntry = ref<WatchlistWorkspaceEntry | null>(null);
+const alertEntry = ref<WatchlistWorkspaceEntry | null>(null);
 const selectedKlineInstrument = ref<SelectedInstrument | null>(null);
 const useHistoricalData = ref(true);
 const realtimeEnabled = ref(DEFAULT_REALTIME_ENABLED);
@@ -29,6 +31,10 @@ let stream: EventSource | undefined;
 function updateOverflowTitles(element: HTMLElement): void {
   window.requestAnimationFrame(() => {
     for (const cell of element.querySelectorAll<HTMLTableCellElement>("td")) {
+      if (cell.classList.contains("batman-actions")) {
+        cell.removeAttribute("title");
+        continue;
+      }
       const text = cell.textContent?.replace(/\s+/g, " ").trim() ?? "";
       const hasClippedChild = [...cell.querySelectorAll<HTMLElement>("[data-overflow-content]")].some((child) => child.scrollWidth > child.clientWidth);
       cell.title = cell.scrollWidth > cell.clientWidth || hasClippedChild ? text : "";
@@ -86,6 +92,20 @@ function openDelete(entry: WatchlistWorkspaceEntry): void {
   selectedEntry.value = entry;
   errorMessage.value = "";
   dialog.value = "delete";
+}
+
+function openQuickAlert(entry: WatchlistWorkspaceEntry): void {
+  alertEntry.value = entry;
+}
+
+function closeQuickAlert(): void {
+  alertEntry.value = null;
+}
+
+function alertDirection(entry: WatchlistWorkspaceEntry): "above" | "below" {
+  if (entry.targetPrice !== null && entry.latestPrice !== null && entry.targetPrice < entry.latestPrice)
+    return "below";
+  return "above";
 }
 
 function closeDialog(): void {
@@ -202,17 +222,18 @@ onBeforeUnmount(disconnectRealtime);
     <div class="batman-table-frame">
       <table class="batman-table watchlist-table"><colgroup><col /><col /><col /><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>持有</th><th>名称/代码</th><th>最新价/目标价/差值</th><th>昨收/今开</th><th>最高价/最低价/差值</th><th>涨跌幅/振幅</th><th>量比/换手率</th><th class="batman-action-header">操作</th></tr></thead>
         <tbody v-overflow-title>
-          <tr v-for="(item, index) in items" :key="item.id"><td>{{ index + 1 }}</td><td>{{ item.isHeld ? '是' : '否' }}</td><td class="batman-name"><button :aria-label="`查看 ${item.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(item.instrument)"><strong data-overflow-content>{{ item.instrument.name }}</strong><span data-overflow-content>{{ watchlistCodeLabel(item.instrument) }}</span></button></td><td class="batman-stack"><strong>{{ price(item.latestPrice) }}</strong><span>{{ price(item.targetPrice) }}</span><b :class="tone(item.targetPriceDifference)">{{ signed(item.targetPriceDifference) }}</b></td><td class="batman-stack"><span>{{ price(item.previousClose) }}</span><span>{{ price(item.openPrice) }}</span></td><td class="batman-stack"><span>{{ price(item.highPrice) }}</span><span>{{ price(item.lowPrice) }}</span><b :class="tone(item.priceChange)">{{ signed(item.priceChange) }}</b></td><td class="batman-stack"><b :class="tone(item.priceChangeRate)">{{ signed(item.priceChangeRate, '%') }}</b><span>{{ price(item.amplitudeRate) }}%</span></td><td class="batman-stack"><span>{{ price(item.volumeRatio) }}</span><span>{{ item.turnoverRate === null ? '-' : `${price(item.turnoverRate)}%` }}</span></td><td class="batman-actions"><div class="batman-action-controls"><button class="batman-text-button" :title="`设置 ${item.instrument.name} 目标价`" type="button" @click="openTarget(item)"><Target :size="14" />目标价</button><button class="batman-text-button danger" :title="`删除 ${item.instrument.name}`" type="button" @click="openDelete(item)"><Trash2 :size="14" />删除</button></div></td></tr>
+          <tr v-for="(item, index) in items" :key="item.id"><td>{{ index + 1 }}</td><td>{{ item.isHeld ? '是' : '否' }}</td><td class="batman-name"><button :aria-label="`查看 ${item.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(item.instrument)"><strong data-overflow-content>{{ item.instrument.name }}</strong><span data-overflow-content>{{ watchlistCodeLabel(item.instrument) }}</span></button></td><td class="batman-stack"><strong>{{ price(item.latestPrice) }}</strong><span>{{ price(item.targetPrice) }}</span><b :class="tone(item.targetPriceDifference)">{{ signed(item.targetPriceDifference) }}</b></td><td class="batman-stack"><span>{{ price(item.previousClose) }}</span><span>{{ price(item.openPrice) }}</span></td><td class="batman-stack"><span>{{ price(item.highPrice) }}</span><span>{{ price(item.lowPrice) }}</span><b :class="tone(item.priceChange)">{{ signed(item.priceChange) }}</b></td><td class="batman-stack"><b :class="tone(item.priceChangeRate)">{{ signed(item.priceChangeRate, '%') }}</b><span>{{ price(item.amplitudeRate) }}%</span></td><td class="batman-stack"><span>{{ price(item.volumeRatio) }}</span><span>{{ item.turnoverRate === null ? '-' : `${price(item.turnoverRate)}%` }}</span></td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`为 ${item.instrument.name} 设置提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(item)"><Bell :size="15" /></button><button :aria-label="`设置 ${item.instrument.name} 目标价`" class="batman-icon-button" data-hint="设置目标价" data-hint-position="top" type="button" @click="openTarget(item)"><Target :size="14" /></button><button :aria-label="`删除 ${item.instrument.name} 自选`" class="batman-icon-button danger" data-hint="删除自选" data-hint-position="top" type="button" @click="openDelete(item)"><Trash2 :size="14" /></button></div></td></tr>
           <tr v-if="items.length === 0"><td class="batman-empty-cell" colspan="9">-</td></tr>
         </tbody>
       </table>
     </div>
     <InstrumentPickerDialog :busy="isSaving" :error-message="dialog === 'create' ? errorMessage : ''" :open="dialog === 'create'" title="新增自选" @close="closeDialog" @confirm="create" />
+    <QuickAlertDialog :current-price="alertEntry?.latestPrice" :initial-direction="alertEntry === null ? 'above' : alertDirection(alertEntry)" :initial-price="alertEntry?.targetPrice" :instrument="alertEntry?.instrument ?? null" kind="target_price" :open="alertEntry !== null" scope-type="watchlist" title="设置目标价提醒" @close="closeQuickAlert" />
     <div v-if="dialog && dialog !== 'create'" class="batman-dialog-backdrop" @click.self="closeDialog"><section class="batman-dialog" aria-modal="true" role="dialog"><header><strong>{{ dialog === 'target' ? '设置目标价格' : '删除自选' }}</strong><button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button></header><form v-if="dialog === 'target'" class="batman-form" @submit.prevent="saveTarget"><label>目标价格<input v-model="targetPrice" min="0.0001" placeholder="留空清除" step="0.001" type="number" /></label><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit" @click.prevent="saveTarget">确定</button></footer></form><div v-else class="batman-confirm"><p>确认删除“{{ selectedEntry?.instrument.name }}”自选记录？</p><p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p><footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="remove">删除</button></footer></div></section></div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
   </section>
 </template>
 
 <style scoped>
-.batman-watchlist { max-width: none; }.watchlist-toolbar { align-items: center; }.watchlist-updated-at { color: #8ea3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; min-width: 62px; text-align: right; }.batman-button.active { background: #1c504c; border-color: #5ac8bf; color: #e8fffb; }.watchlist-table { min-width: 0; width: 100%; }.watchlist-table th:nth-child(1), .watchlist-table td:nth-child(1) { text-align: center; width: 42px; }.watchlist-table th:nth-child(2), .watchlist-table td:nth-child(2) { text-align: center; width: 52px; }.watchlist-table th:nth-child(3), .watchlist-table td:nth-child(3) { width: 13%; }.watchlist-table th:nth-child(4), .watchlist-table td:nth-child(4) { width: 15%; }.watchlist-table th:nth-child(5), .watchlist-table td:nth-child(5) { width: 10%; }.watchlist-table th:nth-child(6), .watchlist-table td:nth-child(6) { width: 15%; }.watchlist-table th:nth-child(7), .watchlist-table td:nth-child(7) { width: 11%; }.watchlist-table th:nth-child(8), .watchlist-table td:nth-child(8) { width: 11%; }.watchlist-table th:nth-child(9), .watchlist-table td:nth-child(9) { width: 150px; }.watchlist-table th, .watchlist-table td { padding-bottom: 6px; padding-top: 6px; }.watchlist-table td { overflow: hidden; text-overflow: ellipsis; }.watchlist-table .batman-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-stack { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-stack > strong, .watchlist-table .batman-stack > span, .watchlist-table .batman-stack > b { display: inline; }.watchlist-table .batman-stack > * + *::before { color: #758aa2; content: ' · '; font-weight: 400; }.watchlist-table .batman-action-controls { min-height: 32px; }
+.batman-watchlist { max-width: none; }.watchlist-toolbar { align-items: center; }.watchlist-updated-at { color: #8ea3b8; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; min-width: 62px; text-align: right; }.batman-button.active { background: #1c504c; border-color: #5ac8bf; color: #e8fffb; }.watchlist-table { min-width: 0; width: 100%; }.watchlist-table th:nth-child(1), .watchlist-table td:nth-child(1) { text-align: center; width: 42px; }.watchlist-table th:nth-child(2), .watchlist-table td:nth-child(2) { text-align: center; width: 52px; }.watchlist-table th:nth-child(3), .watchlist-table td:nth-child(3) { width: 13%; }.watchlist-table th:nth-child(4), .watchlist-table td:nth-child(4) { width: 15%; }.watchlist-table th:nth-child(5), .watchlist-table td:nth-child(5) { width: 10%; }.watchlist-table th:nth-child(6), .watchlist-table td:nth-child(6) { width: 15%; }.watchlist-table th:nth-child(7), .watchlist-table td:nth-child(7) { width: 11%; }.watchlist-table th:nth-child(8), .watchlist-table td:nth-child(8) { width: 11%; }.watchlist-table th:nth-child(9), .watchlist-table td:nth-child(9) { width: 112px; }.watchlist-table th, .watchlist-table td { padding-bottom: 6px; padding-top: 6px; }.watchlist-table td { overflow: hidden; text-overflow: ellipsis; }.watchlist-table td.batman-actions { overflow: visible; }.watchlist-table .batman-icon-button[data-hint] { z-index: 1; }.watchlist-table .batman-icon-button[data-hint][data-hint-position="top"]::after { bottom: calc(100% + 6px); top: auto; transform: translate(-50%, 2px); }.watchlist-table .batman-icon-button[data-hint][data-hint-position="top"]:hover::after, .watchlist-table .batman-icon-button[data-hint][data-hint-position="top"]:focus-visible::after { transform: translate(-50%, 0); }.watchlist-table .batman-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-stack { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.watchlist-table .batman-stack > strong, .watchlist-table .batman-stack > span, .watchlist-table .batman-stack > b { display: inline; }.watchlist-table .batman-stack > * + *::before { color: #758aa2; content: ' · '; font-weight: 400; }.watchlist-table .batman-action-controls { min-height: 32px; }
 </style>

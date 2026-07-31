@@ -236,7 +236,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const allowedOrigins = new Set(
     (
       process.env.CORS_ORIGINS ??
-      "http://localhost:5173,http://localhost:5174,http://localhost:5175"
+      "http://127.0.0.1:6100,http://localhost:6100"
     )
       .split(",")
       .map((origin) => origin.trim())
@@ -2750,6 +2750,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
                     "openai_compatible",
                   ]),
                   content: z.string(),
+                  cached: z.boolean(),
+                  createdAt: z.string().datetime(),
                 }),
               ),
             },
@@ -2760,6 +2762,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     async (context) => {
       const userId = context.get("currentUser").id;
       const input = context.req.valid("json");
+      const cached = trendRuns.getReportInterpretation(userId, input.runId, input.reportId);
+      if (cached !== null) return context.json(success({ ...cached, cached: true }), 200);
       const report = trendRuns.getReport(userId, input.runId, input.reportId);
       const facts = {
         instrument: `${report.result.instrument.name} (${report.result.instrument.code})`,
@@ -2770,15 +2774,14 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
           .flatMap((item) => item.signals)
           .slice(0, 8),
       };
-      return context.json(
-        success(
-          await assistant.chat(
-            userId,
-            `请仅基于以下本地趋势报告事实给出风险与观察重点，不承诺收益：${JSON.stringify(facts)}`,
-          ),
-        ),
-        200,
+      const generated = await assistant.chat(
+        userId,
+        `请仅基于以下本地趋势报告事实给出风险与观察重点，不承诺收益：${JSON.stringify(facts)}`,
       );
+      return context.json(success({
+        ...trendRuns.saveReportInterpretation(userId, input.runId, input.reportId, generated),
+        cached: false,
+      }), 200);
     },
   );
   app.openapi(
@@ -2897,16 +2900,112 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       ),
   );
 
-  const alertSchema = z.object({
+  const alertDirectionSchema = z.enum(["above", "below"]);
+  const alertRuleKindSchema = z.enum([
+    "price_threshold",
+    "target_price",
+    "trade_plan",
+  ]);
+  const alertSourceSchema = z.enum(["manual", "system"]);
+  const alertSeveritySchema = z.enum(["info", "warning", "risk"]);
+  const alertScopeTypeSchema = z.enum([
+    "instrument",
+    "watchlist",
+    "holdings",
+    "custom",
+  ]);
+  const alertEventStatusSchema = z.enum([
+    "unread",
+    "read",
+    "acknowledged",
+    "snoozed",
+    "resolved",
+  ]);
+  const alertSuggestionSourceSchema = z.enum([
+    "trend",
+    "watchlist",
+    "holding",
+    "system",
+  ]);
+  const alertSuggestionStatusSchema = z.enum([
+    "pending",
+    "accepted",
+    "ignored",
+  ]);
+  const alertConditionSchema = z.union([
+    z.object({
+      direction: alertDirectionSchema,
+      threshold: z.number().positive(),
+    }),
+    z.object({
+      direction: alertDirectionSchema,
+      targetPrice: z.number().positive(),
+    }),
+    z.object({
+      action: z.enum(["buy", "sell", "review", "note"]),
+      note: z.string().trim().min(1).max(500),
+      scheduledAt: z.string().datetime(),
+    }),
+  ]);
+  const alertRuleSchema = z.object({
     id: z.string().uuid(),
-    instrumentId: z.string().uuid(),
-    direction: z.enum(["above", "below"]),
-    threshold: z.number(),
+    name: z.string(),
+    kind: alertRuleKindSchema,
+    source: alertSourceSchema,
+    severity: alertSeveritySchema,
+    instrumentId: z.string().uuid().nullable(),
+    scopeType: alertScopeTypeSchema,
+    condition: alertConditionSchema,
+    direction: alertDirectionSchema.nullable(),
+    threshold: z.number().nullable(),
     cooldownMinutes: z.number().int(),
     enabled: z.boolean(),
     lastTriggeredAt: z.string().datetime().nullable(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
+  });
+  const alertEventSchema = z.object({
+    id: z.string().uuid(),
+    alertId: z.string().uuid().nullable(),
+    ruleId: z.string().uuid().nullable(),
+    instrumentId: z.string().uuid().nullable(),
+    severity: alertSeveritySchema,
+    status: alertEventStatusSchema,
+    title: z.string(),
+    message: z.string(),
+    price: z.number().nullable(),
+    snapshot: z.record(z.string(), z.unknown()),
+    triggeredAt: z.string().datetime(),
+    readAt: z.string().datetime().nullable(),
+    acknowledgedAt: z.string().datetime().nullable(),
+    resolvedAt: z.string().datetime().nullable(),
+    snoozedUntil: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+  });
+  const alertSuggestionSchema = z.object({
+    id: z.string().uuid(),
+    source: alertSuggestionSourceSchema,
+    instrumentId: z.string().uuid().nullable(),
+    title: z.string(),
+    message: z.string(),
+    severity: alertSeveritySchema,
+    ruleKind: alertRuleKindSchema,
+    condition: alertConditionSchema,
+    cooldownMinutes: z.number().int(),
+    status: alertSuggestionStatusSchema,
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+    acceptedAt: z.string().datetime().nullable(),
+    ignoredAt: z.string().datetime().nullable(),
+  });
+  const alertSettingsSchema = z.object({
+    systemMode: z.enum(["off", "suggest", "auto"]),
+    defaultCooldownMinutes: z.number().int(),
+    autoScanEnabled: z.boolean(),
+    scanIntervalMinutes: z.number().int(),
+    quietHours: z
+      .object({ start: z.string(), end: z.string() })
+      .nullable(),
   });
   app.openapi(
     createRoute({
@@ -2917,7 +3016,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
         body: jsonBody(
           z.object({
             instrumentId: z.string().uuid(),
-            direction: z.enum(["above", "below"]),
+            direction: alertDirectionSchema,
             threshold: z.number().positive(),
             cooldownMinutes: z.number().int().min(1).max(10_080).default(60),
           }),
@@ -2927,7 +3026,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
         201: {
           description: "Created alert",
           content: {
-            "application/json": { schema: responseSchema(alertSchema) },
+            "application/json": { schema: responseSchema(alertRuleSchema) },
           },
         },
       },
@@ -2955,7 +3054,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
           description: "Alert rules",
           content: {
             "application/json": {
-              schema: responseSchema(z.object({ items: z.array(alertSchema) })),
+              schema: responseSchema(z.object({ items: z.array(alertRuleSchema) })),
             },
           },
         },
@@ -2968,6 +3067,100 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
         }),
         200,
       ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/rules/create",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            name: z.string().trim().min(1).max(120),
+            kind: alertRuleKindSchema,
+            instrumentId: z.string().uuid().nullable().optional(),
+            condition: alertConditionSchema,
+            severity: alertSeveritySchema.default("warning"),
+            cooldownMinutes: z.number().int().min(1).max(10_080).optional(),
+            enabled: z.boolean().optional(),
+            scopeType: alertScopeTypeSchema.optional(),
+          }),
+        ),
+      },
+      responses: {
+        201: {
+          description: "Created alert rule",
+          content: {
+            "application/json": { schema: responseSchema(alertRuleSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          automation.createRule(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        201,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/rules/list",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Generic alert rules",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ items: z.array(alertRuleSchema) })),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success({
+          items: automation.listRules(context.get("currentUser").id),
+        }),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/rules/delete",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(z.object({ id: z.string().uuid() })),
+      },
+      responses: {
+        200: {
+          description: "Deleted alert rule while retaining alert event history",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ deleted: z.literal(true) })),
+            },
+          },
+        },
+      },
+    }),
+    (context) => {
+      automation.deleteRule(
+        context.get("currentUser").id,
+        context.req.valid("json").id,
+      );
+      return context.json(success({ deleted: true as const }), 200);
+    },
   );
 
   app.openapi(
@@ -3003,7 +3196,13 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       method: "post",
       path: "/api/automation/alerts/events/list",
       middleware: [authenticated(auth)],
-      request: { body: jsonBody(emptyBodySchema) },
+      request: {
+        body: jsonBody(
+          z.object({
+            status: alertEventStatusSchema.optional(),
+          }),
+        ),
+      },
       responses: {
         200: {
           description: "Alert events",
@@ -3011,15 +3210,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
             "application/json": {
               schema: responseSchema(
                 z.object({
-                  items: z.array(
-                    z.object({
-                      id: z.string().uuid(),
-                      alertId: z.string().uuid(),
-                      price: z.number(),
-                      message: z.string(),
-                      createdAt: z.string().datetime(),
-                    }),
-                  ),
+                  items: z.array(alertEventSchema),
                 }),
               ),
             },
@@ -3030,8 +3221,221 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     (context) =>
       context.json(
         success({
-          items: automation.listAlertEvents(context.get("currentUser").id),
+          items: automation.listAlertEvents(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
         }),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/events/update-status",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            id: z.string().uuid(),
+            status: alertEventStatusSchema,
+            snoozedUntil: z.string().datetime().nullable().optional(),
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Updated alert event status",
+          content: {
+            "application/json": { schema: responseSchema(alertEventSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          automation.updateAlertEventStatus(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/suggestions/create",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            source: alertSuggestionSourceSchema,
+            instrumentId: z.string().uuid().nullable().optional(),
+            title: z.string().trim().min(1).max(160),
+            message: z.string().trim().min(1).max(1000),
+            severity: alertSeveritySchema,
+            ruleKind: alertRuleKindSchema,
+            condition: alertConditionSchema,
+            cooldownMinutes: z.number().int().min(1).max(10_080).optional(),
+          }),
+        ),
+      },
+      responses: {
+        201: {
+          description: "Created alert suggestion",
+          content: {
+            "application/json": { schema: responseSchema(alertSuggestionSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          automation.createSuggestion(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        201,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/suggestions/list",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            status: alertSuggestionStatusSchema.optional(),
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Alert suggestions",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({ items: z.array(alertSuggestionSchema) }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success({
+          items: automation.listSuggestions(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        }),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/suggestions/accept",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(z.object({ id: z.string().uuid() })),
+      },
+      responses: {
+        200: {
+          description: "Accepted alert suggestion",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({
+                  suggestion: alertSuggestionSchema,
+                  rule: alertRuleSchema,
+                }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          automation.acceptSuggestion(
+            context.get("currentUser").id,
+            context.req.valid("json").id,
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/settings/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Alert settings",
+          content: {
+            "application/json": { schema: responseSchema(alertSettingsSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(automation.getAlertSettings(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/automation/alerts/settings/update",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            systemMode: z.enum(["off", "suggest", "auto"]).optional(),
+            defaultCooldownMinutes: z.number().int().min(1).max(10_080).optional(),
+            autoScanEnabled: z.boolean().optional(),
+            scanIntervalMinutes: z.number().int().min(1).max(10_080).optional(),
+            quietHours: z
+              .object({ start: z.string(), end: z.string() })
+              .nullable()
+              .optional(),
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Updated alert settings",
+          content: {
+            "application/json": { schema: responseSchema(alertSettingsSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          automation.updateAlertSettings(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
         200,
       ),
   );

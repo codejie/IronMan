@@ -88,7 +88,7 @@ const scopeOptions: Array<{ value: TrendTargetScope; label: string }> = [
   { value: "holdings", label: "持仓记录" },
   { value: "watchlist", label: "自选列表" },
   { value: "holdings_watchlist", label: "持仓 + 自选" },
-  { value: "custom", label: "自定义标的" },
+  { value: "custom", label: "自定义" },
   { value: "all", label: "全市场" },
 ];
 const rangeOptions: Array<{ value: TrendDateRange["preset"]; label: string }> =

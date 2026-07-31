@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, LogOut, PanelLeftClose, PanelLeftOpen, Shield } from "lucide-vue-next";
+import { Bell, ChevronDown, LogOut, PanelLeftClose, PanelLeftOpen, Shield, UserRound } from "lucide-vue-next";
 import { computed, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { isMenuSection, menuFor, type MenuSection } from "@/navigation/menu";
@@ -7,10 +7,13 @@ import { useSession } from "@/stores/session";
 
 const route = useRoute();
 const router = useRouter();
-const { logout } = useSession();
+const { currentUser, logout } = useSession();
 const menuNodes = computed(() => menuFor());
 const expandedSections = ref<string[]>([]);
 const isSidebarCollapsed = ref(false);
+const isUserMenuOpen = ref(false);
+const userName = computed(() => currentUser.value?.displayName ?? "用户");
+const userEmail = computed(() => currentUser.value?.email ?? "账户设置");
 
 function isRouteActive(path: string): boolean {
   return route.path === path || route.path.startsWith(`${path}/`);
@@ -29,6 +32,7 @@ function toggle(section: MenuSection): void {
 }
 
 async function signOut(): Promise<void> {
+  isUserMenuOpen.value = false;
   await logout();
   await router.replace("/login");
 }
@@ -59,7 +63,17 @@ async function signOut(): Promise<void> {
           </section>
         </template>
       </nav>
-      <button class="batman-signout" aria-label="退出登录" title="退出登录" type="button" @click="signOut"><LogOut :size="17" /></button>
+      <div class="batman-sidebar-actions" aria-label="快捷入口">
+        <RouterLink :class="['batman-sidebar-action', { active: isRouteActive('/automation/alerts') }]" aria-label="提醒" title="提醒" to="/automation/alerts"><Bell :size="17" /><span>提醒</span></RouterLink>
+        <div class="batman-user-entry">
+          <button class="batman-sidebar-action" :aria-expanded="isUserMenuOpen" aria-label="用户" title="用户" type="button" @click="isUserMenuOpen = !isUserMenuOpen"><UserRound :size="17" /><span>用户</span><ChevronDown :class="['batman-user-chevron', { open: isUserMenuOpen }]" :size="13" /></button>
+          <div v-show="isUserMenuOpen" class="batman-user-menu">
+            <p class="batman-user-card"><strong>{{ userName }}</strong><span>{{ userEmail }}</span></p>
+            <RouterLink class="batman-user-menu-item" aria-label="用户设置" to="/settings/profile" @click="isUserMenuOpen = false"><UserRound :size="14" /><span>用户设置</span></RouterLink>
+            <button class="batman-user-menu-item" aria-label="退出登录" type="button" @click="signOut"><LogOut :size="14" /><span>退出登录</span></button>
+          </div>
+        </div>
+      </div>
     </aside>
     <main class="batman-main"><RouterView /></main>
   </div>
