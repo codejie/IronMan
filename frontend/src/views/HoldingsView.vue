@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
+import { Activity, Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
 import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
 import QuickAlertDialog from "@/components/QuickAlertDialog.vue";
-import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument } from "@/api/client";
+import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "./instrument-kline-presentation";
 import { holdingDetailRouteQuery } from "./holding-detail-presentation";
 import { holdingProfitSummary, holdingQuoteDateLabel } from "./holdings-presentation";
+import { formatDateTime } from "@/utils/date-format";
 
 type Dialog = "create" | "capital" | "delete-holding";
 
@@ -34,6 +35,13 @@ const capitalNote = ref("");
 const errorMessage = ref("");
 const isLoading = ref(false);
 const isSaving = ref(false);
+
+const intradayDialogOpen = ref(false);
+const intradayData = ref<MarketSnapshotPoint[] | null>(null);
+const intradayLoading = ref(false);
+const intradayError = ref("");
+let intradayRequestVersion = 0;
+const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 
 const activeRecords = computed(() => workspace.value?.active ?? []);
 const closedRecords = computed(() => workspace.value?.closed ?? []);
@@ -154,6 +162,42 @@ function closeKlineDialog(): void {
   selectedKlineInstrument.value = null;
 }
 
+async function openIntraday(holding: BatmanHoldingWorkspaceRecord): Promise<void> {
+  const accessToken = token.value;
+  if (accessToken === null || intradayLoading.value) return;
+  intradayDialogOpen.value = true;
+  intradayHolding.value = holding;
+  intradayError.value = "";
+  await loadIntradayData(accessToken, holding.instrument.id);
+}
+
+function closeIntradayDialog(): void {
+  if (intradayLoading.value) return;
+  intradayDialogOpen.value = false;
+  intradayData.value = null;
+  intradayHolding.value = null;
+  intradayError.value = "";
+}
+
+async function loadIntradayData(accessToken: string, instrumentId: string): Promise<void> {
+  const version = ++intradayRequestVersion;
+  intradayLoading.value = true;
+  intradayError.value = "";
+  try {
+    const now = new Date();
+    const endAt = now.toISOString();
+    const startAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const response = await api.marketSnapshotSeries(accessToken, instrumentId, startAt, endAt);
+    if (version !== intradayRequestVersion) return;
+    intradayData.value = response.items;
+  } catch (error) {
+    if (version !== intradayRequestVersion) return;
+    intradayError.value = error instanceof ApiError ? error.message : "分时数据加载失败";
+  } finally {
+    if (version === intradayRequestVersion) intradayLoading.value = false;
+  }
+}
+
 function viewHoldingDetail(holding: BatmanHoldingWorkspaceRecord, records: BatmanHoldingWorkspaceRecord[]): void {
   void router.push({ path: "/holding/detail", query: holdingDetailRouteQuery(holding.id, records.map((item) => item.id)) });
 }
@@ -246,7 +290,7 @@ onMounted(load);
     <div class="batman-table-frame holdings-table-frame">
       <table class="batman-table holdings-table"><colgroup><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>名称/代码</th><th>持仓/占比</th><th>成本/占比</th><th>均价/价差</th><th>现价/日期</th><th title="涨跌额/涨跌幅%">涨跌额/涨跌幅%</th><th>市值/占比</th><th>盈亏/占比</th><th>盈亏率%</th><th title="昨差/昨差率%">昨差/昨差率%</th><th class="batman-action-header">操作</th></tr></thead>
         <tbody v-overflow-title>
-          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button><button :aria-label="`删除 ${holding.instrument.name} 持仓`" class="batman-icon-button danger" data-hint="删除持仓" data-hint-position="top" type="button" @click="openDeleteHolding(holding)"><Trash2 :size="14" /></button></div></td></tr>
+          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button><button :aria-label="`删除 ${holding.instrument.name} 持仓`" class="batman-icon-button danger" data-hint="删除持仓" data-hint-position="top" type="button" @click="openDeleteHolding(holding)"><Trash2 :size="14" /></button></div></td></tr>
           <tr v-if="activeRecords.length === 0"><td class="batman-empty-cell" colspan="12">-</td></tr>
         </tbody>
         <tfoot v-if="workspace"><tr><td colspan="7"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(dailyDifferenceTotal)">{{ signed(dailyDifferenceTotal) }}</td><td></td></tr></tfoot>
@@ -286,6 +330,46 @@ onMounted(load);
       </section>
     </div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
+
+    <div v-if="intradayDialogOpen" class="batman-dialog-backdrop" @click.self="closeIntradayDialog">
+      <section class="batman-dialog wide" aria-modal="true" role="dialog">
+        <header>
+          <strong>{{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }} 分时数据</strong>
+          <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
+        </header>
+        <div class="intraday-dialog-content">
+          <p v-if="intradayLoading" class="batman-selected">正在加载分时数据...</p>
+          <p v-else-if="intradayError" class="batman-error">{{ intradayError }}</p>
+          <p v-else-if="!intradayData || intradayData.length === 0" class="batman-selected">暂无分时数据</p>
+          <div v-else class="intraday-table-frame">
+            <table class="batman-table intraday-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>开盘价</th>
+                  <th>收盘价</th>
+                  <th>最高价</th>
+                  <th>最低价</th>
+                  <th>成交量</th>
+                  <th>数据源</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in intradayData" :key="item.capturedAt">
+                  <td>{{ formatDateTime(item.capturedAt) }}</td>
+                  <td>{{ money(item.open) }}</td>
+                  <td>{{ money(item.close) }}</td>
+                  <td>{{ money(item.high) }}</td>
+                  <td>{{ money(item.low) }}</td>
+                  <td>{{ item.volume.toLocaleString() }}</td>
+                  <td>{{ item.source }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
   </section>
 </template>
 
@@ -296,4 +380,7 @@ onMounted(load);
 .holding-record-row { cursor: pointer; }
 .holding-record-row:focus-visible > td { background: #1c3146; outline: 1px solid #65d7ca; outline-offset: -1px; }
 .batman-holdings :deep(.batman-table th) { font-size: 13px; }
+.intraday-dialog-content { max-height: 60vh; overflow-y: auto; padding: 4px 0 0; }
+.intraday-table-frame { max-height: 50vh; overflow-y: auto; }
+.intraday-table { min-width: 720px; width: 100%; }
 </style>
