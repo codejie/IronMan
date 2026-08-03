@@ -5,6 +5,10 @@ import SystemConfigurationView from "./SystemConfigurationView.vue";
 const mocks = vi.hoisted(() => ({
   getDataSourceConfig: vi.fn(),
   marketOverview: vi.fn(),
+  getMarketSnapshotSettings: vi.fn(),
+  updateMarketSnapshotSettings: vi.fn(),
+  marketSnapshotStatus: vi.fn(),
+  deleteMarketSnapshots: vi.fn(),
   getAlertSettings: vi.fn(),
   updateAlertSettings: vi.fn(),
   fundHistoryStatus: vi.fn(),
@@ -17,6 +21,10 @@ vi.mock("@/api/client", () => ({
   api: {
     getDataSourceConfig: mocks.getDataSourceConfig,
     marketOverview: mocks.marketOverview,
+    getMarketSnapshotSettings: mocks.getMarketSnapshotSettings,
+    updateMarketSnapshotSettings: mocks.updateMarketSnapshotSettings,
+    marketSnapshotStatus: mocks.marketSnapshotStatus,
+    deleteMarketSnapshots: mocks.deleteMarketSnapshots,
     getAlertSettings: mocks.getAlertSettings,
     updateAlertSettings: mocks.updateAlertSettings,
     fundHistoryStatus: mocks.fundHistoryStatus,
@@ -40,6 +48,10 @@ describe("SystemConfigurationView", () => {
   beforeEach(() => {
     mocks.getDataSourceConfig.mockReset();
     mocks.marketOverview.mockReset();
+    mocks.getMarketSnapshotSettings.mockReset();
+    mocks.updateMarketSnapshotSettings.mockReset();
+    mocks.marketSnapshotStatus.mockReset();
+    mocks.deleteMarketSnapshots.mockReset();
     mocks.getAlertSettings.mockReset();
     mocks.updateAlertSettings.mockReset();
     mocks.fundHistoryStatus.mockReset();
@@ -47,6 +59,38 @@ describe("SystemConfigurationView", () => {
     mocks.confirm.mockReset();
     mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "mock" });
     mocks.marketOverview.mockResolvedValue({ instrumentCount: 0, cachedBarCount: 0, latestCacheAt: null });
+    mocks.getMarketSnapshotSettings.mockResolvedValue({
+      enabled: false,
+      mode: "auto",
+      startTime: "09:30",
+      endTime: "15:00",
+      intervalMinutes: 15,
+      scope: "holdings",
+      retentionDays: 5,
+    });
+    mocks.updateMarketSnapshotSettings.mockResolvedValue({
+      enabled: true,
+      mode: "manual",
+      startTime: "09:30",
+      endTime: "15:00",
+      intervalMinutes: 15,
+      scope: "holdings_watchlist",
+      retentionDays: 5,
+    });
+    mocks.marketSnapshotStatus.mockResolvedValue({
+      totalCount: 0,
+      firstCapturedAt: null,
+      lastCapturedAt: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastCaptureMode: null,
+      lastTargetCount: 0,
+      lastCapturedCount: 0,
+      lastSkippedCount: 0,
+      lastFailedCount: 0,
+      lastError: null,
+    });
+    mocks.deleteMarketSnapshots.mockResolvedValue({ deleted: 0 });
     mocks.getAlertSettings.mockResolvedValue({
       systemMode: "suggest",
       defaultCooldownMinutes: 60,
@@ -124,5 +168,37 @@ describe("SystemConfigurationView", () => {
     expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "重新计算资金趋势" }));
     expect(mocks.recalculateFundHistory).toHaveBeenCalledWith("test-token");
     expect(wrapper.text()).toContain("资金趋势历史已重新计算");
+  });
+
+  test("configures the intraday snapshot master switch and collection mode", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const marketNav = wrapper.findAll(".system-configuration-nav-item").find((button) => button.text().includes("行情"));
+    if (marketNav === undefined) throw new Error("market section was not rendered");
+    await marketNav.trigger("click");
+    const snapshotRow = wrapper.findAll(".system-configuration-row").find((row) => row.text().includes("盘中行情快照"));
+    if (snapshotRow === undefined) throw new Error("snapshot setting row was not rendered");
+    await snapshotRow.find(".batman-button").trigger("click");
+    await flushPromises();
+
+    const form = wrapper.get("form.system-dialog-form");
+    await form.get("input[aria-label='开启盘中行情快照']").setValue(true);
+    const selects = form.findAll("select");
+    await selects[0]!.setValue("manual");
+    await selects[1]!.setValue("holdings_watchlist");
+    await form.trigger("submit");
+    await flushPromises();
+
+    expect(mocks.updateMarketSnapshotSettings).toHaveBeenCalledWith("test-token", {
+      enabled: true,
+      mode: "manual",
+      startTime: "09:30",
+      endTime: "15:00",
+      intervalMinutes: 15,
+      scope: "holdings_watchlist",
+      retentionDays: 5,
+    });
+    expect(wrapper.text()).toContain("盘中行情快照配置已保存");
   });
 });

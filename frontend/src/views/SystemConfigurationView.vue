@@ -34,6 +34,8 @@ import {
   type AlertSettings,
   type DataSourceConfig,
   type FundHistoryState,
+  type MarketSnapshotSettings,
+  type MarketSnapshotStatus,
   type MarketSource,
   type TradingCalendar,
   type UserExport,
@@ -43,7 +45,7 @@ import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
 
 type SectionId = "backup" | "market" | "rules" | "ai" | "maintenance";
-type Dialog = "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
+type Dialog = "snapshot" | "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
 
 interface SectionItem {
   id: SectionId;
@@ -90,6 +92,16 @@ const sourceDraft = ref<DataSourceConfig>({
   primary: "tencent",
   fallback: "mock",
 });
+const snapshotDraft = ref<MarketSnapshotSettings>({
+  enabled: false,
+  mode: "auto",
+  startTime: "09:30",
+  endTime: "15:00",
+  intervalMinutes: 15,
+  scope: "holdings",
+  retentionDays: 5,
+});
+const snapshotStatus = ref<MarketSnapshotStatus | null>(null);
 const calendarYear = ref(new Date().getFullYear());
 const tradeDaySet = ref(new Set<string>());
 const calendarLoading = ref(false);
@@ -169,6 +181,18 @@ function formatTime(value: string | null): string {
   return value === null ? "尚未写入缓存" : formatDateTime(value);
 }
 
+function snapshotScopeLabel(scope: MarketSnapshotSettings["scope"]): string {
+  if (scope === "watchlist") return "自选";
+  if (scope === "holdings_watchlist") return "自选 + 持仓";
+  return "持仓";
+}
+
+function snapshotStatusLabel(): string {
+  if (!snapshotDraft.value.enabled) return "未开启";
+  if (snapshotDraft.value.mode === "manual") return "手动刷新写入";
+  return `自动 ${snapshotDraft.value.startTime}-${snapshotDraft.value.endTime}`;
+}
+
 function isSectionId(value: unknown): value is SectionId {
   return typeof value === "string" && ["backup", "market", "rules", "ai", "maintenance"].includes(value);
 }
@@ -211,12 +235,16 @@ async function recalculateFundHistory(): Promise<void> {
 
 async function loadMarketConfig(): Promise<void> {
   if (token.value === null) return;
-  const [config, overview] = await Promise.all([
+  const [config, overview, settings, status] = await Promise.all([
     api.getDataSourceConfig(token.value),
     api.marketOverview(token.value),
+    api.getMarketSnapshotSettings(token.value),
+    api.marketSnapshotStatus(token.value),
   ]);
   sourceDraft.value = { ...config };
   marketOverview.value = overview;
+  snapshotDraft.value = { ...settings };
+  snapshotStatus.value = status;
 }
 
 function applyRuleSettings(settings: AlertSettings): void {
@@ -274,6 +302,68 @@ async function saveSource(): Promise<void> {
     notify("success", "行情源配置已保存");
   } catch (error) {
     notify("error", message(error, "保存行情源配置失败"));
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function openSnapshotDialog(): Promise<void> {
+  if (token.value === null) return;
+  clearFeedback();
+  try {
+    const [settings, status] = await Promise.all([
+      api.getMarketSnapshotSettings(token.value),
+      api.marketSnapshotStatus(token.value),
+    ]);
+    snapshotDraft.value = { ...settings };
+    snapshotStatus.value = status;
+    dialog.value = "snapshot";
+  } catch (error) {
+    notify("error", message(error, "读取盘中行情快照配置失败"));
+  }
+}
+
+async function saveSnapshotSettings(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    snapshotDraft.value = await api.updateMarketSnapshotSettings(
+      token.value,
+      snapshotDraft.value,
+    );
+    snapshotStatus.value = await api.marketSnapshotStatus(token.value);
+    dialog.value = null;
+    notify(
+      "success",
+      snapshotDraft.value.enabled
+        ? "盘中行情快照配置已保存"
+        : "盘中行情快照已关闭",
+    );
+  } catch (error) {
+    notify("error", message(error, "保存盘中行情快照配置失败"));
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+async function clearMarketSnapshots(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  const confirmed = await requestConfirmation({
+    title: "清空盘中行情快照",
+    message: "将删除当前账户已记录的所有盘中行情快照，不影响日线缓存、持仓和资金数据。",
+    confirmLabel: "清空记录",
+    tone: "danger",
+  });
+  if (!confirmed) return;
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    const result = await api.deleteMarketSnapshots(token.value);
+    snapshotStatus.value = await api.marketSnapshotStatus(token.value);
+    notify("success", `已清空 ${result.deleted} 条盘中行情快照`);
+  } catch (error) {
+    notify("error", message(error, "清空盘中行情快照失败"));
   } finally {
     isBusy.value = false;
   }
@@ -757,6 +847,36 @@ function buildCalendarMonths(
               </button>
             </section>
             <section class="system-configuration-row">
+              <div class="setting-row-icon"><ChartNoAxesCombined :size="18" /></div>
+              <div>
+                <h2>盘中行情快照</h2>
+                <p>
+                  {{ snapshotStatusLabel() }}，范围为{{ snapshotScopeLabel(snapshotDraft.scope) }}；仅在交易时段保存股票、指数的当日 OHLCV 数据。
+                </p>
+                <small v-if="snapshotStatus">
+                  已记录 {{ snapshotStatus.totalCount }} 条
+                  <template v-if="snapshotStatus.lastCapturedAt">，最近 {{ formatDateTime(snapshotStatus.lastCapturedAt) }}</template>
+                  <template v-else>，尚无快照</template>
+                </small>
+              </div>
+              <div class="system-market-snapshot-actions">
+                <button
+                  aria-label="清空盘中行情快照"
+                  class="batman-icon-button danger"
+                  data-hint="清空记录"
+                  data-hint-position="top"
+                  :disabled="isBusy || (snapshotStatus?.totalCount ?? 0) === 0"
+                  type="button"
+                  @click="clearMarketSnapshots"
+                >
+                  <Trash2 :size="15" />
+                </button>
+                <button class="batman-button" :disabled="isBusy" type="button" @click="openSnapshotDialog">
+                  <Settings2 :size="15" />配置
+                </button>
+              </div>
+            </section>
+            <section class="system-configuration-row">
               <div class="setting-row-icon"><RefreshCw :size="18" /></div>
               <div>
                 <h2>刷新已使用标的</h2>
@@ -893,7 +1013,9 @@ function buildCalendarMonths(
       >
         <header>
           <strong>{{
-            dialog === "source"
+            dialog === "snapshot"
+              ? "盘中行情快照"
+              : dialog === "source"
               ? "行情源配置"
               : dialog === "calendar"
                 ? "交易日配置"
@@ -918,7 +1040,32 @@ function buildCalendarMonths(
         </header>
 
         <form
-          v-if="dialog === 'source'"
+          v-if="dialog === 'snapshot'"
+          class="system-dialog-form"
+          @submit.prevent="saveSnapshotSettings"
+        >
+          <label class="batman-checkbox system-snapshot-toggle">
+            <input v-model="snapshotDraft.enabled" aria-label="开启盘中行情快照" :disabled="isBusy" type="checkbox" />
+            <span>开启盘中行情快照</span>
+          </label>
+          <p class="system-snapshot-help">关闭后不会采集或写入新的快照，已有记录会保留。</p>
+          <div class="system-snapshot-grid" :class="{ disabled: !snapshotDraft.enabled }">
+            <label><span>采集方式</span><select v-model="snapshotDraft.mode" :disabled="isBusy || !snapshotDraft.enabled"><option value="auto">自动采集</option><option value="manual">手动刷新写入</option></select></label>
+            <label><span>标的范围</span><select v-model="snapshotDraft.scope" :disabled="isBusy || !snapshotDraft.enabled"><option value="holdings">持仓</option><option value="watchlist">自选</option><option value="holdings_watchlist">自选 + 持仓</option></select></label>
+            <label><span>开始时间</span><input v-model="snapshotDraft.startTime" :disabled="isBusy || !snapshotDraft.enabled || snapshotDraft.mode === 'manual'" required type="time" /></label>
+            <label><span>结束时间</span><input v-model="snapshotDraft.endTime" :disabled="isBusy || !snapshotDraft.enabled || snapshotDraft.mode === 'manual'" required type="time" /></label>
+            <label><span>采集间隔</span><select v-model="snapshotDraft.intervalMinutes" :disabled="isBusy || !snapshotDraft.enabled || snapshotDraft.mode === 'manual'"><option :value="1">1 分钟</option><option :value="3">3 分钟</option><option :value="5">5 分钟</option><option :value="10">10 分钟</option><option :value="15">15 分钟</option><option :value="30">30 分钟</option></select></label>
+            <label><span>记录保留</span><select v-model="snapshotDraft.retentionDays" :disabled="isBusy || !snapshotDraft.enabled || snapshotDraft.mode === 'manual'"><option :value="5">5 天</option><option :value="10">10 天</option><option :value="15">15 天</option></select></label>
+          </div>
+          <p class="system-snapshot-help">自动采集仅在交易日的 09:30-11:30、13:00-15:00 之间执行，并在每日首次自动采集时清理过期记录；手动模式仅在持仓或自选页面刷新时写入。</p>
+          <footer>
+            <button class="batman-button" :disabled="isBusy" type="button" @click="closeDialog">取消</button>
+            <button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存</button>
+          </footer>
+        </form>
+
+        <form
+          v-else-if="dialog === 'source'"
           class="system-dialog-form"
           @submit.prevent="saveSource"
         >
@@ -1383,6 +1530,11 @@ function buildCalendarMonths(
 .system-file-input {
   display: none;
 }
+.system-market-snapshot-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
 .system-dialog-form {
   display: grid;
   gap: 14px;
@@ -1397,6 +1549,7 @@ function buildCalendarMonths(
   gap: 6px;
 }
 .system-dialog-form select,
+.system-dialog-form input,
 .system-ai-grid input,
 .system-ai-grid select,
 .system-calendar-toolbar input,
@@ -1409,12 +1562,34 @@ function buildCalendarMonths(
   padding: 0 9px;
 }
 .system-dialog-form select:focus,
+.system-dialog-form input:focus,
 .system-ai-grid input:focus,
 .system-ai-grid select:focus,
 .system-calendar-toolbar input:focus,
 .system-ai-prompt textarea:focus {
   border-color: #65d7ca;
   outline: 1px solid #65d7ca;
+}
+.system-snapshot-toggle {
+  align-items: center;
+  color: #d7e7f4;
+  display: flex !important;
+  font-size: 13px !important;
+  gap: 8px !important;
+}
+.system-snapshot-help {
+  color: #8499ae;
+  font-size: 12px;
+  line-height: 1.55;
+  margin: -5px 0 0;
+}
+.system-snapshot-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.system-snapshot-grid.disabled {
+  opacity: 0.52;
 }
 .source-help {
   border-top: 1px solid #2a3d56;

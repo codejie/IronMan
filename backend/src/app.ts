@@ -27,6 +27,11 @@ import { AuthService, type PublicUser } from "./services/auth-service";
 import { IndicatorService } from "./services/indicator-service";
 import { FundHistoryService } from "./services/fund-history-service";
 import { MarketService } from "./services/market-service";
+import {
+  MarketSnapshotService,
+  marketSnapshotSettingsSchema,
+  marketSnapshotStatusSchema,
+} from "./services/market-snapshot-service";
 import { NoteService } from "./services/note-service";
 import { SettingsService } from "./services/settings-service";
 import { StrategyService } from "./services/strategy-service";
@@ -84,6 +89,17 @@ const instrumentSchema = z.object({
 });
 const priceBarSchema = z.object({
   date: z.string(),
+  open: z.number(),
+  close: z.number(),
+  high: z.number(),
+  low: z.number(),
+  volume: z.number(),
+});
+const marketSnapshotPointSchema = z.object({
+  capturedAt: z.string().datetime(),
+  tradeDate: z.string(),
+  source: sourceSchema,
+  captureMode: z.enum(["auto", "manual"]),
   open: z.number(),
   close: z.number(),
   high: z.number(),
@@ -257,7 +273,13 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     }),
   );
   const fundHistory = new FundHistoryService(database, market, tradingCalendar);
-  const assets = new AssetsService(database, market, fundHistory);
+  const snapshots = new MarketSnapshotService(
+    database,
+    settings,
+    tradingCalendar,
+    market,
+  );
+  const assets = new AssetsService(database, market, fundHistory, snapshots);
   const indicators = new IndicatorService();
   const trendIndicators = new TrendIndicatorService();
   const assistantConversations = new AssistantConversationService(database);
@@ -284,7 +306,13 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     market,
     trendIndicators,
   );
-  const automation = new AutomationService(database, market, strategies, tasks);
+  const automation = new AutomationService(
+    database,
+    market,
+    strategies,
+    tasks,
+    snapshots,
+  );
   const scheduler = new AutomationScheduler(automation);
   const notes = new NoteService(database, market);
   const backup = new BackupService(database);
@@ -969,6 +997,109 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/settings/market-snapshots/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Current user's intraday market snapshot settings",
+          content: {
+            "application/json": {
+              schema: responseSchema(marketSnapshotSettingsSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(snapshots.getSettings(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/market-snapshots/update",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(marketSnapshotSettingsSchema.partial()) },
+      responses: {
+        200: {
+          description: "Updated intraday market snapshot settings",
+          content: {
+            "application/json": {
+              schema: responseSchema(marketSnapshotSettingsSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          snapshots.updateSettings(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/market-snapshots/status",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Current user's intraday market snapshot status",
+          content: {
+            "application/json": {
+              schema: responseSchema(marketSnapshotStatusSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(snapshots.getStatus(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/market-snapshots/delete",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Deleted current user's intraday market snapshots",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({ deleted: z.number().int().nonnegative() }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(snapshots.deleteSnapshots(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/market/history",
       middleware: [authenticated(auth)],
       request: {
@@ -1018,6 +1149,51 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
             input.limit,
           ),
         ),
+        200,
+      );
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/market/snapshots/series",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            instrumentId: z.string().uuid(),
+            startAt: z.string().datetime(),
+            endAt: z.string().datetime(),
+          }).refine((input) => input.startAt <= input.endAt, {
+            message: "分时数据时间范围无效",
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Market snapshot series compatible with holdings intraday dialog",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({ items: z.array(marketSnapshotPointSchema) }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) => {
+      const input = context.req.valid("json");
+      return context.json(
+        success({
+          items: snapshots.listSeries(
+            context.get("currentUser").id,
+            input.instrumentId,
+            input.startAt,
+            input.endAt,
+          ),
+        }),
         200,
       );
     },

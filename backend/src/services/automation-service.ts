@@ -2,6 +2,7 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { AnalysisTaskService } from "./analysis-task-service";
 import { MarketService } from "./market-service";
+import type { MarketSnapshotService } from "./market-snapshot-service";
 import { StrategyService } from "./strategy-service";
 
 type ScheduleKind = "analysis" | "alert-scan";
@@ -188,7 +189,8 @@ export class AutomationService {
     private readonly database: IronManDatabase,
     private readonly market: MarketService,
     private readonly strategies: StrategyService,
-    private readonly tasks: AnalysisTaskService
+    private readonly tasks: AnalysisTaskService,
+    private readonly snapshots?: Pick<MarketSnapshotService, "captureDueAutomatic">
   ) {}
 
   createSchedule(userId: string, input: { name: string; kind: ScheduleKind; intervalMinutes: number; strategyId: string | null }): ScheduledJob {
@@ -422,6 +424,11 @@ export class AutomationService {
 
   async runDueSchedules(): Promise<void> {
     const now = new Date();
+    try {
+      await this.snapshots?.captureDueAutomatic(now);
+    } catch (error) {
+      console.error("market snapshot schedule failed", error);
+    }
     const due = this.database.transaction(() => {
       const rows = this.database.all<ScheduleRow>("SELECT * FROM scheduled_jobs WHERE enabled = 1 AND next_run_at <= $now ORDER BY next_run_at ASC", { now: now.toISOString() });
       for (const row of rows) {

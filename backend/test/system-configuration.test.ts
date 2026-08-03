@@ -237,6 +237,46 @@ describe("system configuration", () => {
     expect(body.result).toEqual({ primary: "akshare", fallback: "eastmoney" });
   });
 
+  test("stores and validates intraday snapshot settings for the current user only", async () => {
+    const alice = await register("alice-snapshots@example.com");
+    const bob = await register("bob-snapshots@example.com");
+    const update = await post(
+      "/api/settings/market-snapshots/update",
+      {
+        enabled: true,
+        mode: "manual",
+        startTime: "09:30",
+        endTime: "15:00",
+        intervalMinutes: 5,
+        scope: "holdings_watchlist",
+        retentionDays: 10,
+      },
+      alice.token,
+    );
+    expect(update.status).toBe(200);
+
+    const aliceSettings = await post(
+      "/api/settings/market-snapshots/get",
+      {},
+      alice.token,
+    );
+    expect(((await aliceSettings.json()) as ApiResponse<{ intervalMinutes: number }>).result.intervalMinutes).toBe(5);
+
+    const bobSettings = await post(
+      "/api/settings/market-snapshots/get",
+      {},
+      bob.token,
+    );
+    expect(((await bobSettings.json()) as ApiResponse<{ enabled: boolean }>).result.enabled).toBe(false);
+
+    const invalid = await post(
+      "/api/settings/market-snapshots/update",
+      { enabled: true, startTime: "15:00", endTime: "09:30" },
+      alice.token,
+    );
+    expect(invalid.status).toBe(400);
+  });
+
   test("only administrators can clear the shared market cache", async () => {
     const admin = await register("admin@example.com");
     const user = await register("user@example.com");

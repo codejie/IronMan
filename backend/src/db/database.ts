@@ -547,8 +547,50 @@ const migrations: Migration[] = [
         updated_at TEXT NOT NULL
       );
     `
+  },
+  {
+    version: 12,
+    sql: `
+      CREATE TABLE IF NOT EXISTS market_intraday_snapshots (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+        captured_at TEXT NOT NULL,
+        captured_minute TEXT NOT NULL,
+        trade_date TEXT NOT NULL,
+        source TEXT NOT NULL CHECK (source IN ('mock', 'tencent', 'eastmoney', 'akshare')),
+        capture_mode TEXT NOT NULL CHECK (capture_mode IN ('auto', 'manual')),
+        open REAL NOT NULL,
+        close REAL NOT NULL,
+        high REAL NOT NULL,
+        low REAL NOT NULL,
+        volume REAL NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(user_id, instrument_id, captured_minute)
+      );
+      CREATE INDEX IF NOT EXISTS market_intraday_snapshots_series_idx
+        ON market_intraday_snapshots(user_id, instrument_id, captured_at ASC);
+      CREATE INDEX IF NOT EXISTS market_intraday_snapshots_retention_idx
+        ON market_intraday_snapshots(user_id, captured_at ASC);
+
+      CREATE TABLE IF NOT EXISTS market_snapshot_states (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        last_attempt_at TEXT,
+        last_success_at TEXT,
+        last_capture_mode TEXT CHECK (last_capture_mode IN ('auto', 'manual')),
+        last_target_count INTEGER NOT NULL DEFAULT 0,
+        last_captured_count INTEGER NOT NULL DEFAULT 0,
+        last_skipped_count INTEGER NOT NULL DEFAULT 0,
+        last_failed_count INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        last_cleanup_trade_date TEXT,
+        updated_at TEXT NOT NULL
+      );
+    `
   }
 ];
+
+export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0;
 
 export class IronManDatabase {
   private readonly connection: Database;
@@ -559,7 +601,12 @@ export class IronManDatabase {
     this.connection.run("PRAGMA foreign_keys = ON");
     this.connection.run("PRAGMA journal_mode = WAL");
     this.connection.run("PRAGMA busy_timeout = 5000");
-    this.migrate();
+    try {
+      this.migrate();
+    } catch (error) {
+      this.connection.close();
+      throw error;
+    }
   }
 
   all<T>(sql: string, parameters: SqlParameters = {}): T[] {
@@ -595,7 +642,14 @@ export class IronManDatabase {
       )
     `);
 
-    const applied = new Set(this.all<{ version: number }>("SELECT version FROM schema_migrations").map((row) => row.version));
+    const appliedVersions = this.all<{ version: number }>("SELECT version FROM schema_migrations").map((row) => row.version);
+    const newestAppliedVersion = Math.max(0, ...appliedVersions);
+    if (newestAppliedVersion > LATEST_SCHEMA_VERSION) {
+      throw new Error(
+        `Database schema version ${newestAppliedVersion} is newer than this application supports (${LATEST_SCHEMA_VERSION}). Switch to a compatible branch or recover the database before starting the service.`,
+      );
+    }
+    const applied = new Set(appliedVersions);
     for (const migration of migrations) {
       if (applied.has(migration.version)) {
         continue;

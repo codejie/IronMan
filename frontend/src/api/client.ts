@@ -249,6 +249,45 @@ export interface DataSourceConfig {
   fallback: MarketSource;
 }
 
+export type MarketSnapshotMode = "auto" | "manual";
+export type MarketSnapshotScope = "holdings" | "watchlist" | "holdings_watchlist";
+
+export interface MarketSnapshotSettings {
+  enabled: boolean;
+  mode: MarketSnapshotMode;
+  startTime: string;
+  endTime: string;
+  intervalMinutes: 1 | 3 | 5 | 10 | 15 | 30;
+  scope: MarketSnapshotScope;
+  retentionDays: 5 | 10 | 15;
+}
+
+export interface MarketSnapshotStatus {
+  totalCount: number;
+  firstCapturedAt: string | null;
+  lastCapturedAt: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastCaptureMode: MarketSnapshotMode | null;
+  lastTargetCount: number;
+  lastCapturedCount: number;
+  lastSkippedCount: number;
+  lastFailedCount: number;
+  lastError: string | null;
+}
+
+export interface MarketSnapshotPoint {
+  capturedAt: string;
+  tradeDate: string;
+  source: MarketSource;
+  captureMode: MarketSnapshotMode;
+  open: number;
+  close: number;
+  high: number;
+  low: number;
+  volume: number;
+}
+
 export interface TradingCalendar {
   year: number;
   tradeDays: string[];
@@ -790,6 +829,32 @@ export const api = {
     post<{ requested: number; refreshed: number; failed: number }>(
       "/settings/market/refresh",
       {},
+      token,
+    ),
+  getMarketSnapshotSettings: (token: string) =>
+    post<MarketSnapshotSettings>("/settings/market-snapshots/get", {}, token),
+  updateMarketSnapshotSettings: (
+    token: string,
+    input: MarketSnapshotSettings,
+  ) =>
+    post<MarketSnapshotSettings>(
+      "/settings/market-snapshots/update",
+      input,
+      token,
+    ),
+  marketSnapshotStatus: (token: string) =>
+    post<MarketSnapshotStatus>("/settings/market-snapshots/status", {}, token),
+  deleteMarketSnapshots: (token: string) =>
+    post<{ deleted: number }>("/settings/market-snapshots/delete", {}, token),
+  marketSnapshotSeries: (
+    token: string,
+    instrumentId: string,
+    startAt: string,
+    endAt: string,
+  ) =>
+    post<{ items: MarketSnapshotPoint[] }>(
+      "/market/snapshots/series",
+      { instrumentId, startAt, endAt },
       token,
     ),
   history: (

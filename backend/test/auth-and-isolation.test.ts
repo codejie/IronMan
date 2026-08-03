@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { LATEST_SCHEMA_VERSION } from "../src/db/database";
 
 interface ResponseBody<T> {
   code: number;
@@ -174,7 +175,9 @@ describe("account and tenant isolation", () => {
     const systemBody = (await system.json()) as ResponseBody<{ database: string; migrationVersions: number[] }>;
     expect(system.status).toBe(200);
     expect(systemBody.result.database).toBe("sqlite");
-    expect(systemBody.result.migrationVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(systemBody.result.migrationVersions).toEqual(
+      Array.from({ length: LATEST_SCHEMA_VERSION }, (_, index) => index + 1),
+    );
 
     const wrongMethod = await runtime.app.request("/api/admin/system/status", { method: "GET" });
     expect(wrongMethod.status).toBe(404);

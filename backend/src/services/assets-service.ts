@@ -4,6 +4,7 @@ import type { Instrument } from "../market/types";
 import { IndicatorService } from "./indicator-service";
 import { fundBusinessDate, type FundHistoryService } from "./fund-history-service";
 import { MarketService } from "./market-service";
+import type { MarketSnapshotService } from "./market-snapshot-service";
 
 type StoredHoldingAction = "buy" | "sell" | "dividend";
 export type HoldingAction = "buy" | "sell" | "interest";
@@ -166,6 +167,7 @@ export class AssetsService {
     private readonly database: IronManDatabase,
     private readonly market: MarketService,
     private readonly fundHistory?: Pick<FundHistoryService, "markDirty">,
+    private readonly snapshots?: Pick<MarketSnapshotService, "captureFromManualRefresh">,
   ) {}
 
   createWatchlistEntry(userId: string, input: { instrumentId: string; note: string; targetPrice?: number | null }): WatchlistEntry {
@@ -277,6 +279,7 @@ export class AssetsService {
       const latest = history.bars.at(-1);
       const previous = history.bars.at(-2);
       if (latest === undefined) return emptyQuote;
+      if (refresh) this.snapshots?.captureFromManualRefresh(userId, "watchlist", instrumentId, history.source, latest);
       const latestPrice = fixed(latest.close);
       const previousClose = previous === undefined ? null : fixed(previous.close);
       const priceChange = previousClose === null ? null : fixed(latest.close - previousClose);
@@ -401,6 +404,7 @@ export class AssetsService {
         const latest = history.bars.at(-1);
         const previous = history.bars.at(-2);
         if (latest !== undefined) {
+          if (refresh) this.snapshots?.captureFromManualRefresh(userId, "holdings", holding.instrument.id, history.source, latest);
           currentPrice = latest.close;
           quoteDate = latest.date;
           if (previous !== undefined && previous.close !== 0) {
