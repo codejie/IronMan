@@ -384,32 +384,26 @@ onMounted(load);
       <section class="batman-dialog wide" aria-modal="true" role="dialog">
         <header>
           <strong>{{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }} 分时数据</strong>
-          <div class="intraday-chart-toggle" v-if="intradayHolding" role="radiogroup" aria-label="图表类型">
+          <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
             <button
               class="intraday-toggle-button"
               :class="{ active: intradayChartType === 'kline' }"
               @click="intradayChartType = 'kline'"
               type="button"
-              role="radio"
-              :aria-checked="intradayChartType === 'kline'"
               title="K线"
               :disabled="intradayLoading"
             >
-              <span class="toggle-icon kline-icon" />
-              <span class="toggle-label">K线</span>
+              K线
             </button>
             <button
               class="intraday-toggle-button"
               :class="{ active: intradayChartType === 'line' }"
               @click="intradayChartType = 'line'"
               type="button"
-              role="radio"
-              :aria-checked="intradayChartType === 'line'"
               title="分时线"
               :disabled="intradayLoading"
             >
-              <span class="toggle-icon line-icon" />
-              <span class="toggle-label">分时线</span>
+              分时线
             </button>
           </div>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
@@ -450,32 +444,42 @@ onMounted(load);
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0 0 6px; }
 
 .intraday-chart-toggle {
-  display: flex;
-  background: rgb(20 34 54 / 80%);
-  border: 1px solid #30445d;
-  border-radius: 4px;
-  padding: 2px;
-  backdrop-filter: blur(4px);
+  display: inline-flex;
 }
 
 .intraday-toggle-button {
-  background: transparent;
-  border: none;
-  border-radius: 3px;
+  background: #162236;
+  border: 1px solid #344963;
+  color: #b9c8d9;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 12px;
-  transition: all 150ms ease;
-  color: #aabbd0;
-  font-size: 11px;
-  font-weight: 500;
-  white-space: nowrap;
+  font-size: 12px;
+  min-width: 44px;
+  padding: 4px 7px;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.intraday-toggle-button + .intraday-toggle-button {
+  border-left-color: #2b3d54;
+  margin-left: -1px;
+}
+
+.intraday-toggle-button:first-child {
+  border-radius: 5px 0 0 5px;
+}
+
+.intraday-toggle-button:last-child {
+  border-radius: 0 5px 5px 0;
+}
+
+.intraday-toggle-button:focus-visible {
+  outline: 2px solid #57bdb4;
+  outline-offset: 2px;
+  position: relative;
+  z-index: 1;
 }
 
 .intraday-toggle-button:hover:not(:disabled):not(.active) {
-  background: rgb(255 255 255 / 8%);
+  background: #1e2d44;
 }
 
 .intraday-toggle-button:disabled {
@@ -484,32 +488,11 @@ onMounted(load);
 }
 
 .intraday-toggle-button.active {
-  background: #65d7ca;
-  color: #142236;
-}
-
-.intraday-toggle-button.active .toggle-icon {
-  stroke: currentColor;
-}
-
-.toggle-icon {
-  display: block;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  fill: none;
-  flex-shrink: 0;
-}
-
-.kline-icon {
-  width: 16px;
-  height: 12px;
-}
-
-.line-icon {
-  width: 16px;
-  height: 12px;
+  background: #2673bd;
+  border-color: #4598eb;
+  color: #fff;
+  position: relative;
+  z-index: 1;
 }
 
 .batman-icon-button:disabled {
