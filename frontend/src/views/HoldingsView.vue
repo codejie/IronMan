@@ -43,6 +43,11 @@ const intradayLoading = ref(false);
 const intradayError = ref("");
 let intradayRequestVersion = 0;
 const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
+const intradayChartType = ref<"kline" | "line">("line");
+
+// Cache to track which instruments have intraday data (instrumentId -> boolean)
+// null = not checked yet, true = has data, false = no data
+const intradayDataCache = ref<Map<string, boolean>>(new Map());
 
 const intradayBars = computed<PriceBar[]>(() => (intradayData.value ?? []).map((item) => ({
   date: item.capturedAt,
@@ -52,7 +57,7 @@ const intradayBars = computed<PriceBar[]>(() => (intradayData.value ?? []).map((
   low: item.low,
   volume: item.volume,
 })));
-const intradayLabels = computed(() => (intradayData.value ?? []).map((item) => formatDateTime(item.capturedAt)));
+const intradayLabels = computed(() => (intradayData.value ?? []).map((item) => formatIntradayLabel(item.capturedAt)));
 const intradaySummary = computed(() => {
   const points = intradayData.value ?? [];
   if (points.length === 0) return "";
@@ -61,6 +66,16 @@ const intradaySummary = computed(() => {
   const sources = [...new Set(points.map((item) => item.source))].join(" / ");
   return `${points.length} 个快照 · ${formatDateTime(first.capturedAt)} 至 ${formatDateTime(last.capturedAt)} · ${sources}`;
 });
+
+function formatIntradayLabel(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${month}/${day} ${hours}:${minutes}`;
+}
 
 const activeRecords = computed(() => workspace.value?.active ?? []);
 const closedRecords = computed(() => workspace.value?.closed ?? []);
@@ -184,6 +199,17 @@ function closeKlineDialog(): void {
 async function openIntraday(holding: BatmanHoldingWorkspaceRecord): Promise<void> {
   const accessToken = token.value;
   if (accessToken === null || intradayLoading.value) return;
+  
+  // Check cache - if we know there's no data, don't even try
+  const cached = intradayDataCache.value.get(holding.instrument.id);
+  if (cached === false) {
+    intradayError.value = "该标的暂无分时数据";
+    intradayDialogOpen.value = true;
+    intradayHolding.value = holding;
+    intradayData.value = null;
+    return;
+  }
+  
   intradayDialogOpen.value = true;
   intradayHolding.value = holding;
   intradayError.value = "";
@@ -196,6 +222,7 @@ function closeIntradayDialog(): void {
   intradayData.value = null;
   intradayHolding.value = null;
   intradayError.value = "";
+  intradayChartType.value = "line";
 }
 
 async function loadIntradayData(accessToken: string, instrumentId: string): Promise<void> {
@@ -209,9 +236,12 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
     const response = await api.marketSnapshotSeries(accessToken, instrumentId, startAt, endAt);
     if (version !== intradayRequestVersion) return;
     intradayData.value = response.items;
+    // Update cache: true if we got data, false if empty
+    intradayDataCache.value.set(instrumentId, response.items.length > 0);
   } catch (error) {
     if (version !== intradayRequestVersion) return;
     intradayError.value = error instanceof ApiError ? error.message : "分时数据加载失败";
+    // On error, don't update cache - allow retry
   } finally {
     if (version === intradayRequestVersion) intradayLoading.value = false;
   }
@@ -309,7 +339,7 @@ onMounted(load);
     <div class="batman-table-frame holdings-table-frame">
       <table class="batman-table holdings-table"><colgroup><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>名称/代码</th><th>持仓/占比</th><th>成本/占比</th><th>均价/价差</th><th>现价/日期</th><th title="涨跌额/涨跌幅%">涨跌额/涨跌幅%</th><th>市值/占比</th><th>盈亏/占比</th><th>盈亏率%</th><th title="昨差/昨差率%">昨差/昨差率%</th><th class="batman-action-header">操作</th></tr></thead>
         <tbody v-overflow-title>
-          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button><button :aria-label="`删除 ${holding.instrument.name} 持仓`" class="batman-icon-button danger" data-hint="删除持仓" data-hint-position="top" type="button" @click="openDeleteHolding(holding)"><Trash2 :size="14" /></button></div></td></tr>
+          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)" :disabled="intradayDataCache.get(holding.instrument.id) === false"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button><button :aria-label="`删除 ${holding.instrument.name} 持仓`" class="batman-icon-button danger" data-hint="删除持仓" data-hint-position="top" type="button" @click="openDeleteHolding(holding)"><Trash2 :size="14" /></button></div></td></tr>
           <tr v-if="activeRecords.length === 0"><td class="batman-empty-cell" colspan="12">-</td></tr>
         </tbody>
         <tfoot v-if="workspace"><tr><td colspan="7"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(dailyDifferenceTotal)">{{ signed(dailyDifferenceTotal) }}</td><td></td></tr></tfoot>
@@ -354,6 +384,28 @@ onMounted(load);
       <section class="batman-dialog wide" aria-modal="true" role="dialog">
         <header>
           <strong>{{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }} 分时数据</strong>
+          <div class="intraday-chart-toggle" v-if="intradayHolding">
+            <button
+              class="intraday-toggle-button"
+              :class="{ active: intradayChartType === 'kline' }"
+              @click="intradayChartType = 'kline'"
+              type="button"
+              title="K线"
+              :disabled="intradayLoading"
+            >
+              <span class="toggle-icon kline-icon" />
+            </button>
+            <button
+              class="intraday-toggle-button"
+              :class="{ active: intradayChartType === 'line' }"
+              @click="intradayChartType = 'line'"
+              type="button"
+              title="分时线"
+              :disabled="intradayLoading"
+            >
+              <span class="toggle-icon line-icon" />
+            </button>
+          </div>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
         </header>
         <div class="intraday-dialog-content">
@@ -362,7 +414,17 @@ onMounted(load);
           <p v-else-if="!intradayData || intradayData.length === 0" class="batman-selected">暂无分时数据</p>
           <div v-else class="intraday-chart-frame">
             <p class="intraday-chart-summary">{{ intradaySummary }}</p>
-            <KLineChart :bars="intradayBars" height="min(58vh, 440px)" :ma-periods="[]" subchart="volume" :x-axis-labels="intradayLabels" />
+            <KLineChart
+              :bars="intradayBars"
+              height="min(58vh, 440px)"
+              :ma-periods="[]"
+              subchart="volume"
+              :x-axis-labels="intradayLabels"
+              intraday-mode
+              :cost-price="intradayHolding?.averageCost ?? null"
+              :chart-type="intradayChartType"
+              @update:chartType="intradayChartType = $event"
+            />
           </div>
         </div>
       </section>
@@ -380,4 +442,67 @@ onMounted(load);
 .intraday-dialog-content { padding: 4px 0 0; }
 .intraday-chart-frame { min-width: 0; }
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0 0 6px; }
+
+.intraday-chart-toggle {
+  display: flex;
+  gap: 4px;
+  background: rgb(20 34 54 / 80%);
+  border: 1px solid #30445d;
+  border-radius: 4px;
+  padding: 4px;
+  backdrop-filter: blur(4px);
+}
+
+.intraday-toggle-button {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  transition: background-color 150ms ease;
+}
+
+.intraday-toggle-button:hover:not(:disabled) {
+  background: rgb(255 255 255 / 8%);
+}
+
+.intraday-toggle-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.intraday-toggle-button.active {
+  background: #65d7ca;
+}
+
+.intraday-toggle-button.active .toggle-icon {
+  stroke: #142236;
+}
+
+.toggle-icon {
+  display: block;
+  stroke: #aabbd0;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.kline-icon {
+  width: 18px;
+  height: 14px;
+}
+
+.line-icon {
+  width: 18px;
+  height: 14px;
+}
+
+.batman-icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
 </style>

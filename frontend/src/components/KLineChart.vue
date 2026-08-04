@@ -30,9 +30,16 @@ const props = withDefaults(
     title?: string;
     height?: string;
     xAxisLabels?: string[];
+    intradayMode?: boolean;
+    costPrice?: number | null;
+    chartType?: "kline" | "line";
   }>(),
-  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px" }
+  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, costPrice: null, chartType: "line" }
 );
+
+defineEmits<{
+  (e: "update:chartType", value: "kline" | "line"): void;
+}>();
 
 const maColors = ["#6581da", "#92c978", "#ffbd4b", "#c985d7", "#56c4c9", "#ed7777"];
 const element = ref<HTMLDivElement | null>(null);
@@ -179,10 +186,15 @@ function render(): void {
   chart ??= init(element.value);
 
   const labels = chartLabels();
+  const isIntraday = props.intradayMode;
+  const chartType = props.chartType;
+  const closePrices = props.bars.map((bar) => bar.close);
+  const volumes = props.bars.map((bar) => bar.volume);
+
   const maSeries = props.maPeriods.map((period, index) => ({
     type: "line" as const,
     name: `MA${period}`,
-    data: movingAverage(props.bars.map((bar) => bar.close), period),
+    data: movingAverage(closePrices, period),
     showSymbol: false,
     smooth: true,
     ...lineVisualStyle(maColors[index % maColors.length]!, 1.5)
@@ -216,7 +228,7 @@ function render(): void {
             name: "成交量",
             xAxisIndex: 1,
             yAxisIndex: 1,
-            data: props.bars.map((bar) => bar.volume),
+            data: volumes,
             itemStyle: {
               color: (params: { dataIndex: number }) => {
                 const bar = props.bars[params.dataIndex];
@@ -249,11 +261,74 @@ function render(): void {
     }))
   }];
 
+  // Build main chart series based on mode
+  let mainSeries: any[] = [];
+  let legendData: string[] = [];
+
+  if (isIntraday) {
+    if (chartType === "line") {
+      // Line chart using close prices
+      mainSeries = [
+        {
+          type: "line" as const,
+          name: "收盘价",
+          data: closePrices,
+          showSymbol: false,
+          smooth: true,
+          ...lineVisualStyle("#65d7ca", 1.8)
+        }
+      ];
+      legendData = ["收盘价", ...maSeries.map((s) => s.name)];
+    } else {
+      // K-line chart
+      mainSeries = [
+        {
+          type: "candlestick" as const,
+          name: "K线",
+          data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
+          itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" }
+        }
+      ];
+      legendData = ["K线", ...maSeries.map((s) => s.name)];
+    }
+  } else {
+    // Regular K-line chart
+    mainSeries = [
+      {
+        type: "candlestick" as const,
+        name: "K线",
+        data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
+        itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" }
+      }
+    ];
+    legendData = ["K线", ...maSeries.map((s) => s.name)];
+  }
+
+  // Add cost price markLine if provided and in intraday mode
+  const markLine = props.intradayMode && props.costPrice !== null && props.costPrice !== undefined
+    ? {
+        silent: true,
+        symbol: "none",
+        lineStyle: { color: "#ffbd4b", width: 1.5, type: "dashed" as const },
+        data: [{ yAxis: props.costPrice }],
+        label: {
+          show: true,
+          position: "end" as const,
+          formatter: `成本价 {c}`,
+          color: "#ffbd4b",
+          fontSize: 10,
+          backgroundColor: "rgba(20, 34, 54, 0.8)",
+          borderRadius: 3,
+          padding: [2, 6]
+        }
+      }
+    : undefined;
+
   chart.setOption({
     animation: false,
     backgroundColor: "transparent",
     title: props.title === "" ? undefined : { text: props.title, left: 0, textStyle: { color: "#edf7ff", fontSize: 15, fontWeight: 650 } },
-    legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { color: "#aabbd0", fontSize: 11 }, data: ["K线", ...maSeries.map((series) => series.name), ...mainOverlaySeries.map((series) => series.name), ...secondarySeries.map((series) => series.name)] },
+    legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { color: "#aabbd0", fontSize: 11 }, data: [...legendData, ...mainOverlaySeries.map((series) => series.name), ...secondarySeries.map((series) => series.name)] },
     tooltip: {
       trigger: "axis",
       confine: true,
@@ -283,17 +358,13 @@ function render(): void {
       { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } }
     ],
     series: [
-      {
-        type: "candlestick",
-        name: "K线",
-        data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
-        itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" }
-      },
+      ...mainSeries,
       ...maSeries,
       ...mainOverlaySeries,
       ...secondarySeries,
       ...turningPointSeries
-    ]
+    ],
+    ...(markLine ? { markLine } : {})
   }, { notMerge: true });
   updateAnnotationPositions();
 }
@@ -311,7 +382,7 @@ onMounted(() => {
   chart?.on("globalout", clearActiveAnnotations);
 });
 
-watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels], render, { deep: true });
+watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.costPrice, props.chartType], render, { deep: true });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.off("mouseover", handleChartMouseOver);
@@ -324,6 +395,26 @@ onBeforeUnmount(() => {
 <template>
   <div class="kline-chart-shell" :style="{ height: props.height }">
     <div ref="element" class="kline-chart" />
+    <div v-if="props.intradayMode" class="kline-chart-toggle">
+      <button
+        class="kline-toggle-button"
+        :class="{ active: props.chartType === 'kline' }"
+        @click="$emit('update:chartType', 'kline')"
+        type="button"
+        title="K线"
+      >
+        <span class="toggle-icon kline-icon" />
+      </button>
+      <button
+        class="kline-toggle-button"
+        :class="{ active: props.chartType === 'line' }"
+        @click="$emit('update:chartType', 'line')"
+        type="button"
+        title="分时线"
+      >
+        <span class="toggle-icon line-icon" />
+      </button>
+    </div>
     <div v-if="annotationLabels.length > 0" class="kline-annotation-label-layer" aria-hidden="true">
       <svg v-if="activeAnnotationConnectors.length > 0" class="kline-annotation-connector-layer" preserveAspectRatio="none">
         <line
@@ -473,5 +564,62 @@ onBeforeUnmount(() => {
   box-shadow: 0 0 0 1px currentcolor, 0 3px 12px rgb(0 0 0 / 30%);
   opacity: 1;
   transform: translateY(-50%) scale(1.07);
+}
+
+.kline-chart-toggle {
+  display: flex;
+  gap: 4px;
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 10;
+  background: rgb(20 34 54 / 80%);
+  border: 1px solid #30445d;
+  border-radius: 4px;
+  padding: 4px;
+  backdrop-filter: blur(4px);
+}
+
+.kline-toggle-button {
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  transition: background-color 150ms ease;
+}
+
+.kline-toggle-button:hover {
+  background: rgb(255 255 255 / 8%);
+}
+
+.kline-toggle-button.active {
+  background: #65d7ca;
+}
+
+.kline-toggle-button.active .toggle-icon {
+  stroke: #142236;
+}
+
+.toggle-icon {
+  display: block;
+  stroke: #aabbd0;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.kline-icon {
+  width: 18px;
+  height: 14px;
+}
+
+.line-icon {
+  width: 18px;
+  height: 14px;
 }
 </style>
