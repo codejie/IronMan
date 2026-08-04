@@ -9,7 +9,7 @@ describe("Batman navigation", () => {
   test("preserves Batman analysis and third-party submenus", () => {
     const sections = menuFor().filter(isMenuSection);
 
-    expect(sections.find((item) => item.label === "数据分析")?.children.map((item) => item.label)).toEqual(["趋势计算", "AI咨询"]);
+    expect(sections.find((item) => item.label === "数据分析")?.children.map((item) => item.label)).toEqual(["趋势计算", "持仓诊断", "AI咨询"]);
     expect(sections.find((item) => item.label === "三方数据")?.children.map((item) => item.label)).toEqual(["技术数据", "资讯链接", "大盘云图"]);
   });
 
@@ -18,6 +18,7 @@ describe("Batman navigation", () => {
       "/customized/list",
       "/holding/list",
       "/analysis/trend",
+      "/analysis/holding-diagnosis",
       "/analysis/agent",
       "/data/third/technical-data",
       "/data/third/info-links",

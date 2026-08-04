@@ -29,6 +29,7 @@ const props = withDefaults(
     annotations?: KlineAnnotation[];
     title?: string;
     height?: string;
+    xAxisLabels?: string[];
   }>(),
   { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px" }
 );
@@ -43,12 +44,18 @@ let resizeObserver: ResizeObserver | undefined;
 use([BarChart, CandlestickChart, LineChart, ScatterChart, GridComponent, LegendComponent, TitleComponent, TooltipComponent, AxisPointerComponent, CanvasRenderer]);
 
 const annotationLabels = computed(() => {
-  const labels = props.bars.map((bar) => formatDate(bar.date));
+  const labels = chartLabels();
   return buildKlineAnnotationLabels(
     props.annotations,
     props.bars.map((bar, index) => ({ date: bar.date, label: labels[index]!, close: bar.close }))
   );
 });
+
+function chartLabels(): string[] {
+  return props.xAxisLabels?.length === props.bars.length
+    ? props.xAxisLabels
+    : props.bars.map((bar) => formatDate(bar.date));
+}
 
 const activeAnnotationConnectors = computed(() => {
   return activeAnnotationKeys.value.flatMap((key) => {
@@ -158,7 +165,7 @@ function handleAxisPointer(event: unknown): void {
   const axisInfo = axesInfo?.find((item) => item.axisDim === "x" && item.axisIndex === 0);
   if (axisInfo === undefined) return;
   const axisLabel = typeof axisInfo.value === "number"
-    ? props.bars[axisInfo.value] === undefined ? null : formatDate(props.bars[axisInfo.value]!.date)
+    ? chartLabels()[axisInfo.value] ?? null
     : typeof axisInfo.value === "string" ? axisInfo.value : null;
   setActiveAnnotationKeys(axisLabel === null ? [] : annotationKeysForAxisLabel(axisLabel));
 }
@@ -171,7 +178,7 @@ function render(): void {
   if (element.value === null) return;
   chart ??= init(element.value);
 
-  const labels = props.bars.map((bar) => formatDate(bar.date));
+  const labels = chartLabels();
   const maSeries = props.maPeriods.map((period, index) => ({
     type: "line" as const,
     name: `MA${period}`,
@@ -304,7 +311,7 @@ onMounted(() => {
   chart?.on("globalout", clearActiveAnnotations);
 });
 
-watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title], render, { deep: true });
+watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels], render, { deep: true });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.off("mouseover", handleChartMouseOver);

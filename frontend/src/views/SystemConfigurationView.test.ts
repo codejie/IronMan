@@ -9,10 +9,14 @@ const mocks = vi.hoisted(() => ({
   updateMarketSnapshotSettings: vi.fn(),
   marketSnapshotStatus: vi.fn(),
   deleteMarketSnapshots: vi.fn(),
+  getAiConfig: vi.fn(),
   getAlertSettings: vi.fn(),
+  getHoldingDiagnosisSettings: vi.fn(),
+  holdingDiagnosisSourceCatalog: vi.fn(),
   updateAlertSettings: vi.fn(),
   fundHistoryStatus: vi.fn(),
   recalculateFundHistory: vi.fn(),
+  updateHoldingDiagnosisSettings: vi.fn(),
   confirm: vi.fn(),
 }));
 
@@ -25,10 +29,14 @@ vi.mock("@/api/client", () => ({
     updateMarketSnapshotSettings: mocks.updateMarketSnapshotSettings,
     marketSnapshotStatus: mocks.marketSnapshotStatus,
     deleteMarketSnapshots: mocks.deleteMarketSnapshots,
+    getAiConfig: mocks.getAiConfig,
     getAlertSettings: mocks.getAlertSettings,
+    getHoldingDiagnosisSettings: mocks.getHoldingDiagnosisSettings,
+    holdingDiagnosisSourceCatalog: mocks.holdingDiagnosisSourceCatalog,
     updateAlertSettings: mocks.updateAlertSettings,
     fundHistoryStatus: mocks.fundHistoryStatus,
     recalculateFundHistory: mocks.recalculateFundHistory,
+    updateHoldingDiagnosisSettings: mocks.updateHoldingDiagnosisSettings,
   },
 }));
 
@@ -52,10 +60,14 @@ describe("SystemConfigurationView", () => {
     mocks.updateMarketSnapshotSettings.mockReset();
     mocks.marketSnapshotStatus.mockReset();
     mocks.deleteMarketSnapshots.mockReset();
+    mocks.getAiConfig.mockReset();
     mocks.getAlertSettings.mockReset();
+    mocks.getHoldingDiagnosisSettings.mockReset();
+    mocks.holdingDiagnosisSourceCatalog.mockReset();
     mocks.updateAlertSettings.mockReset();
     mocks.fundHistoryStatus.mockReset();
     mocks.recalculateFundHistory.mockReset();
+    mocks.updateHoldingDiagnosisSettings.mockReset();
     mocks.confirm.mockReset();
     mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "mock" });
     mocks.marketOverview.mockResolvedValue({ instrumentCount: 0, cachedBarCount: 0, latestCacheAt: null });
@@ -91,6 +103,11 @@ describe("SystemConfigurationView", () => {
       lastError: null,
     });
     mocks.deleteMarketSnapshots.mockResolvedValue({ deleted: 0 });
+    mocks.getAiConfig.mockResolvedValue({
+      models: [{ id: "local", name: "本地工作台助手", provider: "local", enabled: true, default: true }],
+      systemPrompt: "test",
+      defaultSystemPrompt: "test",
+    });
     mocks.getAlertSettings.mockResolvedValue({
       systemMode: "suggest",
       defaultCooldownMinutes: 60,
@@ -129,6 +146,30 @@ describe("SystemConfigurationView", () => {
         updatedAt: "2026-07-31T08:00:00.000Z",
         tradeDayCount: 240,
       },
+    });
+    mocks.getHoldingDiagnosisSettings.mockResolvedValue({
+      enabled: false,
+      scheduledTime: "15:30",
+      sourceIds: ["all"],
+      reportPreference: "优先识别趋势与风险。",
+      lookbackTradingDays: 60,
+      maxFunctionBatches: 2,
+      maxExternalSourcesPerHolding: 3,
+    });
+    mocks.holdingDiagnosisSourceCatalog.mockResolvedValue({
+      items: [
+        { id: "market", label: "当前行情主备源", description: "行情", kind: "market" },
+        { id: "cninfo", label: "巨潮资讯", description: "公告", kind: "external" },
+      ],
+    });
+    mocks.updateHoldingDiagnosisSettings.mockResolvedValue({
+      enabled: true,
+      scheduledTime: "15:45",
+      sourceIds: ["market", "cninfo"],
+      reportPreference: "风险优先。",
+      lookbackTradingDays: 120,
+      maxFunctionBatches: 3,
+      maxExternalSourcesPerHolding: 5,
     });
     mocks.confirm.mockResolvedValue(true);
   });
@@ -200,5 +241,83 @@ describe("SystemConfigurationView", () => {
       retentionDays: 5,
     });
     expect(wrapper.text()).toContain("盘中行情快照配置已保存");
+  });
+
+  test("saves holding diagnosis scheduling, source, and report preferences", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const diagnosisNav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("持仓诊断"));
+    if (diagnosisNav === undefined) throw new Error("holding diagnosis section was not rendered");
+    await diagnosisNav.trigger("click");
+
+    const form = wrapper.get("form[aria-label='持仓诊断配置']");
+    await form.get("input[aria-label='开启自动持仓诊断']").setValue(true);
+    await form.get("input[aria-label='持仓诊断生成时间']").setValue("15:45");
+    await form.get("input[aria-label='使用全部资料源']").setValue(false);
+    await form.get("input[aria-label='选择 巨潮资讯']").setValue(true);
+    await form.get("input[aria-label='选择 当前行情主备源']").setValue(true);
+    await form.get("textarea[aria-label='报告倾向']").setValue("风险优先。");
+    const selects = form.findAll("select");
+    await selects[0]!.setValue("120");
+    await selects[1]!.setValue("3");
+    await selects[2]!.setValue("5");
+    await form.trigger("submit");
+    await flushPromises();
+
+    expect(mocks.updateHoldingDiagnosisSettings).toHaveBeenCalledWith("test-token", {
+      enabled: true,
+      scheduledTime: "15:45",
+      sourceIds: ["market", "cninfo"],
+      reportPreference: "风险优先。",
+      lookbackTradingDays: 120,
+      maxFunctionBatches: 3,
+      maxExternalSourcesPerHolding: 5,
+    });
+    expect(wrapper.text()).toContain("持仓诊断配置已保存");
+  });
+
+  test("keeps AI models in a compact collapsible list and expands a new model for editing", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const aiNav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("AI"));
+    if (aiNav === undefined) throw new Error("AI section was not rendered");
+    await aiNav.trigger("click");
+
+    const aiConfigRow = wrapper
+      .findAll(".system-configuration-row")
+      .find((row) => row.text().includes("模型配置"));
+    if (aiConfigRow === undefined) throw new Error("AI configuration row was not rendered");
+    await aiConfigRow.get(".batman-button").trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get(".batman-dialog").classes()).toContain("system-ai-modal");
+    const firstModel = wrapper.get(".system-ai-model");
+    const firstSummary = firstModel.get(".system-ai-model-summary-toggle");
+    expect(firstSummary.attributes("aria-expanded")).toBe("true");
+    await firstSummary.trigger("click");
+    expect(firstSummary.attributes("aria-expanded")).toBe("false");
+    expect(firstModel.find(".system-ai-grid").exists()).toBe(false);
+    await firstSummary.trigger("click");
+
+    const addModel = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("新增模型"));
+    if (addModel === undefined) throw new Error("add model control was not rendered");
+    await addModel.trigger("click");
+    await flushPromises();
+
+    const models = wrapper.findAll(".system-ai-model");
+    expect(models).toHaveLength(2);
+    expect(models[0]!.get(".system-ai-model-summary-toggle").attributes("aria-expanded")).toBe("false");
+    expect(models[1]!.get(".system-ai-model-summary-toggle").attributes("aria-expanded")).toBe("true");
+    const modelNameInput = models[1]!.get("input[aria-label='模型名称']");
+    await modelNameInput.setValue("诊断助手");
+    expect((modelNameInput.element as HTMLInputElement).value).toBe("诊断助手");
   });
 });

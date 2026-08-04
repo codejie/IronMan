@@ -24,6 +24,10 @@ const exportTables: TableSpec[] = [
   { name: "cash_ledger", columns: ["id", "amount", "category", "reference_id", "note", "occurred_at", "created_at"] },
   { name: "holdings", columns: ["id", "instrument_id", "status", "created_at", "updated_at"] },
   { name: "holding_transactions", columns: ["id", "holding_id", "action", "quantity", "price", "fee", "note", "occurred_at", "created_at"] },
+  { name: "holding_diagnosis_runs", columns: ["id", "trigger", "status", "progress", "scheduled_trade_date", "settings_snapshot_json", "model_snapshot_json", "error_message", "started_at", "completed_at", "created_at", "updated_at"] },
+  { name: "holding_diagnosis_reports", columns: ["id", "run_id", "body", "summary_json", "market_as_of", "created_at"] },
+  { name: "holding_diagnosis_items", columns: ["id", "report_id", "instrument_id", "data_snapshot_json", "chart_snapshot_json", "analysis_json", "recommendation_direction", "recommendation_price_json", "valid_until", "data_quality", "created_at"] },
+  { name: "holding_diagnosis_sources", columns: ["id", "report_id", "item_id", "source_id", "source_name", "source_type", "title", "published_at", "fetched_at", "availability", "url", "metadata_json", "created_at"] },
   { name: "strategies", columns: ["id", "name", "instrument_ids_json", "indicators_json", "created_at", "updated_at"] },
   { name: "analysis_tasks", columns: ["id", "strategy_id", "status", "progress", "error_message", "created_at", "started_at", "completed_at"] },
   { name: "analysis_reports", columns: ["id", "task_id", "instrument_id", "result_json", "created_at"] },
@@ -34,7 +38,7 @@ const exportTables: TableSpec[] = [
   { name: "alert_suggestions", columns: ["id", "source", "instrument_id", "title", "message", "severity", "rule_kind", "condition_json", "cooldown_minutes", "status", "created_at", "updated_at", "accepted_at", "ignored_at"] }
 ];
 
-const deletionOrder = ["fund_daily_metrics", "fund_history_state", "task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alert_suggestions", "alert_rules", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
+const deletionOrder = ["fund_daily_metrics", "fund_history_state", "holding_diagnosis_sources", "holding_diagnosis_items", "holding_diagnosis_reports", "holding_diagnosis_runs", "task_logs", "analysis_reports", "analysis_tasks", "scheduled_jobs", "alert_events", "alert_suggestions", "alert_rules", "strategies", "holding_transactions", "holdings", "cash_ledger", "cash_accounts", "watchlist_entries", "notes", "assistant_messages", "assistant_conversations", "user_settings"];
 
 export class BackupService {
   constructor(private readonly database: IronManDatabase) {}

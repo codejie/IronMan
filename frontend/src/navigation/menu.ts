@@ -1,5 +1,5 @@
 import type { Component } from "vue";
-import { BarChart3, BrainCircuit, CandlestickChart, ChartNoAxesCombined, Landmark, Link2, NotebookPen, PanelsTopLeft, Settings2, Star, TrendingUp } from "lucide-vue-next";
+import { BarChart3, BrainCircuit, CandlestickChart, ChartNoAxesCombined, Landmark, Link2, NotebookPen, PanelsTopLeft, ScanSearch, Settings2, Star, TrendingUp } from "lucide-vue-next";
 
 export interface MenuItem {
   icon: Component;
@@ -21,6 +21,7 @@ const menu: MenuNode[] = [
   {
     children: [
       { icon: TrendingUp, label: "趋势计算", to: "/analysis/trend" },
+      { icon: ScanSearch, label: "持仓诊断", to: "/analysis/holding-diagnosis" },
       { icon: BrainCircuit, label: "AI咨询", to: "/analysis/agent" }
     ],
     icon: CandlestickChart,

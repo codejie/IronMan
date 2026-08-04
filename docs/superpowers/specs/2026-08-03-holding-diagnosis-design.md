@@ -72,8 +72,8 @@ Each holding item shows:
    `observe`, and `research further`.
 5. Method disclosure: AI-generated reasoning, local function calls, or both;
    selected algorithm names, parameter values, data windows, and conflicts.
-6. A `Data and sources` section with usable external links and all relevant
-   local data sources.
+6. A `Data and sources` section with usable external links, a concise source
+   summary, expandable key facts, and all relevant local data sources.
 
 The natural-language diagnosis body across the whole report is limited to 600
 characters by server validation. Structured recommendation cards and source
@@ -89,10 +89,13 @@ Reports display, and preserve for later viewing:
 - local calculation function/algorithm name, version, parameters, and data
   range;
 - external material source name, title, type, publication time, fetch time,
-  availability state, and original URL.
+  availability state, original URL, concise summary, and up to eight key facts.
 
 An external-link icon opens the original URL in a separate browser tab. A
-source is never embedded in an iframe and its full content is not stored.
+source is never embedded in an iframe and its full content is not stored. A
+link-only source must say that its page was not read; its summary can only
+describe the source scope and verification status, never assert third-party
+facts.
 
 ## Generation Pipeline
 
@@ -107,8 +110,10 @@ local input package:
 - the most recent intraday snapshots if enabled and available;
 - concise range, volatility, volume, and data freshness facts;
 - current trend reports where applicable;
-- external source metadata and transient excerpts supplied by configured source
-  adapters.
+- external source metadata, compact summaries, and URL references supplied by
+  configured source adapters. The initial adapters are deliberately link-only;
+  their expandable summaries identify the relevant source scope and do not
+  claim to have read a third-party page or persist its body.
 
 The package is cached for the run, so repeated AI tool calls never re-fetch the
 same market or source data. Each provider call has a timeout, a source-specific
@@ -188,8 +193,8 @@ equally authoritative.
 | --- | --- | --- |
 | Existing market providers: AkShare, Tencent Finance, Eastmoney | Daily and current market data for A shares, indices, and listed ETFs | Reuse `MarketService` primary/fallback configuration and cache. Store provider name and market timestamp in the report. |
 | Local AkShare service | Market, public-data adapter, and fallback source | Extend the local Python provider with explicit, typed endpoints where an upstream interface is available. Cache responses and obey rate limits. |
-| CNInfo and Shanghai Stock Exchange disclosure pages | Primary company-disclosure sources for A-share holdings | Use a disclosure adapter that returns only title, date, type, URL, and a transient extraction for the generation call. Persist only the metadata and URL. |
-| Eastmoney and Xueqiu | Optional financial-information and event-clue sources | Enable only a vetted adapter or a user-opened URL. Do not depend on hidden, undocumented, login-gated, or bypassed interfaces. Persist metadata and URL only. |
+| CNInfo and Shanghai Stock Exchange disclosure pages | Primary company-disclosure reference sources for A-share holdings | The initial adapter records title, type, canonical URL, source-scope summary, and verification-status facts. A later typed official interface may add transient metadata after separate source validation. Persist only compact metadata and URL. |
+| Eastmoney and Xueqiu | Optional financial-information and event-clue sources | The initial adapter records a vetted public URL plus source-scope summary and verification-status facts. Do not depend on hidden, undocumented, login-gated, or bypassed interfaces. A link-only source cannot be described as verified report fact. |
 
 `All sources` in settings means all currently vetted adapters in this catalog. It
 does not permit arbitrary URLs or unbounded web search. Official disclosure is
@@ -322,7 +327,8 @@ Frontend tests cover:
 2. source selection, report preference, schedule configuration, and model
    display in System Configuration;
 3. 600-character report body, method disclosure, source URL links, and local
-   chart rendering;
+   chart rendering; report items switch through accessible Tabs; source facts
+   expand without exposing stored source body;
 4. single and batch deletion through the shared confirmation component;
 5. responsive detail rendering without text or chart-control overlap.
 
@@ -336,6 +342,8 @@ Frontend tests cover:
   metadata, visible external URLs, and a body of at most 600 characters.
 - AI can use its own method, local functions, or both, and the report clearly
   identifies which method produced each material conclusion or turning point.
+- AI completion, timeout, and local-fallback states identify the selected model
+  and never label a local fallback as AI analysis.
 - Source-body content is not stored in SQLite, while source links remain
   viewable and openable.
 - Users can delete one report or a filtered set without affecting holdings,

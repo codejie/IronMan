@@ -77,6 +77,12 @@ const compatibleTableOrder = [
   "alert_suggestions",
   "fund_daily_metrics",
   "fund_history_state",
+  "market_intraday_snapshots",
+  "market_snapshot_states",
+  "holding_diagnosis_runs",
+  "holding_diagnosis_reports",
+  "holding_diagnosis_items",
+  "holding_diagnosis_sources",
 ] as const;
 
 const requiredSourceTables = ["users", "instruments", "cash_accounts", "holdings", "holding_transactions", "cash_ledger"] as const;

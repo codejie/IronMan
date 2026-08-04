@@ -54,6 +54,11 @@ const router = createRouter({
           meta: { title: "趋势计算" },
         },
         {
+          path: "analysis/holding-diagnosis",
+          component: () => import("@/views/HoldingDiagnosisView.vue"),
+          meta: { title: "持仓诊断" },
+        },
+        {
           path: "analysis/agent",
           component: () => import("@/views/AiConsultationView.vue"),
           meta: { title: "AI咨询" },

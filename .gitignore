@@ -5,3 +5,5 @@ frontend/dist
 data/
 .env
 .superpowers/
+*.log
+.omo/

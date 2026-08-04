@@ -26,6 +26,11 @@ import { BackupService } from "./services/backup-service";
 import { AuthService, type PublicUser } from "./services/auth-service";
 import { IndicatorService } from "./services/indicator-service";
 import { FundHistoryService } from "./services/fund-history-service";
+import {
+  HoldingDiagnosisService,
+  holdingDiagnosisSettingsSchema,
+} from "./services/holding-diagnosis-service";
+import { holdingDiagnosisSources } from "./services/holding-diagnosis-sources";
 import { MarketService } from "./services/market-service";
 import {
   MarketSnapshotService,
@@ -292,6 +297,18 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     thirdParty,
     assistantConversations,
   );
+  const diagnosis = new HoldingDiagnosisService(
+    database,
+    settings,
+    market,
+    trendIndicators,
+    tradingCalendar,
+    {
+      generate: (input) => assistant.generateHoldingDiagnosis(input),
+      getModelSnapshot: (userId) => assistant.getHoldingDiagnosisModelSnapshot(userId),
+    },
+    holdingDiagnosisSources,
+  );
   const strategies = new StrategyService(database, market);
   const tasks = new AnalysisTaskService(
     database,
@@ -312,6 +329,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     strategies,
     tasks,
     snapshots,
+    diagnosis,
   );
   const scheduler = new AutomationScheduler(automation);
   const notes = new NoteService(database, market);
@@ -345,6 +363,406 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   });
 
   app.notFound((context) => context.json(failure(10006, "接口不存在"), 404));
+
+  const holdingDiagnosisMethodSchema = z.object({
+    kind: z.enum(["ai_analysis", "local_function", "hybrid_analysis"]),
+    name: z.string(),
+    version: z.string().optional(),
+    parameters: z.record(z.string(), z.number()).optional(),
+    dataWindow: z.number().int().nonnegative().optional(),
+    rationale: z.string(),
+    limitations: z.string().optional(),
+  });
+  const holdingDiagnosisRecommendationSchema = z.object({
+    direction: z.enum([
+      "add_evaluation",
+      "reduce_evaluation",
+      "hold",
+      "observe",
+      "research_further",
+    ]),
+    timing: z.string(),
+    referencePriceLow: z.number().nullable(),
+    referencePriceHigh: z.number().nullable(),
+    invalidationPrice: z.number().nullable(),
+    validUntil: z.string().nullable(),
+    uncertainty: z.string(),
+  });
+  const holdingDiagnosisTurningPointSchema = z.object({
+    date: z.string(),
+    direction: z.enum(["bullish", "bearish"]),
+    price: z.number().nullable(),
+    title: z.string(),
+    reason: z.string(),
+    methods: z.array(holdingDiagnosisMethodSchema),
+  });
+  const holdingDiagnosisItemSchema = z.object({
+    id: z.string().uuid(),
+    instrument: instrumentSchema.pick({
+      id: true,
+      code: true,
+      exchange: true,
+      name: true,
+      assetType: true,
+    }),
+    quantity: z.number(),
+    averageCost: z.number().nullable(),
+    currentPrice: z.number().nullable(),
+    profit: z.number().nullable(),
+    dataQuality: z.enum(["complete", "partial", "stale", "unavailable"]),
+    analysis: z.string(),
+    methods: z.array(holdingDiagnosisMethodSchema),
+    recommendation: holdingDiagnosisRecommendationSchema,
+    chart: z.object({
+      bars: z.array(priceBarSchema),
+      source: sourceSchema,
+      indicators: z.array(
+        z.object({
+          indicatorId: z.string(),
+          lines: z.record(z.string(), z.array(z.number().nullable())),
+          signals: z.array(
+            z.object({
+              date: z.string(),
+              direction: z.enum(["bullish", "bearish", "neutral"]),
+              strength: z.number(),
+              reason: z.string(),
+            }),
+          ),
+          turningPoints: z.array(
+            z.object({
+              date: z.string(),
+              direction: z.enum(["bullish", "bearish"]),
+              level: z.enum(["info", "warning", "risk"]),
+              title: z.string(),
+              reason: z.string(),
+              price: z.number().nullable(),
+              indicatorId: z.string(),
+            }),
+          ),
+        }),
+      ),
+      turningPoints: z.array(holdingDiagnosisTurningPointSchema),
+    }),
+  });
+  const holdingDiagnosisSourceSchema = z.object({
+    id: z.string().uuid(),
+    sourceId: z.string(),
+    sourceName: z.string(),
+    type: z.enum(["market", "disclosure", "news", "reference"]),
+    title: z.string(),
+    publishedAt: z.string().nullable(),
+    fetchedAt: z.string().datetime(),
+    availability: z.enum(["available", "stale", "failed", "link_only"]),
+    url: z.string().url(),
+    itemId: z.string().uuid().nullable(),
+    summary: z.string().max(600).nullable(),
+    highlights: z.array(z.string().max(160)).max(8),
+  });
+  const holdingDiagnosisAiStatusSchema = z.object({
+    state: z.enum(["completed", "local", "timeout", "unavailable"]),
+    model: z.object({
+      id: z.string(),
+      name: z.string(),
+      provider: z.string(),
+    }),
+    message: z.string(),
+    timeoutSeconds: z.number().int().positive().optional(),
+  });
+  const holdingDiagnosisRunSchema = z.object({
+    id: z.string().uuid(),
+    trigger: z.enum(["manual", "scheduled"]),
+    status: z.enum(["queued", "running", "completed", "partial", "failed", "cancelled"]),
+    progress: z.number().int().min(0).max(100),
+    scheduledTradeDate: z.string().nullable(),
+    errorMessage: z.string().nullable(),
+    startedAt: z.string().datetime().nullable(),
+    completedAt: z.string().datetime().nullable(),
+    createdAt: z.string().datetime(),
+    reportId: z.string().uuid().nullable(),
+  });
+  const holdingDiagnosisReportSchema = z.object({
+    id: z.string().uuid(),
+    runId: z.string().uuid(),
+    body: z.string().max(600),
+    errorMessage: z.string().nullable(),
+    aiStatus: holdingDiagnosisAiStatusSchema,
+    marketAsOf: z.string().nullable(),
+    createdAt: z.string().datetime(),
+    items: z.array(holdingDiagnosisItemSchema),
+    sources: z.array(holdingDiagnosisSourceSchema),
+  });
+  const holdingDiagnosisReportListSchema = z.object({
+    items: z.array(
+      holdingDiagnosisRunSchema.pick({
+        id: true,
+        trigger: true,
+        status: true,
+        progress: true,
+        errorMessage: true,
+        createdAt: true,
+        reportId: true,
+      }),
+    ),
+  });
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/settings/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Current user's holding diagnosis settings",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisSettingsSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(diagnosis.getSettings(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/settings/update",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(holdingDiagnosisSettingsSchema.partial()) },
+      responses: {
+        200: {
+          description: "Updated holding diagnosis settings",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisSettingsSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.updateSettings(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/sources/catalog",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Vetted holding diagnosis source catalog",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({
+                  items: z.array(
+                    z.object({
+                      id: z.string(),
+                      label: z.string(),
+                      description: z.string(),
+                      kind: z.enum(["market", "external"]),
+                    }),
+                  ),
+                }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) => context.json(success({ items: diagnosis.sourceCatalog() }), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/start",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        202: {
+          description: "Queued manual holding diagnosis",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisRunSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(diagnosis.start(context.get("currentUser").id, "manual")),
+        202,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/runs/list",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(z.object({ limit: z.number().int().min(1).max(200).default(60) })),
+      },
+      responses: {
+        200: {
+          description: "Current user's diagnosis run archive",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisReportListSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.listReports(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/runs/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ id: z.string().uuid() })) },
+      responses: {
+        200: {
+          description: "Current user's diagnosis run",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisRunSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.getRun(
+            context.get("currentUser").id,
+            context.req.valid("json").id,
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/reports/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ id: z.string().uuid() })) },
+      responses: {
+        200: {
+          description: "Current user's holding diagnosis report",
+          content: {
+            "application/json": {
+              schema: responseSchema(holdingDiagnosisReportSchema),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.getReport(
+            context.get("currentUser").id,
+            context.req.valid("json").id,
+          ),
+        ),
+        200,
+      ),
+  );
+
+  const holdingDiagnosisDeleteSchema = z.object({
+    reportIds: z.array(z.string().uuid()).min(1).max(200),
+  });
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/reports/delete",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(z.object({ id: z.string().uuid() })),
+      },
+      responses: {
+        200: {
+          description: "Deleted a holding diagnosis report",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ deleted: z.number().int() })),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.deleteReports(context.get("currentUser").id, {
+            reportIds: [context.req.valid("json").id],
+          }),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/holding-diagnosis/reports/delete-batch",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(holdingDiagnosisDeleteSchema) },
+      responses: {
+        200: {
+          description: "Deleted current user's holding diagnosis reports",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ deleted: z.number().int() })),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          diagnosis.deleteReports(
+            context.get("currentUser").id,
+            context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
 
   app.openapi(
     createRoute({

@@ -7,7 +7,8 @@ import type { BatmanHoldingWorkspace, BatmanHoldingWorkspaceRecord } from "@/api
 import HoldingsView from "./HoldingsView.vue";
 
 const mocks = vi.hoisted(() => ({
-  batmanHoldingWorkspace: vi.fn()
+  batmanHoldingWorkspace: vi.fn(),
+  marketSnapshotSeries: vi.fn()
 }));
 
 vi.mock("@/api/client", () => ({
@@ -18,7 +19,8 @@ vi.mock("@/api/client", () => ({
     }
   },
   api: {
-    batmanHoldingWorkspace: mocks.batmanHoldingWorkspace
+    batmanHoldingWorkspace: mocks.batmanHoldingWorkspace,
+    marketSnapshotSeries: mocks.marketSnapshotSeries
   }
 }));
 
@@ -29,6 +31,7 @@ vi.mock("@/stores/session", () => ({
 describe("HoldingsView", () => {
   beforeEach(() => {
     mocks.batmanHoldingWorkspace.mockReset();
+    mocks.marketSnapshotSeries.mockReset();
     globalThis.ResizeObserver = class ResizeObserverMock implements ResizeObserver {
       constructor(_callback: ResizeObserverCallback) {}
       observe(): void {}
@@ -128,6 +131,71 @@ describe("HoldingsView", () => {
     expect(wrapper.find(".batman-expander").exists()).toBe(false);
     expect(wrapper.find(".batman-operations-row").exists()).toBe(false);
     expect(wrapper.findAll(".holdings-table thead th")).toHaveLength(12);
+  });
+
+  test("renders intraday snapshots as timestamped candlesticks instead of a table", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    mocks.marketSnapshotSeries.mockResolvedValue({
+      items: [{
+        capturedAt: "2026-08-05T01:30:00.000Z",
+        tradeDate: "2026-08-05",
+        source: "tencent",
+        captureMode: "auto",
+        open: 10,
+        close: 10.2,
+        high: 10.3,
+        low: 9.9,
+        volume: 123_456
+      }]
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    const chart = wrapper.getComponent({ name: "KLineChart" });
+    expect(chart.props("bars")).toEqual([{
+      date: "2026-08-05T01:30:00.000Z",
+      open: 10,
+      close: 10.2,
+      high: 10.3,
+      low: 9.9,
+      volume: 123_456
+    }]);
+    expect(chart.props("xAxisLabels")).toHaveLength(1);
+    expect(mocks.marketSnapshotSeries).toHaveBeenCalledOnce();
+    expect(wrapper.find(".intraday-table").exists()).toBe(false);
   });
 
   test("does not keep the nested operation table behavior in the holdings list", async () => {

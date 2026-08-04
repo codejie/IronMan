@@ -587,6 +587,77 @@ const migrations: Migration[] = [
         updated_at TEXT NOT NULL
       );
     `
+  },
+  {
+    version: 13,
+    sql: `
+      CREATE TABLE IF NOT EXISTS holding_diagnosis_runs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'partial', 'failed', 'cancelled')),
+        progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0 AND progress <= 100),
+        scheduled_trade_date TEXT,
+        settings_snapshot_json TEXT NOT NULL,
+        model_snapshot_json TEXT NOT NULL,
+        error_message TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(user_id, trigger, scheduled_trade_date)
+      );
+      CREATE INDEX IF NOT EXISTS holding_diagnosis_runs_owner_idx
+        ON holding_diagnosis_runs(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS holding_diagnosis_reports (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL UNIQUE REFERENCES holding_diagnosis_runs(id) ON DELETE CASCADE,
+        body TEXT NOT NULL,
+        summary_json TEXT NOT NULL,
+        market_as_of TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS holding_diagnosis_reports_owner_idx
+        ON holding_diagnosis_reports(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS holding_diagnosis_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES holding_diagnosis_reports(id) ON DELETE CASCADE,
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE CASCADE,
+        data_snapshot_json TEXT NOT NULL,
+        chart_snapshot_json TEXT NOT NULL,
+        analysis_json TEXT NOT NULL,
+        recommendation_direction TEXT NOT NULL CHECK (recommendation_direction IN ('add_evaluation', 'reduce_evaluation', 'hold', 'observe', 'research_further')),
+        recommendation_price_json TEXT NOT NULL,
+        valid_until TEXT,
+        data_quality TEXT NOT NULL CHECK (data_quality IN ('complete', 'partial', 'stale', 'unavailable')),
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS holding_diagnosis_items_report_idx
+        ON holding_diagnosis_items(user_id, report_id, instrument_id);
+
+      CREATE TABLE IF NOT EXISTS holding_diagnosis_sources (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES holding_diagnosis_reports(id) ON DELETE CASCADE,
+        item_id TEXT REFERENCES holding_diagnosis_items(id) ON DELETE CASCADE,
+        source_id TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        source_type TEXT NOT NULL CHECK (source_type IN ('market', 'disclosure', 'news', 'reference')),
+        title TEXT NOT NULL,
+        published_at TEXT,
+        fetched_at TEXT NOT NULL,
+        availability TEXT NOT NULL CHECK (availability IN ('available', 'stale', 'failed', 'link_only')),
+        url TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS holding_diagnosis_sources_report_idx
+        ON holding_diagnosis_sources(user_id, report_id, item_id);
+    `
   }
 ];
 

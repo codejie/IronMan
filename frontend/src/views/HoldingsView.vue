@@ -4,8 +4,9 @@ import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
 import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
+import KLineChart from "@/components/KLineChart.vue";
 import QuickAlertDialog from "@/components/QuickAlertDialog.vue";
-import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint } from "@/api/client";
+import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint, type PriceBar } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "./instrument-kline-presentation";
 import { holdingDetailRouteQuery } from "./holding-detail-presentation";
@@ -42,6 +43,24 @@ const intradayLoading = ref(false);
 const intradayError = ref("");
 let intradayRequestVersion = 0;
 const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
+
+const intradayBars = computed<PriceBar[]>(() => (intradayData.value ?? []).map((item) => ({
+  date: item.capturedAt,
+  open: item.open,
+  close: item.close,
+  high: item.high,
+  low: item.low,
+  volume: item.volume,
+})));
+const intradayLabels = computed(() => (intradayData.value ?? []).map((item) => formatDateTime(item.capturedAt)));
+const intradaySummary = computed(() => {
+  const points = intradayData.value ?? [];
+  if (points.length === 0) return "";
+  const first = points[0]!;
+  const last = points.at(-1)!;
+  const sources = [...new Set(points.map((item) => item.source))].join(" / ");
+  return `${points.length} 个快照 · ${formatDateTime(first.capturedAt)} 至 ${formatDateTime(last.capturedAt)} · ${sources}`;
+});
 
 const activeRecords = computed(() => workspace.value?.active ?? []);
 const closedRecords = computed(() => workspace.value?.closed ?? []);
@@ -341,31 +360,9 @@ onMounted(load);
           <p v-if="intradayLoading" class="batman-selected">正在加载分时数据...</p>
           <p v-else-if="intradayError" class="batman-error">{{ intradayError }}</p>
           <p v-else-if="!intradayData || intradayData.length === 0" class="batman-selected">暂无分时数据</p>
-          <div v-else class="intraday-table-frame">
-            <table class="batman-table intraday-table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>开盘价</th>
-                  <th>收盘价</th>
-                  <th>最高价</th>
-                  <th>最低价</th>
-                  <th>成交量</th>
-                  <th>数据源</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="item in intradayData" :key="item.capturedAt">
-                  <td>{{ formatDateTime(item.capturedAt) }}</td>
-                  <td>{{ money(item.open) }}</td>
-                  <td>{{ money(item.close) }}</td>
-                  <td>{{ money(item.high) }}</td>
-                  <td>{{ money(item.low) }}</td>
-                  <td>{{ item.volume.toLocaleString() }}</td>
-                  <td>{{ item.source }}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div v-else class="intraday-chart-frame">
+            <p class="intraday-chart-summary">{{ intradaySummary }}</p>
+            <KLineChart :bars="intradayBars" height="min(58vh, 440px)" :ma-periods="[]" subchart="volume" :x-axis-labels="intradayLabels" />
           </div>
         </div>
       </section>
@@ -380,7 +377,7 @@ onMounted(load);
 .holding-record-row { cursor: pointer; }
 .holding-record-row:focus-visible > td { background: #1c3146; outline: 1px solid #65d7ca; outline-offset: -1px; }
 .batman-holdings :deep(.batman-table th) { font-size: 13px; }
-.intraday-dialog-content { max-height: 60vh; overflow-y: auto; padding: 4px 0 0; }
-.intraday-table-frame { max-height: 50vh; overflow-y: auto; }
-.intraday-table { min-width: 720px; width: 100%; }
+.intraday-dialog-content { padding: 4px 0 0; }
+.intraday-chart-frame { min-width: 0; }
+.intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0 0 6px; }
 </style>

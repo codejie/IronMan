@@ -6,6 +6,7 @@ import {
   CalendarDays,
   ChartNoAxesCombined,
   Check,
+  ChevronDown,
   ChevronRight,
   CirclePlus,
   Clock3,
@@ -15,6 +16,7 @@ import {
   FileUp,
   RefreshCw,
   RotateCcw,
+  ScanSearch,
   Save,
   ServerCog,
   Settings2,
@@ -24,7 +26,7 @@ import {
   X,
 } from "lucide-vue-next";
 import type { Component } from "vue";
-import { computed, onMounted, ref } from "vue";
+import { computed, nextTick, onMounted, ref } from "vue";
 import { useRoute } from "vue-router";
 import {
   api,
@@ -34,6 +36,8 @@ import {
   type AlertSettings,
   type DataSourceConfig,
   type FundHistoryState,
+  type HoldingDiagnosisSettings,
+  type HoldingDiagnosisSourceCatalogItem,
   type MarketSnapshotSettings,
   type MarketSnapshotStatus,
   type MarketSource,
@@ -44,7 +48,7 @@ import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
 
-type SectionId = "backup" | "market" | "rules" | "ai" | "maintenance";
+type SectionId = "backup" | "market" | "diagnosis" | "rules" | "ai" | "maintenance";
 type Dialog = "snapshot" | "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
 
 interface SectionItem {
@@ -106,16 +110,30 @@ const calendarYear = ref(new Date().getFullYear());
 const tradeDaySet = ref(new Set<string>());
 const calendarLoading = ref(false);
 const aiModels = ref<AiModelConfig[]>([]);
+const aiModelList = ref<HTMLElement | null>(null);
+const expandedAiModel = ref<AiModelConfig | null>(null);
 const aiSystemPrompt = ref("");
 const defaultAiSystemPrompt = ref("");
 const autoScanEnabledDraft = ref(false);
 const scanIntervalMinutesDraft = ref("5");
 const fundHistoryState = ref<FundHistoryState | null>(null);
 const isFundHistoryRecalculating = ref(false);
+const diagnosisSettings = ref<HoldingDiagnosisSettings>({
+  enabled: false,
+  scheduledTime: "15:30",
+  sourceIds: ["all"],
+  reportPreference: "优先识别趋势、风险、关键价格与需要确认的信息；给出条件化建议，不承诺收益。",
+  lookbackTradingDays: 60,
+  maxFunctionBatches: 2,
+  maxExternalSourcesPerHolding: 3,
+});
+const diagnosisSources = ref<HoldingDiagnosisSourceCatalogItem[]>([]);
+const diagnosisModelName = ref("未配置");
 
 const sections: SectionItem[] = [
   { id: "backup", label: "数据与备份", icon: DatabaseBackup },
   { id: "market", label: "行情与日历", icon: CalendarDays },
+  { id: "diagnosis", label: "持仓诊断", icon: ScanSearch },
   { id: "rules", label: "规则", icon: Bell },
   { id: "ai", label: "AI 服务", icon: BrainCircuit },
   { id: "maintenance", label: "维护", icon: ShieldAlert, adminOnly: true },
@@ -126,6 +144,7 @@ const visibleSections = computed(() =>
   ),
 );
 const isAdmin = computed(() => currentUser.value?.role === "admin");
+const useAllDiagnosisSources = computed(() => diagnosisSettings.value.sourceIds.includes("all"));
 const calendarTradeCount = computed(() => tradeDaySet.value.size);
 const calendarMonths = computed<CalendarMonth[]>(() =>
   buildCalendarMonths(calendarYear.value, tradeDaySet.value),
@@ -194,7 +213,7 @@ function snapshotStatusLabel(): string {
 }
 
 function isSectionId(value: unknown): value is SectionId {
-  return typeof value === "string" && ["backup", "market", "rules", "ai", "maintenance"].includes(value);
+  return typeof value === "string" && ["backup", "market", "diagnosis", "rules", "ai", "maintenance"].includes(value);
 }
 
 function fundHistoryStatusLabel(state: FundHistoryState): string {
@@ -255,6 +274,63 @@ function applyRuleSettings(settings: AlertSettings): void {
 async function loadRuleSettings(): Promise<void> {
   if (token.value === null) return;
   applyRuleSettings(await api.getAlertSettings(token.value));
+}
+
+async function loadDiagnosisSettings(): Promise<void> {
+  if (token.value === null) return;
+  const [settings, catalog, aiConfig] = await Promise.all([
+    api.getHoldingDiagnosisSettings(token.value),
+    api.holdingDiagnosisSourceCatalog(token.value),
+    api.getAiConfig(token.value),
+  ]);
+  diagnosisSettings.value = { ...settings, sourceIds: [...settings.sourceIds] };
+  diagnosisSources.value = catalog.items;
+  diagnosisModelName.value = (
+    aiConfig.models.find((model) => model.enabled && model.default) ??
+    aiConfig.models.find((model) => model.enabled)
+  )?.name ?? "未配置";
+}
+
+function setAllDiagnosisSources(checked: boolean): void {
+  diagnosisSettings.value.sourceIds = checked ? ["all"] : [];
+}
+
+function toggleDiagnosisSource(sourceId: string, checked: boolean): void {
+  const current = diagnosisSettings.value.sourceIds.filter((id) => id !== "all");
+  const next = checked
+    ? [...new Set([...current, sourceId])]
+    : current.filter((id) => id !== sourceId);
+  const order = new Map(
+    diagnosisSources.value.map((source, index) => [source.id, index]),
+  );
+  diagnosisSettings.value.sourceIds = next.sort(
+    (left, right) => (order.get(left) ?? Number.MAX_SAFE_INTEGER) - (order.get(right) ?? Number.MAX_SAFE_INTEGER),
+  );
+}
+
+async function saveDiagnosisSettings(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  if (diagnosisSettings.value.sourceIds.length === 0) {
+    notify("error", "请至少选择一个持仓诊断资料源");
+    return;
+  }
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    diagnosisSettings.value = await api.updateHoldingDiagnosisSettings(
+      token.value,
+      diagnosisSettings.value,
+    );
+    diagnosisSettings.value = {
+      ...diagnosisSettings.value,
+      sourceIds: [...diagnosisSettings.value.sourceIds],
+    };
+    notify("success", diagnosisSettings.value.enabled ? "持仓诊断配置已保存" : "持仓诊断自动生成已关闭");
+  } catch (error) {
+    notify("error", message(error, "保存持仓诊断配置失败"));
+  } finally {
+    isBusy.value = false;
+  }
 }
 
 async function saveRuleSettings(): Promise<void> {
@@ -513,6 +589,8 @@ async function openAiDialog(): Promise<void> {
   try {
     const config = await api.getAiConfig(token.value);
     aiModels.value = cloneModels(config.models);
+    expandedAiModel.value =
+      aiModels.value.find((model) => model.default) ?? aiModels.value[0] ?? null;
     dialog.value = "ai";
   } catch (error) {
     notify("error", message(error, "读取 AI 服务配置失败"));
@@ -536,9 +614,28 @@ function cloneModels(models: AiModelConfig[]): AiModelConfig[] {
   return models.map((model) => ({ ...model, apiKey: "" }));
 }
 
-function addAiModel(): void {
+function modelProviderLabel(provider: AiProvider): string {
+  return providerOptions.find((option) => option.value === provider)?.label ?? provider;
+}
+
+function modelSummary(model: AiModelConfig): string {
+  if (model.provider === "local") return modelProviderLabel(model.provider);
+  return model.model
+    ? `${modelProviderLabel(model.provider)} · ${model.model}`
+    : modelProviderLabel(model.provider);
+}
+
+function isAiModelExpanded(model: AiModelConfig): boolean {
+  return expandedAiModel.value === model;
+}
+
+function toggleAiModel(model: AiModelConfig): void {
+  expandedAiModel.value = isAiModelExpanded(model) ? null : model;
+}
+
+async function addAiModel(): Promise<void> {
   const id = `model_${Date.now()}`;
-  aiModels.value.push({
+  const model: AiModelConfig = {
     id,
     name: `AI 模型 ${aiModels.value.length + 1}`,
     provider: "ollama",
@@ -548,7 +645,18 @@ function addAiModel(): void {
     enabled: true,
     default: aiModels.value.length === 0,
     apiKeyConfigured: false,
-  });
+  };
+  aiModels.value.push(model);
+  expandedAiModel.value = model;
+
+  await nextTick();
+  const modelCard = aiModelList.value?.querySelector<HTMLElement>(
+    `[data-model-id="${id}"]`,
+  );
+  if (modelCard !== undefined && typeof modelCard?.scrollIntoView === "function") {
+    modelCard.scrollIntoView({ block: "nearest" });
+  }
+  modelCard?.querySelector<HTMLInputElement>("input[data-ai-field='name']")?.focus();
 }
 
 function removeAiModel(index: number): void {
@@ -556,7 +664,10 @@ function removeAiModel(index: number): void {
     notify("error", "至少保留一个 AI 模型配置");
     return;
   }
-  aiModels.value.splice(index, 1);
+  const [removed] = aiModels.value.splice(index, 1);
+  if (expandedAiModel.value === removed) {
+    expandedAiModel.value = aiModels.value[index] ?? aiModels.value[index - 1] ?? null;
+  }
   ensureDefaultModel();
 }
 
@@ -675,7 +786,7 @@ function closeDialog(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadFundHistoryStatus()]);
+    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadFundHistoryStatus()]);
   } catch (error) {
     notify("error", message(error, "加载系统配置失败"));
   }
@@ -902,6 +1013,55 @@ function buildCalendarMonths(
           </div>
         </template>
 
+        <template v-else-if="activeSection === 'diagnosis'">
+          <header class="system-configuration-heading">
+            <div>
+              <h1>持仓诊断</h1>
+              <p>自动报告仅在交易日生成，手动报告在趋势分析菜单的持仓诊断页查看。</p>
+            </div>
+          </header>
+          <form aria-label="持仓诊断配置" class="system-configuration-rows system-diagnosis-settings" @submit.prevent="saveDiagnosisSettings">
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><ScanSearch :size="18" /></div>
+              <div>
+                <h2>每日自动生成</h2>
+                <p>当前默认模型：{{ diagnosisModelName }}</p>
+              </div>
+              <label class="batman-checkbox system-rule-toggle"><input v-model="diagnosisSettings.enabled" aria-label="开启自动持仓诊断" :disabled="isBusy" type="checkbox" /><span>{{ diagnosisSettings.enabled ? "已开启" : "已关闭" }}</span></label>
+            </section>
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><Clock3 :size="18" /></div>
+              <div>
+                <h2>生成时间</h2>
+                <p>按 Asia/Shanghai 时间执行。</p>
+              </div>
+              <input v-model="diagnosisSettings.scheduledTime" aria-label="持仓诊断生成时间" class="system-diagnosis-time" :disabled="isBusy || !diagnosisSettings.enabled" required type="time" />
+            </section>
+            <section class="system-diagnosis-detail">
+              <div class="system-diagnosis-detail-heading">
+                <h2>信息源</h2>
+                <label class="batman-checkbox"><input aria-label="使用全部资料源" :checked="useAllDiagnosisSources" :disabled="isBusy" type="checkbox" @change="setAllDiagnosisSources(($event.target as HTMLInputElement).checked)" />使用全部资料源</label>
+              </div>
+              <div class="system-diagnosis-source-grid">
+                <label v-for="source in diagnosisSources" :key="source.id" :class="{ disabled: useAllDiagnosisSources }" class="system-diagnosis-source">
+                  <input :aria-label="`选择 ${source.label}`" :checked="diagnosisSettings.sourceIds.includes(source.id)" :disabled="isBusy || useAllDiagnosisSources" type="checkbox" @change="toggleDiagnosisSource(source.id, ($event.target as HTMLInputElement).checked)" />
+                  <span><b>{{ source.label }}</b><small>{{ source.description }}</small></span>
+                </label>
+              </div>
+            </section>
+            <section class="system-diagnosis-detail system-diagnosis-prompt">
+              <label><span>报告倾向</span><textarea v-model="diagnosisSettings.reportPreference" aria-label="报告倾向" :disabled="isBusy" maxlength="4000" rows="4" /></label>
+              <small>{{ diagnosisSettings.reportPreference.length }} / 4000</small>
+            </section>
+            <section class="system-diagnosis-options">
+              <label><span>行情窗口</span><select v-model.number="diagnosisSettings.lookbackTradingDays" :disabled="isBusy"><option :value="20">20 个交易日</option><option :value="60">60 个交易日</option><option :value="120">120 个交易日</option></select></label>
+              <label><span>本地函数批次</span><select v-model.number="diagnosisSettings.maxFunctionBatches" :disabled="isBusy"><option :value="1">1 批</option><option :value="2">2 批</option><option :value="3">3 批</option></select></label>
+              <label><span>每标的资料数</span><select v-model.number="diagnosisSettings.maxExternalSourcesPerHolding" :disabled="isBusy"><option :value="1">1 条</option><option :value="3">3 条</option><option :value="5">5 条</option></select></label>
+            </section>
+            <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存持仓诊断配置</button></footer>
+          </form>
+        </template>
+
         <template v-else-if="activeSection === 'rules'">
           <header class="system-configuration-heading">
             <div>
@@ -1006,7 +1166,10 @@ function buildCalendarMonths(
       <section
         :class="[
           'batman-dialog',
-          { wide: dialog === 'calendar' || dialog === 'ai' || dialog === 'prompt' },
+          {
+            wide: dialog === 'calendar' || dialog === 'ai' || dialog === 'prompt',
+            'system-ai-modal': dialog === 'ai',
+          },
         ]"
         aria-modal="true"
         role="dialog"
@@ -1223,23 +1386,27 @@ function buildCalendarMonths(
               <CirclePlus :size="15" />新增模型
             </button>
           </div>
-          <div class="system-ai-list">
+          <div ref="aiModelList" class="system-ai-list">
             <section
               v-for="(model, index) in aiModels"
               :key="model.id"
-              class="system-ai-model"
+              :class="['system-ai-model', { expanded: isAiModelExpanded(model) }]"
+              :data-model-id="model.id"
             >
-              <header>
-                <div>
-                  <b>{{ model.name || model.id }}</b
-                  ><small>{{
-                    model.default
-                      ? "默认模型"
-                      : model.enabled
-                        ? "已启用"
-                        : "已停用"
-                  }}</small>
-                </div>
+              <header class="system-ai-model-summary">
+                <button
+                  :aria-expanded="isAiModelExpanded(model)"
+                  :aria-label="`${isAiModelExpanded(model) ? '收起' : '展开'} ${model.name || model.id} 配置`"
+                  class="system-ai-model-summary-toggle"
+                  type="button"
+                  @click="toggleAiModel(model)"
+                >
+                  <ChevronDown :class="{ collapsed: !isAiModelExpanded(model) }" :size="16" />
+                  <span>
+                    <b>{{ model.name || model.id }}</b>
+                    <small>{{ modelSummary(model) }}</small>
+                  </span>
+                </button>
                 <div class="system-ai-model-actions">
                   <label class="batman-checkbox"
                     ><input
@@ -1266,17 +1433,27 @@ function buildCalendarMonths(
                   </button>
                 </div>
               </header>
-              <div class="system-ai-grid">
+              <div v-if="isAiModelExpanded(model)" class="system-ai-grid">
                 <label
                   ><span>配置 ID</span
-                  ><input v-model.trim="model.id" maxlength="80" /></label
+                  ><input
+                    v-model.trim="model.id"
+                    :aria-label="`模型配置 ID ${index + 1}`"
+                    maxlength="80"
+                  /></label
                 ><label
                   ><span>名称</span
-                  ><input v-model.trim="model.name" maxlength="80" /></label
+                  ><input
+                    v-model.trim="model.name"
+                    aria-label="模型名称"
+                    data-ai-field="name"
+                    maxlength="80"
+                  /></label
                 ><label
                   ><span>服务商</span
                   ><select
                     v-model="model.provider"
+                    :aria-label="`模型服务商 ${index + 1}`"
                     @change="onProviderChange(model)"
                   >
                     <option
@@ -1291,12 +1468,14 @@ function buildCalendarMonths(
                   ><span>模型</span
                   ><input
                     v-model.trim="model.model"
+                    :aria-label="`模型标识 ${index + 1}`"
                     :disabled="model.provider === 'local'"
                     maxlength="200" /></label
                 ><label class="span-2"
                   ><span>Base URL</span
                   ><input
                     v-model.trim="model.baseUrl"
+                    :aria-label="`模型 Base URL ${index + 1}`"
                     :disabled="model.provider === 'local'"
                     maxlength="500"
                     placeholder="https://…/v1" /></label
@@ -1304,6 +1483,7 @@ function buildCalendarMonths(
                   ><span>API Key</span
                   ><input
                     v-model="model.apiKey"
+                    :aria-label="`模型 API Key ${index + 1}`"
                     :disabled="model.provider === 'local'"
                     :placeholder="
                       model.apiKeyConfigured
@@ -1712,9 +1892,23 @@ function buildCalendarMonths(
 .system-day.blank {
   pointer-events: none;
 }
+.batman-dialog.system-ai-modal {
+  max-height: calc(100dvh - 56px);
+  max-width: 760px;
+  overflow: hidden;
+  padding: 12px 14px;
+  width: min(100%, 760px);
+}
+.batman-dialog.system-ai-modal > header {
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+}
 .system-ai-dialog {
   display: grid;
   gap: 13px;
+}
+.system-ai-modal .system-ai-dialog {
+  gap: 8px;
 }
 .system-ai-prompt-dialog {
   display: grid;
@@ -1776,44 +1970,100 @@ function buildCalendarMonths(
   overflow-y: auto;
   padding-right: 3px;
 }
+.system-ai-modal .system-ai-list {
+  gap: 7px;
+  max-height: min(460px, calc(100dvh - 190px));
+  padding-right: 5px;
+}
+.system-ai-modal .system-ai-dialog > footer {
+  border-top: 1px solid #2a4058;
+  margin-top: 0;
+  padding-top: 8px;
+}
 .system-ai-model {
   border: 1px solid #2a4058;
   border-radius: 6px;
-  padding: 13px;
+  overflow: hidden;
 }
-.system-ai-model > header {
+.system-ai-model-summary {
   align-items: center;
-  border-bottom: 1px solid #2a4058;
   display: flex;
+  gap: 8px;
   justify-content: space-between;
-  margin-bottom: 12px;
-  padding: 0 0 10px;
+  min-height: 46px;
+  padding: 6px 8px 6px 10px;
 }
-.system-ai-model > header b {
+.system-ai-model-summary-toggle {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  display: flex;
+  flex: 1;
+  font: inherit;
+  gap: 7px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+}
+.system-ai-model-summary-toggle > svg {
+  color: #8ca9be;
+  flex: 0 0 auto;
+  transition: transform 120ms ease;
+}
+.system-ai-model-summary-toggle > svg.collapsed {
+  transform: rotate(-90deg);
+}
+.system-ai-model-summary-toggle > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.system-ai-model-summary b {
   color: #eff9ff;
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.system-ai-model > header small {
-  color: #79cfc6;
+.system-ai-model-summary small {
+  color: #829bb1;
   display: block;
   font-size: 11px;
-  margin-top: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .system-ai-model-actions {
   align-items: center;
   display: flex;
-  gap: 10px;
+  flex: 0 0 auto;
+  gap: 8px;
 }
 .system-ai-model-actions .batman-icon-button.danger:hover {
   color: #ff929b;
 }
 .system-ai-grid {
+  border-top: 1px solid #2a4058;
   display: grid;
-  gap: 11px 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  grid-template-columns: 1fr;
+  padding: 8px 10px 10px;
 }
+.system-ai-grid label,
 .system-ai-grid label.span-2 {
-  grid-column: span 2;
+  align-items: center;
+  gap: 8px;
+  grid-column: auto;
+  grid-template-columns: 82px minmax(0, 1fr);
+}
+.system-ai-grid label > span {
+  color: #9db4c7;
+  white-space: nowrap;
+}
+.system-ai-modal .system-ai-grid input,
+.system-ai-modal .system-ai-grid select {
+  min-height: 32px;
 }
 .system-ai-grid input:disabled {
   color: #6f8193;
@@ -1848,15 +2098,171 @@ function buildCalendarMonths(
   border-color: #65d7ca;
   outline: 1px solid #65d7ca;
 }
+.system-diagnosis-settings {
+  display: grid;
+}
+.system-diagnosis-time {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  font: inherit;
+  min-height: 36px;
+  padding: 0 9px;
+  width: 116px;
+}
+.system-diagnosis-detail {
+  border-bottom: 1px solid #263950;
+  display: grid;
+  gap: 12px;
+  padding: 15px 0;
+}
+.system-diagnosis-detail-heading {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+.system-diagnosis-detail-heading h2 {
+  color: #dcecf8;
+  font-size: 13px;
+  margin: 0;
+}
+.system-diagnosis-source-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.system-diagnosis-source {
+  align-items: flex-start;
+  background: #132237;
+  border: 1px solid #29415d;
+  border-radius: 5px;
+  display: flex;
+  gap: 8px;
+  min-height: 59px;
+  padding: 9px;
+}
+.system-diagnosis-source:has(input:checked) {
+  background: #173641;
+  border-color: #4b978f;
+}
+.system-diagnosis-source.disabled {
+  opacity: 0.58;
+}
+.system-diagnosis-source input {
+  accent-color: #5bd3c8;
+  margin: 2px 0 0;
+}
+.system-diagnosis-source span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.system-diagnosis-source b {
+  color: #d9ebf7;
+  font-size: 12px;
+}
+.system-diagnosis-source small {
+  color: #879eb4;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.system-diagnosis-prompt {
+  position: relative;
+}
+.system-diagnosis-prompt label {
+  display: grid;
+  gap: 7px;
+}
+.system-diagnosis-prompt label > span,
+.system-diagnosis-options label > span {
+  color: #9db3c8;
+  font-size: 12px;
+}
+.system-diagnosis-prompt textarea {
+  background: #16263a;
+  border: 1px solid #35506c;
+  border-radius: 5px;
+  color: #e5f1fa;
+  font: inherit;
+  line-height: 1.55;
+  min-height: 88px;
+  padding: 8px 9px;
+  resize: vertical;
+}
+.system-diagnosis-prompt small {
+  color: #71899f;
+  font-size: 11px;
+  justify-self: end;
+}
+.system-diagnosis-options {
+  border-bottom: 1px solid #263950;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 15px 0;
+}
+.system-diagnosis-options label {
+  display: grid;
+  gap: 6px;
+}
+.system-diagnosis-options select {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  min-height: 36px;
+  padding: 0 8px;
+}
 @media (max-width: 1220px) {
   .system-calendar-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .system-ai-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .system-diagnosis-source-grid {
+    grid-template-columns: 1fr;
   }
-  .system-ai-grid label.span-2 {
-    grid-column: span 2;
+}
+@media (max-width: 720px) {
+  .batman-dialog.system-ai-modal {
+    max-height: calc(100dvh - 32px);
+    padding: 12px;
+  }
+  .system-ai-modal .system-ai-list {
+    max-height: calc(100dvh - 172px);
+  }
+  .system-ai-model-summary {
+    align-items: flex-start;
+  }
+  .system-ai-model-actions {
+    gap: 5px;
+  }
+  .system-configuration-layout {
+    display: block;
+  }
+  .system-configuration-nav {
+    border-bottom: 1px solid #2a3d56;
+    border-right: 0;
+    display: flex;
+    gap: 5px;
+    overflow-x: auto;
+    padding: 5px 0 10px;
+  }
+  .system-configuration-nav-heading {
+    display: none;
+  }
+  .system-configuration-nav-item {
+    flex: 0 0 auto;
+    width: auto;
+  }
+  .system-configuration-nav-item svg:last-child {
+    display: none;
+  }
+  .system-configuration-content {
+    padding: 18px 0 0;
+  }
+  .system-diagnosis-options {
+    grid-template-columns: 1fr;
   }
 }
 </style>

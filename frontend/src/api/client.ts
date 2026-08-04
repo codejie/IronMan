@@ -276,6 +276,140 @@ export interface MarketSnapshotStatus {
   lastError: string | null;
 }
 
+export type HoldingDiagnosisTrigger = "manual" | "scheduled";
+export type HoldingDiagnosisStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "cancelled";
+export type HoldingDiagnosisMethodKind =
+  | "ai_analysis"
+  | "local_function"
+  | "hybrid_analysis";
+export type HoldingRecommendationDirection =
+  | "add_evaluation"
+  | "reduce_evaluation"
+  | "hold"
+  | "observe"
+  | "research_further";
+
+export interface HoldingDiagnosisSettings {
+  enabled: boolean;
+  scheduledTime: string;
+  sourceIds: string[];
+  reportPreference: string;
+  lookbackTradingDays: 20 | 60 | 120;
+  maxFunctionBatches: 1 | 2 | 3;
+  maxExternalSourcesPerHolding: 1 | 3 | 5;
+}
+
+export interface HoldingDiagnosisSourceCatalogItem {
+  id: string;
+  label: string;
+  description: string;
+  kind: "market" | "external";
+}
+
+export interface HoldingDiagnosisMethod {
+  kind: HoldingDiagnosisMethodKind;
+  name: string;
+  version?: string;
+  parameters?: Record<string, number>;
+  dataWindow?: number;
+  rationale: string;
+  limitations?: string;
+}
+
+export interface HoldingDiagnosisRecommendation {
+  direction: HoldingRecommendationDirection;
+  timing: string;
+  referencePriceLow: number | null;
+  referencePriceHigh: number | null;
+  invalidationPrice: number | null;
+  validUntil: string | null;
+  uncertainty: string;
+}
+
+export interface HoldingDiagnosisTurningPoint {
+  date: string;
+  direction: "bullish" | "bearish";
+  price: number | null;
+  title: string;
+  reason: string;
+  methods: HoldingDiagnosisMethod[];
+}
+
+export interface HoldingDiagnosisItem {
+  id: string;
+  instrument: Pick<
+    Instrument,
+    "id" | "code" | "exchange" | "name" | "assetType"
+  >;
+  quantity: number;
+  averageCost: number | null;
+  currentPrice: number | null;
+  profit: number | null;
+  dataQuality: "complete" | "partial" | "stale" | "unavailable";
+  analysis: string;
+  methods: HoldingDiagnosisMethod[];
+  recommendation: HoldingDiagnosisRecommendation;
+  chart: {
+    bars: PriceBar[];
+    source: MarketSource;
+    indicators: TrendIndicatorRunResult[];
+    turningPoints: HoldingDiagnosisTurningPoint[];
+  };
+}
+
+export interface HoldingDiagnosisSource {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  type: "market" | "disclosure" | "news" | "reference";
+  title: string;
+  publishedAt: string | null;
+  fetchedAt: string;
+  availability: "available" | "stale" | "failed" | "link_only";
+  url: string;
+  itemId: string | null;
+  summary: string | null;
+  highlights: string[];
+}
+
+export interface HoldingDiagnosisAiStatus {
+  state: "completed" | "local" | "timeout" | "unavailable";
+  model: { id: string; name: string; provider: string };
+  message: string;
+  timeoutSeconds?: number;
+}
+
+export interface HoldingDiagnosisReport {
+  id: string;
+  runId: string;
+  body: string;
+  errorMessage: string | null;
+  aiStatus: HoldingDiagnosisAiStatus;
+  marketAsOf: string | null;
+  createdAt: string;
+  items: HoldingDiagnosisItem[];
+  sources: HoldingDiagnosisSource[];
+}
+
+export interface HoldingDiagnosisRun {
+  id: string;
+  trigger: HoldingDiagnosisTrigger;
+  status: HoldingDiagnosisStatus;
+  progress: number;
+  scheduledTradeDate: string | null;
+  errorMessage: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  reportId: string | null;
+}
+
 export interface MarketSnapshotPoint {
   capturedAt: string;
   tradeDate: string;
@@ -846,6 +980,59 @@ export const api = {
     post<MarketSnapshotStatus>("/settings/market-snapshots/status", {}, token),
   deleteMarketSnapshots: (token: string) =>
     post<{ deleted: number }>("/settings/market-snapshots/delete", {}, token),
+  getHoldingDiagnosisSettings: (token: string) =>
+    post<HoldingDiagnosisSettings>(
+      "/analysis/holding-diagnosis/settings/get",
+      {},
+      token,
+    ),
+  updateHoldingDiagnosisSettings: (
+    token: string,
+    input: Partial<HoldingDiagnosisSettings>,
+  ) =>
+    post<HoldingDiagnosisSettings>(
+      "/analysis/holding-diagnosis/settings/update",
+      input,
+      token,
+    ),
+  holdingDiagnosisSourceCatalog: (token: string) =>
+    post<{ items: HoldingDiagnosisSourceCatalogItem[] }>(
+      "/analysis/holding-diagnosis/sources/catalog",
+      {},
+      token,
+    ),
+  startHoldingDiagnosis: (token: string) =>
+    post<HoldingDiagnosisRun>("/analysis/holding-diagnosis/start", {}, token),
+  listHoldingDiagnosisRuns: (token: string, limit = 60) =>
+    post<{ items: Array<Pick<HoldingDiagnosisRun, "id" | "trigger" | "status" | "progress" | "errorMessage" | "createdAt" | "reportId">> }>(
+      "/analysis/holding-diagnosis/runs/list",
+      { limit },
+      token,
+    ),
+  getHoldingDiagnosisRun: (token: string, id: string) =>
+    post<HoldingDiagnosisRun>(
+      "/analysis/holding-diagnosis/runs/get",
+      { id },
+      token,
+    ),
+  getHoldingDiagnosisReport: (token: string, id: string) =>
+    post<HoldingDiagnosisReport>(
+      "/analysis/holding-diagnosis/reports/get",
+      { id },
+      token,
+    ),
+  deleteHoldingDiagnosisReport: (token: string, id: string) =>
+    post<{ deleted: number }>(
+      "/analysis/holding-diagnosis/reports/delete",
+      { id },
+      token,
+    ),
+  deleteHoldingDiagnosisReports: (token: string, reportIds: string[]) =>
+    post<{ deleted: number }>(
+      "/analysis/holding-diagnosis/reports/delete-batch",
+      { reportIds },
+      token,
+    ),
   marketSnapshotSeries: (
     token: string,
     instrumentId: string,
