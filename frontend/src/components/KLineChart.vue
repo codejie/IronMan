@@ -395,24 +395,30 @@ onBeforeUnmount(() => {
 <template>
   <div class="kline-chart-shell" :style="{ height: props.height }">
     <div ref="element" class="kline-chart" />
-    <div v-if="props.intradayMode" class="kline-chart-toggle">
+    <div v-if="props.intradayMode" class="kline-chart-toggle" role="radiogroup" aria-label="图表类型">
       <button
         class="kline-toggle-button"
         :class="{ active: props.chartType === 'kline' }"
         @click="$emit('update:chartType', 'kline')"
         type="button"
+        role="radio"
+        :aria-checked="props.chartType === 'kline'"
         title="K线"
       >
         <span class="toggle-icon kline-icon" />
+        <span class="toggle-label">K线</span>
       </button>
       <button
         class="kline-toggle-button"
         :class="{ active: props.chartType === 'line' }"
         @click="$emit('update:chartType', 'line')"
         type="button"
+        role="radio"
+        :aria-checked="props.chartType === 'line'"
         title="分时线"
       >
         <span class="toggle-icon line-icon" />
+        <span class="toggle-label">分时线</span>
       </button>
     </div>
     <div v-if="annotationLabels.length > 0" class="kline-annotation-label-layer" aria-hidden="true">
@@ -568,7 +574,6 @@ onBeforeUnmount(() => {
 
 .kline-chart-toggle {
   display: flex;
-  gap: 4px;
   position: absolute;
   right: 12px;
   top: 12px;
@@ -576,7 +581,7 @@ onBeforeUnmount(() => {
   background: rgb(20 34 54 / 80%);
   border: 1px solid #30445d;
   border-radius: 4px;
-  padding: 4px;
+  padding: 2px;
   backdrop-filter: blur(4px);
 }
 
@@ -587,39 +592,45 @@ onBeforeUnmount(() => {
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 4px 8px;
-  transition: background-color 150ms ease;
+  gap: 6px;
+  padding: 4px 12px;
+  transition: all 150ms ease;
+  color: #aabbd0;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
-.kline-toggle-button:hover {
+.kline-toggle-button:hover:not(.active) {
   background: rgb(255 255 255 / 8%);
 }
 
 .kline-toggle-button.active {
   background: #65d7ca;
+  color: #142236;
 }
 
 .kline-toggle-button.active .toggle-icon {
-  stroke: #142236;
+  stroke: currentColor;
 }
 
 .toggle-icon {
   display: block;
-  stroke: #aabbd0;
+  stroke: currentColor;
   stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   fill: none;
+  flex-shrink: 0;
 }
 
 .kline-icon {
-  width: 18px;
-  height: 14px;
+  width: 16px;
+  height: 12px;
 }
 
 .line-icon {
-  width: 18px;
-  height: 14px;
+  width: 16px;
+  height: 12px;
 }
 </style>
