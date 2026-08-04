@@ -384,28 +384,6 @@ onMounted(load);
       <section class="batman-dialog wide" aria-modal="true" role="dialog">
         <header>
           <strong>{{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }} 分时数据</strong>
-          <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
-            <button
-              class="intraday-toggle-button"
-              :class="{ active: intradayChartType === 'kline' }"
-              @click="intradayChartType = 'kline'"
-              type="button"
-              title="K线"
-              :disabled="intradayLoading"
-            >
-              K线
-            </button>
-            <button
-              class="intraday-toggle-button"
-              :class="{ active: intradayChartType === 'line' }"
-              @click="intradayChartType = 'line'"
-              type="button"
-              title="分时线"
-              :disabled="intradayLoading"
-            >
-              分时线
-            </button>
-          </div>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
         </header>
         <div class="intraday-dialog-content">
@@ -413,7 +391,31 @@ onMounted(load);
           <p v-else-if="intradayError" class="batman-error">{{ intradayError }}</p>
           <p v-else-if="!intradayData || intradayData.length === 0" class="batman-selected">暂无分时数据</p>
           <div v-else class="intraday-chart-frame">
-            <p class="intraday-chart-summary">{{ intradaySummary }}</p>
+            <div class="intraday-chart-header">
+              <p class="intraday-chart-summary">{{ intradaySummary }}</p>
+              <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayChartType === 'kline' }"
+                  @click="intradayChartType = 'kline'"
+                  type="button"
+                  title="K线"
+                  :disabled="intradayLoading"
+                >
+                  K线
+                </button>
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayChartType === 'line' }"
+                  @click="intradayChartType = 'line'"
+                  type="button"
+                  title="分时线"
+                  :disabled="intradayLoading"
+                >
+                  分时线
+                </button>
+              </div>
+            </div>
             <KLineChart
               :bars="intradayBars"
               height="min(58vh, 440px)"
@@ -441,7 +443,8 @@ onMounted(load);
 .batman-holdings :deep(.batman-table th) { font-size: 13px; }
 .intraday-dialog-content { padding: 4px 0 0; }
 .intraday-chart-frame { min-width: 0; }
-.intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0 0 6px; }
+.intraday-chart-header { align-items: center; display: flex; justify-content: space-between; margin: 0 0 6px; }
+.intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0; }
 
 .intraday-chart-toggle {
   display: inline-flex;
