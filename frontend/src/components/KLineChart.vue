@@ -267,14 +267,14 @@ function render(): void {
 
   if (isIntraday) {
     if (chartType === "line") {
-      // Line chart using close prices
+      // Line chart using close prices (straight line, not smooth)
       mainSeries = [
         {
           type: "line" as const,
           name: "收盘价",
           data: closePrices,
           showSymbol: false,
-          smooth: true,
+          smooth: false,
           ...lineVisualStyle("#65d7ca", 1.8)
         }
       ];
