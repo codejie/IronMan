@@ -383,7 +383,13 @@ onMounted(load);
     <div v-if="intradayDialogOpen" class="batman-dialog-backdrop" @click.self="closeIntradayDialog">
       <section class="batman-dialog wide" aria-modal="true" role="dialog">
         <header>
-          <strong>{{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }} 分时数据</strong>
+          <strong>
+            {{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }}
+            <span v-if="intradayHolding?.averageCost !== null && intradayHolding?.averageCost !== undefined" class="intraday-average-price">
+              - 均价 {{ intradayHolding.averageCost }}
+            </span>
+            分时数据
+          </strong>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
         </header>
         <div class="intraday-dialog-content">
@@ -445,6 +451,14 @@ onMounted(load);
 .intraday-chart-frame { min-width: 0; }
 .intraday-chart-header { align-items: center; display: flex; justify-content: space-between; margin: 0 0 6px; }
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0; }
+
+.intraday-average-price {
+  color: #ffbd4b;
+  font-weight: 600;
+  margin-left: 8px;
+  padding-left: 8px;
+  border-left: 1px solid #344963;
+}
 
 .intraday-chart-toggle {
   display: inline-flex;
