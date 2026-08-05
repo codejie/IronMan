@@ -287,7 +287,27 @@ function render(): void {
             borderRadius: 3,
             padding: [2, 4]
           },
-          ...lineVisualStyle("#65d7ca", 1.8)
+          ...lineVisualStyle("#65d7ca", 1.8),
+          ...(props.averagePrice !== null && props.averagePrice !== undefined
+            ? {
+                markLine: {
+                  silent: true,
+                  symbol: "none",
+                  lineStyle: { color: "#ffbd4b", width: 1.5, type: "dashed" as const },
+                  data: [{ yAxis: props.averagePrice }],
+                  label: {
+                    show: true,
+                    position: "end" as const,
+                    formatter: `均价 {c}`,
+                    color: "#ffbd4b",
+                    fontSize: 10,
+                    backgroundColor: "rgba(20, 34, 54, 0.8)",
+                    borderRadius: 3,
+                    padding: [2, 6]
+                  }
+                }
+              }
+            : {})
         }
       ];
       legendData = ["收盘价", ...maSeries.map((s) => s.name)];
@@ -298,7 +318,27 @@ function render(): void {
           type: "candlestick" as const,
           name: "K线",
           data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
-          itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" }
+          itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" },
+          ...(props.averagePrice !== null && props.averagePrice !== undefined
+            ? {
+                markLine: {
+                  silent: true,
+                  symbol: "none",
+                  lineStyle: { color: "#ffbd4b", width: 1.5, type: "dashed" as const },
+                  data: [{ yAxis: props.averagePrice }],
+                  label: {
+                    show: true,
+                    position: "end" as const,
+                    formatter: `均价 {c}`,
+                    color: "#ffbd4b",
+                    fontSize: 10,
+                    backgroundColor: "rgba(20, 34, 54, 0.8)",
+                    borderRadius: 3,
+                    padding: [2, 6]
+                  }
+                }
+              }
+            : {})
         }
       ];
       legendData = ["K线", ...maSeries.map((s) => s.name)];
@@ -317,24 +357,7 @@ function render(): void {
   }
 
   // Add average price markLine if provided and in intraday mode
-  const markLine = props.intradayMode && props.averagePrice !== null && props.averagePrice !== undefined
-    ? {
-        silent: true,
-        symbol: "none",
-        lineStyle: { color: "#ffbd4b", width: 1.5, type: "dashed" as const },
-        data: [{ yAxis: props.averagePrice }],
-        label: {
-          show: true,
-          position: "end" as const,
-          formatter: `均价 {c}`,
-          color: "#ffbd4b",
-          fontSize: 10,
-          backgroundColor: "rgba(20, 34, 54, 0.8)",
-          borderRadius: 3,
-          padding: [2, 6]
-        }
-      }
-    : undefined;
+  const markLine = undefined;
 
   chart.setOption({
     animation: false,
@@ -375,8 +398,7 @@ function render(): void {
       ...mainOverlaySeries,
       ...secondarySeries,
       ...turningPointSeries
-    ],
-    ...(markLine ? { markLine } : {})
+    ]
   }, { notMerge: true });
   updateAnnotationPositions();
 }
