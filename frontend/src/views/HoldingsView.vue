@@ -11,7 +11,7 @@ import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "./instrument-kline-presentation";
 import { holdingDetailRouteQuery } from "./holding-detail-presentation";
 import { holdingProfitSummary, holdingQuoteDateLabel } from "./holdings-presentation";
-import { formatDateTime } from "@/utils/date-format";
+import { formatDateTime, formatDate } from "@/utils/date-format";
 
 type Dialog = "create" | "capital" | "delete-holding";
 
@@ -44,28 +44,45 @@ const intradayError = ref("");
 let intradayRequestVersion = 0;
 const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const intradayChartType = ref<"kline" | "line">("line");
+const intradayRange = ref<1 | 2 | 5 | "all">(2);
 
 // Cache to track which instruments have intraday data (instrumentId -> boolean)
 // null = not checked yet, true = has data, false = no data
 const intradayDataCache = ref<Map<string, boolean>>(new Map());
 
-const intradayBars = computed<PriceBar[]>(() => (intradayData.value ?? []).map((item) => ({
-  date: item.capturedAt,
-  open: item.open,
-  close: item.close,
-  high: item.high,
-  low: item.low,
-  volume: item.volume,
-})));
-const intradayLabels = computed(() => (intradayData.value ?? []).map((item) => formatIntradayLabel(item.capturedAt)));
-const intradaySummary = computed(() => {
-  const points = intradayData.value ?? [];
-  if (points.length === 0) return "";
-  const first = points[0]!;
-  const last = points.at(-1)!;
-  const sources = [...new Set(points.map((item) => item.source))].join(" / ");
-  return `${points.length} 个快照 · ${formatDateTime(first.capturedAt)} 至 ${formatDateTime(last.capturedAt)} · ${sources}`;
+// Cache for full intraday data (instrumentId -> MarketSnapshotPoint[])
+const intradayFullDataCache = ref<Map<string, MarketSnapshotPoint[]>>(new Map());
+
+const intradayBars = computed<PriceBar[]>(() => {
+  const data = filterIntradayData(intradayData.value ?? []);
+  return data.map((item) => ({
+    date: item.capturedAt,
+    open: item.open,
+    close: item.close,
+    high: item.high,
+    low: item.low,
+    volume: item.volume,
+  }));
 });
+const intradayLabels = computed(() => {
+  const data = filterIntradayData(intradayData.value ?? []);
+  return data.map((item) => formatIntradayLabel(item.capturedAt));
+});
+const intradaySummary = computed(() => {
+  const data = filterIntradayData(intradayData.value ?? []);
+  if (data.length === 0) return "";
+  const first = data[0]!;
+  const last = data.at(-1)!;
+  return `${data.length} 个快照 · ${formatDate(first.capturedAt)} - ${formatDate(last.capturedAt)}`;
+});
+
+function filterIntradayData(data: MarketSnapshotPoint[]): MarketSnapshotPoint[] {
+  if (intradayRange.value === "all") return data;
+  const now = new Date();
+  const cutoffDate = new Date(now.getTime() - intradayRange.value * 24 * 60 * 60 * 1000);
+  const cutoffStr = cutoffDate.toISOString();
+  return data.filter((item) => item.capturedAt >= cutoffStr);
+}
 
 function formatIntradayLabel(value: string): string {
   const date = new Date(value);
@@ -210,6 +227,9 @@ async function openIntraday(holding: BatmanHoldingWorkspaceRecord): Promise<void
     return;
   }
   
+  // Reset to default range (2 days) when opening new holding
+  intradayRange.value = 2;
+  
   intradayDialogOpen.value = true;
   intradayHolding.value = holding;
   intradayError.value = "";
@@ -232,10 +252,14 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
   try {
     const now = new Date();
     const endAt = now.toISOString();
-    const startAt = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    // Always fetch 5 days of data to support all range options
+    const startAt = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
     const response = await api.marketSnapshotSeries(accessToken, instrumentId, startAt, endAt);
     if (version !== intradayRequestVersion) return;
-    intradayData.value = response.items;
+    // Store full data in cache
+    intradayFullDataCache.value.set(instrumentId, response.items);
+    // Filter for current range
+    intradayData.value = filterIntradayData(response.items);
     // Update cache: true if we got data, false if empty
     intradayDataCache.value.set(instrumentId, response.items.length > 0);
   } catch (error) {
@@ -383,10 +407,11 @@ onMounted(load);
     <div v-if="intradayDialogOpen" class="batman-dialog-backdrop" @click.self="closeIntradayDialog">
       <section class="batman-dialog wide" aria-modal="true" role="dialog">
         <header>
-          <strong>
+          <strong class="intraday-title">
             {{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }}
+            <div v-if="intradayHolding?.averageCost !== null && intradayHolding?.averageCost !== undefined" class="intraday-title-divider" />
             <span v-if="intradayHolding?.averageCost !== null && intradayHolding?.averageCost !== undefined" class="intraday-average-price">
-              &vert; 均价 {{ intradayHolding.averageCost }}
+              均价 {{ intradayHolding.averageCost.toFixed(2) }}
             </span>
           </strong>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
@@ -398,6 +423,48 @@ onMounted(load);
           <div v-else class="intraday-chart-frame">
             <div class="intraday-chart-header">
               <p class="intraday-chart-summary">{{ intradaySummary }}</p>
+              <div class="intraday-range-toggle" v-if="intradayHolding" role="group" aria-label="时间范围">
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayRange === 1 }"
+                  @click="intradayRange = 1"
+                  type="button"
+                  title="最近一天"
+                  :disabled="intradayLoading"
+                >
+                  一天
+                </button>
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayRange === 2 }"
+                  @click="intradayRange = 2"
+                  type="button"
+                  title="最近两天"
+                  :disabled="intradayLoading"
+                >
+                  两天
+                </button>
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayRange === 5 }"
+                  @click="intradayRange = 5"
+                  type="button"
+                  title="最近五天"
+                  :disabled="intradayLoading"
+                >
+                  五天
+                </button>
+                <button
+                  class="intraday-toggle-button"
+                  :class="{ active: intradayRange === 'all' }"
+                  @click="intradayRange = 'all'"
+                  type="button"
+                  title="全部"
+                  :disabled="intradayLoading"
+                >
+                  全部
+                </button>
+              </div>
               <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
                 <button
                   class="intraday-toggle-button"
@@ -414,10 +481,10 @@ onMounted(load);
                   :class="{ active: intradayChartType === 'line' }"
                   @click="intradayChartType = 'line'"
                   type="button"
-                  title="分时线"
+                  title="分时"
                   :disabled="intradayLoading"
                 >
-                  分时线
+                  分时
                 </button>
               </div>
             </div>
@@ -451,9 +518,22 @@ onMounted(load);
 .intraday-chart-header { align-items: center; display: flex; justify-content: space-between; margin: 0 0 6px; }
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0; }
 
+.intraday-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.intraday-title-divider {
+  width: 1px;
+  height: 16px;
+  background: #344963;
+  flex-shrink: 0;
+}
+
 .intraday-average-price {
   font-weight: 600;
-  margin-left: 8px;
 }
 
 .intraday-chart-toggle {
