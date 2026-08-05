@@ -386,9 +386,8 @@ onMounted(load);
           <strong>
             {{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }}
             <span v-if="intradayHolding?.averageCost !== null && intradayHolding?.averageCost !== undefined" class="intraday-average-price">
-              - 均价 {{ intradayHolding.averageCost }}
+              均价 {{ intradayHolding.averageCost }}
             </span>
-            分时数据
           </strong>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
         </header>
@@ -453,11 +452,8 @@ onMounted(load);
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0; }
 
 .intraday-average-price {
-  color: #ffbd4b;
   font-weight: 600;
   margin-left: 8px;
-  padding-left: 8px;
-  border-left: 1px solid #344963;
 }
 
 .intraday-chart-toggle {
