@@ -423,7 +423,7 @@ onMounted(load);
               subchart="volume"
               :x-axis-labels="intradayLabels"
               intraday-mode
-              :cost-price="intradayHolding?.averageCost ?? null"
+              :average-price="intradayHolding?.averageCost ?? null"
               :chart-type="intradayChartType"
               @update:chartType="intradayChartType = $event"
             />

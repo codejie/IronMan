@@ -31,10 +31,10 @@ const props = withDefaults(
     height?: string;
     xAxisLabels?: string[];
     intradayMode?: boolean;
-    costPrice?: number | null;
+    averagePrice?: number | null;
     chartType?: "kline" | "line";
   }>(),
-  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, costPrice: null, chartType: "line" }
+  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, averagePrice: null, chartType: "line" }
 );
 
 defineEmits<{
@@ -316,17 +316,17 @@ function render(): void {
     legendData = ["K线", ...maSeries.map((s) => s.name)];
   }
 
-  // Add cost price markLine if provided and in intraday mode
-  const markLine = props.intradayMode && props.costPrice !== null && props.costPrice !== undefined
+  // Add average price markLine if provided and in intraday mode
+  const markLine = props.intradayMode && props.averagePrice !== null && props.averagePrice !== undefined
     ? {
         silent: true,
         symbol: "none",
         lineStyle: { color: "#ffbd4b", width: 1.5, type: "dashed" as const },
-        data: [{ yAxis: props.costPrice }],
+        data: [{ yAxis: props.averagePrice }],
         label: {
           show: true,
           position: "end" as const,
-          formatter: `成本价 {c}`,
+          formatter: `均价 {c}`,
           color: "#ffbd4b",
           fontSize: 10,
           backgroundColor: "rgba(20, 34, 54, 0.8)",
@@ -394,7 +394,7 @@ onMounted(() => {
   chart?.on("globalout", clearActiveAnnotations);
 });
 
-watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.costPrice, props.chartType], render, { deep: true });
+watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.averagePrice, props.chartType], render, { deep: true });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.off("mouseover", handleChartMouseOver);
