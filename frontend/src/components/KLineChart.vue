@@ -273,8 +273,20 @@ function render(): void {
           type: "line" as const,
           name: "收盘价",
           data: closePrices,
-          showSymbol: false,
+          showSymbol: true,
+          symbol: "circle",
+          symbolSize: 5,
           smooth: false,
+          label: {
+            show: true,
+            position: "top",
+            formatter: "{c}",
+            fontSize: 10,
+            color: "#aabbd0",
+            backgroundColor: "rgba(20, 34, 54, 0.8)",
+            borderRadius: 3,
+            padding: [2, 4]
+          },
           ...lineVisualStyle("#65d7ca", 1.8)
         }
       ];
