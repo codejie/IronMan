@@ -386,7 +386,7 @@ onMounted(load);
           <strong>
             {{ intradayHolding?.instrument.name }} {{ intradayHolding?.instrument.code }}
             <span v-if="intradayHolding?.averageCost !== null && intradayHolding?.averageCost !== undefined" class="intraday-average-price">
-              | 均价 {{ intradayHolding.averageCost }}
+              &vert; 均价 {{ intradayHolding.averageCost }}
             </span>
           </strong>
           <button aria-label="关闭分时数据对话框" class="batman-icon-button" :disabled="intradayLoading" title="关闭" type="button" @click="closeIntradayDialog"><X :size="17" /></button>
