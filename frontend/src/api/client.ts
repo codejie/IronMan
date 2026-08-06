@@ -1033,6 +1033,12 @@ export const api = {
       { reportIds },
       token,
     ),
+  deleteAllHoldingDiagnosisReports: (token: string) =>
+    post<{ deleted: number }>(
+      "/analysis/holding-diagnosis/reports/delete-all",
+      {},
+      token,
+    ),
   marketSnapshotSeries: (
     token: string,
     instrumentId: string,

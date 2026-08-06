@@ -481,6 +481,29 @@ export class HoldingDiagnosisService {
     });
   }
 
+  deleteAllReports(userId: string): { deleted: number } {
+    return this.database.transaction(() => {
+      const rows = this.database.all<{ id: string; run_id: string }>(
+        "SELECT id, run_id FROM holding_diagnosis_reports WHERE user_id = $userId",
+        { userId },
+      );
+      if (rows.length === 0) return { deleted: 0 };
+
+      this.database.run(
+        "DELETE FROM holding_diagnosis_reports WHERE user_id = $userId",
+        { userId },
+      );
+      const runPlaceholders = rows.map((_, index) => `$run${index}`).join(", ");
+      const runParameters: Record<string, string> = { userId };
+      rows.forEach((row, index) => { runParameters[`run${index}`] = row.run_id; });
+      this.database.run(
+        `DELETE FROM holding_diagnosis_runs WHERE user_id = $userId AND id IN (${runPlaceholders})`,
+        runParameters,
+      );
+      return { deleted: rows.length };
+    });
+  }
+
   private createRun(userId: string, trigger: HoldingDiagnosisTrigger, scheduledTradeDate: string | null): HoldingDiagnosisRun {
     const now = this.clock().toISOString();
     const settings = this.getSettings(userId);

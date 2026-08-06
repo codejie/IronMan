@@ -767,6 +767,30 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/analysis/holding-diagnosis/reports/delete-all",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({})) },
+      responses: {
+        200: {
+          description: "Deleted the current user's holding diagnosis report archive",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ deleted: z.number().int() })),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(diagnosis.deleteAllReports(context.get("currentUser").id)),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/health",
       request: { body: jsonBody(emptyBodySchema) },
       responses: {

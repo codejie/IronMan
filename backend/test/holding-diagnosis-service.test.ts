@@ -202,6 +202,32 @@ describe("holding diagnosis reports", () => {
     expect(diagnosis.listReports(bob).items).toHaveLength(1);
   });
 
+  test("clears only the current user's report archive and keeps report-less runs", async () => {
+    const alice = createUser("alice-clear-diagnosis@example.com");
+    const bob = createUser("bob-clear-diagnosis@example.com");
+    addHolding(alice, "600006");
+    addHolding(bob, "600007");
+
+    const aliceReport = await diagnosis.generate(alice, "manual");
+    const bobReport = await diagnosis.generate(bob, "manual");
+    const inProgressRunId = crypto.randomUUID();
+    const timestamp = now.toISOString();
+    database.run(
+      `INSERT INTO holding_diagnosis_runs (
+        id, user_id, trigger, status, progress, scheduled_trade_date, settings_snapshot_json,
+        model_snapshot_json, created_at, updated_at
+      ) VALUES ($id, $userId, 'manual', 'running', 35, NULL, '{}', '{}', $createdAt, $updatedAt)`,
+      { id: inProgressRunId, userId: alice, createdAt: timestamp, updatedAt: timestamp },
+    );
+
+    expect(diagnosis.deleteAllReports(alice)).toEqual({ deleted: 1 });
+    expect(diagnosis.listReports(alice).items).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: inProgressRunId, reportId: null, status: "running" })]),
+    );
+    expect(() => diagnosis.getReport(alice, aliceReport.reportId!)).toThrow("持仓诊断报告不存在");
+    expect(diagnosis.getReport(bob, bobReport.reportId!)).toEqual(expect.objectContaining({ id: bobReport.reportId }));
+  });
+
   test("marks overly long AI text partial while retaining the local diagnosis", async () => {
     const userId = createUser("long-diagnosis@example.com");
     addHolding(userId, "600003");

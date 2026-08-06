@@ -187,6 +187,23 @@ describe("holding diagnosis routes", () => {
     expect((await deleted.json()) as ApiResponse<{ deleted: number }>).toEqual(
       expect.objectContaining({ result: { deleted: 1 } }),
     );
+
+    const secondStartResponse = await post(
+      "/api/analysis/holding-diagnosis/start",
+      {},
+      alice.token,
+    );
+    const secondStart = (await secondStartResponse.json()) as ApiResponse<{ id: string }>;
+    await waitForReport(alice.token, secondStart.result.id);
+    const cleared = await post(
+      "/api/analysis/holding-diagnosis/reports/delete-all",
+      {},
+      alice.token,
+    );
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()) as ApiResponse<{ deleted: number }>).toEqual(
+      expect.objectContaining({ result: { deleted: 1 } }),
+    );
   });
 
   test("completes a remote diagnosis after returning every tool result in a batch", async () => {

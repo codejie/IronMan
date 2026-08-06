@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import HoldingDiagnosisView from "./HoldingDiagnosisView.vue";
 
 const mocks = vi.hoisted(() => ({
+  deleteAllHoldingDiagnosisReports: vi.fn(),
   deleteHoldingDiagnosisReport: vi.fn(),
   getHoldingDiagnosisReport: vi.fn(),
   getHoldingDiagnosisRun: vi.fn(),
@@ -13,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/api/client", () => ({
   ApiError: class ApiError extends Error {},
   api: {
+    deleteAllHoldingDiagnosisReports: mocks.deleteAllHoldingDiagnosisReports,
     deleteHoldingDiagnosisReport: mocks.deleteHoldingDiagnosisReport,
     getHoldingDiagnosisReport: mocks.getHoldingDiagnosisReport,
     getHoldingDiagnosisRun: mocks.getHoldingDiagnosisRun,
@@ -163,6 +165,7 @@ describe("HoldingDiagnosisView", () => {
     });
     mocks.getHoldingDiagnosisRun.mockResolvedValue({ ...run, id: "run-new" });
     mocks.deleteHoldingDiagnosisReport.mockResolvedValue({ deleted: 1 });
+    mocks.deleteAllHoldingDiagnosisReports.mockResolvedValue({ deleted: 1 });
   });
 
   test("renders report tabs, keeps in-progress runs readable, and deletes an individual report through the shared confirmation", async () => {
@@ -210,5 +213,26 @@ describe("HoldingDiagnosisView", () => {
     await wrapper.get("button[aria-label='生成持仓诊断']").trigger("click");
     await flushPromises();
     expect(mocks.startHoldingDiagnosis).toHaveBeenCalledWith("test-token");
+  });
+
+  test("clears archived reports through the shared confirmation while keeping in-progress runs", async () => {
+    mocks.listHoldingDiagnosisRuns
+      .mockResolvedValueOnce({ items: [runningRun, run] })
+      .mockResolvedValueOnce({ items: [runningRun] });
+
+    const wrapper = mount(HoldingDiagnosisView, {
+      global: { stubs: { KLineChart: true, ExternalLink: true } },
+    });
+    await flushPromises();
+
+    await wrapper.get("button[data-hint='清空归档']").trigger("click");
+    await flushPromises();
+
+    expect(confirmation.requestConfirmation).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "清空持仓诊断报告归档", tone: "danger" }),
+    );
+    expect(mocks.deleteAllHoldingDiagnosisReports).toHaveBeenCalledWith("test-token");
+    expect(wrapper.find(".holding-diagnosis-run.without-report").exists()).toBe(true);
+    expect(wrapper.text()).not.toContain("趋势呈修复状态");
   });
 });
