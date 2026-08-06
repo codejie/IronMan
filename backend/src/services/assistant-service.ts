@@ -496,13 +496,13 @@ export class AssistantService {
       const options = config.provider === "deepseek"
         ? { responseFormat: "json_object" as const, maxTokens: 3_000 }
         : {};
-      return await this.requestCompletion(config, messages, holdingDiagnosisTools, 90_000, options);
+      return await this.requestCompletion(config, messages, holdingDiagnosisTools, 120_000, options);
     } catch (error) {
       if (
         (error instanceof DOMException && error.name === "TimeoutError") ||
         (error instanceof Error && /timed out|timeout/i.test(error.message))
       ) {
-        throw new Error("AI 持仓诊断请求超时（90 秒）");
+        throw new Error("AI 持仓诊断请求超时（120 秒）");
       }
       throw error;
     }

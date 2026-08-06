@@ -217,7 +217,7 @@ const defaultSettings: HoldingDiagnosisSettings = {
   sourceIds: ["all"],
   reportPreference: "优先识别趋势、风险、关键价格与需要确认的信息；给出条件化建议，不承诺收益。",
   lookbackTradingDays: 60,
-  maxFunctionBatches: 2,
+  maxFunctionBatches: 1,
   maxExternalSourcesPerHolding: 3,
 };
 
