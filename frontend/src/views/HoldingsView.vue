@@ -497,6 +497,8 @@ onMounted(load);
               intraday-mode
               :average-price="intradayHolding?.averageCost ?? null"
               :chart-type="intradayChartType"
+              :show-price-diff="true"
+              price-diff-color="#f0c878"
               @update:chartType="intradayChartType = $event"
             />
           </div>

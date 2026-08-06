@@ -33,8 +33,10 @@ const props = withDefaults(
     intradayMode?: boolean;
     averagePrice?: number | null;
     chartType?: "kline" | "line";
+    showPriceDiff?: boolean;
+    priceDiffColor?: string;
   }>(),
-  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, averagePrice: null, chartType: "line" }
+  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, averagePrice: null, chartType: "line", showPriceDiff: false, priceDiffColor: "#f0c878" }
 );
 
 defineEmits<{
@@ -264,6 +266,7 @@ function render(): void {
   // Build main chart series based on mode
   let mainSeries: any[] = [];
   let legendData: string[] = [];
+  let priceDiffSeries: any[] = [];
 
   if (isIntraday) {
     if (chartType === "line") {
@@ -343,6 +346,25 @@ function render(): void {
       ];
       legendData = ["K线", ...maSeries.map((s) => s.name)];
     }
+
+    // Add price difference percentage series if enabled and averagePrice is available
+    if (props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined && props.averagePrice > 0) {
+      const priceDiffData = closePrices.map((close) => {
+        if (close === null || close === undefined) return null;
+        return Number(((close - props.averagePrice!) / props.averagePrice! * 100).toFixed(2));
+      });
+      priceDiffSeries = [{
+        type: "line" as const,
+        name: "价差%",
+        data: priceDiffData,
+        yAxisIndex: 2,
+        showSymbol: false,
+        smooth: false,
+        lineStyle: { color: props.priceDiffColor, width: 1.5, type: "dashed" as const },
+        label: { show: false }
+      }];
+      legendData = [...legendData, "价差%"];
+    }
   } else {
     // Regular K-line chart
     mainSeries = [
@@ -381,7 +403,7 @@ function render(): void {
     },
     axisPointer: { link: [{ xAxisIndex: "all" }], lineStyle: { color: "#65d7ca" } },
     grid: [
-      { left: 48, right: 18, top: props.title === "" ? 18 : 44, height: "52%" },
+      { left: 48, right: props.intradayMode && props.showPriceDiff && props.averagePrice ? 56 : 18, top: props.title === "" ? 18 : 44, height: "52%" },
       { left: 48, right: 18, top: "70%", height: "17%" }
     ],
     xAxis: [
@@ -390,14 +412,23 @@ function render(): void {
     ],
     yAxis: [
       { scale: true, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
-      { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } }
+      { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
+      ...(props.intradayMode && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined
+        ? [{
+            scale: true,
+            position: "right",
+            axisLabel: { color: props.priceDiffColor, formatter: "{value}%" },
+            splitLine: { show: false }
+          }]
+        : [])
     ],
     series: [
       ...mainSeries,
       ...maSeries,
       ...mainOverlaySeries,
       ...secondarySeries,
-      ...turningPointSeries
+      ...turningPointSeries,
+      ...priceDiffSeries
     ]
   }, { notMerge: true });
   updateAnnotationPositions();
@@ -416,7 +447,7 @@ onMounted(() => {
   chart?.on("globalout", clearActiveAnnotations);
 });
 
-watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.averagePrice, props.chartType], render, { deep: true });
+watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.averagePrice, props.chartType, props.showPriceDiff, props.priceDiffColor], render, { deep: true });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.off("mouseover", handleChartMouseOver);
