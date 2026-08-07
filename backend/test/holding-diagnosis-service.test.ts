@@ -150,7 +150,10 @@ describe("holding diagnosis reports", () => {
 
     expect(run.status).toBe("completed");
     expect(report.body.length).toBeLessThanOrEqual(600);
+    expect(report.body).toBe("已完成 1/1 个持仓诊断。");
     expect(report.items).toHaveLength(1);
+    expect(report.items[0]!.body).toBe("趋势转强但仍需观察成交量与公告变化。");
+    expect(report.items[0]!.body.length).toBeLessThanOrEqual(600);
     expect(report.items[0]!.chart.bars).toHaveLength(4);
     expect(report.items[0]!.methods).toEqual(
       expect.arrayContaining([
@@ -238,6 +241,9 @@ describe("holding diagnosis reports", () => {
       `${secondInstrumentId}:1`,
     ]);
     expect(report.items).toHaveLength(2);
+    expect(report.body).toBe("已完成 2/2 个持仓诊断。");
+    expect(report.body).not.toContain("独立分析");
+    expect(report.items.every((item) => item.body.length <= 600)).toBe(true);
     expect(run.status).toBe("completed");
   });
 
@@ -362,6 +368,8 @@ describe("holding diagnosis reports", () => {
 
     expect(run.status).toBe("partial");
     expect(report.body.length).toBeLessThanOrEqual(600);
+    expect(report.items[0]!.body.length).toBeLessThanOrEqual(600);
+    expect(report.items[0]!.body).toContain("已整理");
     expect(report.errorMessage).toContain("600");
   });
 

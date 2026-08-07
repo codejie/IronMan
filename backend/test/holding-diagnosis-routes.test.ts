@@ -171,9 +171,13 @@ describe("holding diagnosis routes", () => {
       const report = (await reportResponse.json()) as ApiResponse<{
         body: string;
         aiStatus: { state: string; model: { name: string } };
+        items: Array<{ body: string }>;
         sources: Array<{ sourceId: string; url: string; availability: string; summary: string | null; highlights: string[] }>;
       }>;
       expect(report.result.body.length).toBeLessThanOrEqual(600);
+      expect(report.result.body).toBe("已完成 1/1 个持仓诊断。");
+      expect(report.result.items).toHaveLength(1);
+      expect(report.result.items[0]!.body.length).toBeLessThanOrEqual(600);
       expect(report.result.aiStatus).toEqual(expect.objectContaining({ state: "local" }));
       expect(report.result.sources).toEqual(
         expect.arrayContaining([

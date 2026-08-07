@@ -8,7 +8,7 @@ import {
   RefreshCw,
   Trash2,
 } from "lucide-vue-next";
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import {
   api,
   ApiError,
@@ -44,18 +44,15 @@ const isGenerating = ref(false);
 const deletingReportId = ref<string | null>(null);
 const isClearingArchive = ref(false);
 const errorMessage = ref("");
-let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
 const activeReportId = computed(() => report.value?.id ?? null);
+const processingRun = computed(() => runs.value.find((item) => item.status === "queued" || item.status === "running") ?? null);
 const activeItem = computed(() => {
   if (report.value === null) return null;
   return report.value.items.find((item) => item.id === activeItemId.value) ?? report.value.items[0] ?? null;
 });
 
 onMounted(() => void loadArchive());
-onBeforeUnmount(() => {
-  if (pollTimer !== undefined) clearTimeout(pollTimer);
-});
 
 function errorText(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.message : fallback;
@@ -109,6 +106,7 @@ function recommendationLabel(value: HoldingDiagnosisItem["recommendation"]["dire
 
 function aiStatusLabel(value: HoldingDiagnosisReport["aiStatus"]["state"]): string {
   const labels: Record<HoldingDiagnosisReport["aiStatus"]["state"], string> = {
+    running: "AI 诊断处理中",
     completed: "AI 已完成诊断",
     local: "本地行情与指标摘要",
     timeout: "AI 超时，已使用本地摘要",
@@ -116,6 +114,12 @@ function aiStatusLabel(value: HoldingDiagnosisReport["aiStatus"]["state"]): stri
   };
   return labels[value];
 }
+
+function isReportReady(item: ReportRun): boolean {
+  return item.reportId !== null && (item.status === "completed" || item.status === "partial");
+}
+
+const hasArchivedReports = computed(() => runs.value.some(isReportReady));
 
 function formatPrice(value: number | null): string {
   if (value === null) return "--";
@@ -155,9 +159,21 @@ async function loadArchive(preferredReportId?: string): Promise<void> {
   try {
     const result = await api.listHoldingDiagnosisRuns(token.value);
     runs.value = result.items;
-    const nextReportId = preferredReportId
-      ?? activeReportId.value
-      ?? result.items.find((item) => item.reportId !== null)?.reportId
+    if (processingRun.value !== null && preferredReportId === undefined) {
+      report.value = null;
+      activeItemId.value = null;
+      return;
+    }
+    const readyReports = result.items.filter(isReportReady);
+    const preferredReport = preferredReportId === undefined
+      ? undefined
+      : readyReports.find((item) => item.reportId === preferredReportId);
+    const activeReport = activeReportId.value === null
+      ? undefined
+      : readyReports.find((item) => item.reportId === activeReportId.value);
+    const nextReportId = preferredReport?.reportId
+      ?? activeReport?.reportId
+      ?? readyReports[0]?.reportId
       ?? null;
     if (nextReportId === null) {
       report.value = null;
@@ -187,7 +203,7 @@ async function loadReport(reportId: string): Promise<void> {
 }
 
 async function selectRun(item: ReportRun): Promise<void> {
-  if (item.reportId === null) return;
+  if (!isReportReady(item) || item.reportId === null) return;
   await loadReport(item.reportId);
 }
 
@@ -197,41 +213,18 @@ async function generate(): Promise<void> {
   errorMessage.value = "";
   try {
     const run = await api.startHoldingDiagnosis(token.value);
-    if (run.reportId !== null) {
-      await loadArchive(run.reportId);
-    } else {
-      runs.value = [run, ...runs.value.filter((item) => item.id !== run.id)];
-      await pollRun(run.id);
-    }
+    const displayRun: ReportRun = run.status === "queued"
+      ? { ...run, status: "running", progress: Math.max(run.progress, 5) }
+      : run;
+    runs.value = [displayRun, ...runs.value.filter((item) => item.id !== run.id)];
+    report.value = null;
+    activeItemId.value = null;
+    if (isReportReady(run)) await loadArchive(run.reportId ?? undefined);
   } catch (error) {
     errorMessage.value = errorText(error, "持仓诊断生成失败");
   } finally {
     isGenerating.value = false;
   }
-}
-
-async function pollRun(runId: string, attempt = 0): Promise<void> {
-  if (token.value === null || attempt >= 30) {
-    if (attempt >= 30) errorMessage.value = "报告仍在生成，可稍后刷新归档查看。";
-    return;
-  }
-  const current = await api.getHoldingDiagnosisRun(token.value, runId);
-  runs.value = [current, ...runs.value.filter((item) => item.id !== current.id)];
-  if (current.reportId !== null) {
-    await loadReport(current.reportId);
-  }
-  if (current.status === "completed" || current.status === "partial") {
-    await loadArchive(current.reportId ?? undefined);
-    return;
-  }
-  if (current.status === "failed" || current.status === "cancelled") {
-    errorMessage.value = current.errorMessage ?? "持仓诊断未能生成报告";
-    return;
-  }
-  await new Promise<void>((resolve) => {
-    pollTimer = setTimeout(resolve, 2_000);
-  });
-  await pollRun(runId, attempt + 1);
 }
 
 async function deleteReport(item: ReportRun): Promise<void> {
@@ -257,7 +250,7 @@ async function deleteReport(item: ReportRun): Promise<void> {
 }
 
 async function deleteAllReports(): Promise<void> {
-  if (token.value === null || runs.value.length === 0 || deletingReportId.value !== null || isClearingArchive.value) return;
+  if (token.value === null || !hasArchivedReports.value || deletingReportId.value !== null || isClearingArchive.value) return;
   const confirmed = await requestConfirmation({
     title: "清空持仓诊断报告归档",
     message: "将删除当前用户的全部归档报告及其图表快照、建议和来源记录，不影响正在生成的任务。此操作不可恢复。",
@@ -302,7 +295,7 @@ async function deleteAllReports(): Promise<void> {
         <button
           aria-label="生成持仓诊断"
           class="batman-button primary"
-          :disabled="isGenerating"
+          :disabled="isGenerating || processingRun !== null"
           type="button"
           @click="generate"
         >
@@ -326,7 +319,7 @@ async function deleteAllReports(): Promise<void> {
               class="batman-icon-button danger"
               data-hint="清空归档"
               data-hint-position="bottom"
-              :disabled="isLoading || isGenerating || isClearingArchive || deletingReportId !== null || runs.length === 0"
+              :disabled="isLoading || isGenerating || isClearingArchive || deletingReportId !== null || !hasArchivedReports"
               type="button"
               @click="deleteAllReports"
             >
@@ -349,14 +342,14 @@ async function deleteAllReports(): Promise<void> {
               'holding-diagnosis-run',
               {
                 active: item.reportId === activeReportId,
-                'has-report': item.reportId !== null,
+                'has-report': isReportReady(item),
                 'without-report': item.reportId === null,
               },
             ]"
           >
             <button
               class="holding-diagnosis-run-select"
-              :disabled="item.reportId === null"
+              :disabled="!isReportReady(item)"
               type="button"
               @click="selectRun(item)"
             >
@@ -366,7 +359,7 @@ async function deleteAllReports(): Promise<void> {
               <em v-if="item.errorMessage">{{ item.errorMessage }}</em>
             </button>
             <button
-              v-if="item.reportId"
+              v-if="isReportReady(item)"
               :aria-label="`删除 ${formatDateTime(item.createdAt)} 报告`"
               class="batman-icon-button danger holding-diagnosis-run-delete"
               data-hint="删除报告"
@@ -386,13 +379,20 @@ async function deleteAllReports(): Promise<void> {
           <LoaderCircle class="spinning" :size="24" />
         </div>
         <div v-else-if="report === null" class="holding-diagnosis-empty report-empty">
-          <ChartNoAxesCombined :size="29" />
-          <span>选择已完成的报告查看</span>
+          <template v-if="processingRun !== null">
+            <LoaderCircle class="spinning" :size="29" />
+            <span>报告生成中</span>
+            <small>{{ statusLabel(processingRun.status) }} · {{ processingRun.progress }}%</small>
+          </template>
+          <template v-else>
+            <ChartNoAxesCombined :size="29" />
+            <span>选择已完成的报告查看</span>
+          </template>
         </div>
         <template v-else>
           <section class="holding-diagnosis-summary">
             <div>
-              <span>报告正文</span>
+              <span>报告概览</span>
               <p>{{ report.body }}</p>
             </div>
             <div :class="['holding-diagnosis-ai-status', `ai-${report.aiStatus.state}`]">
@@ -485,6 +485,11 @@ async function deleteAllReports(): Promise<void> {
               </section>
             </div>
 
+            <section class="holding-diagnosis-item-body">
+              <h3>报告正文</h3>
+              <p>{{ item.body }}</p>
+            </section>
+
             <section class="holding-diagnosis-methods">
               <h3>方法与参数</h3>
               <div>
@@ -504,8 +509,7 @@ async function deleteAllReports(): Promise<void> {
                   <details>
                     <summary>
                       <b>{{ source.sourceName }}</b>
-                      <span>{{ source.title }}</span>
-                      <small>{{ source.availability === 'available' ? '已获取摘要' : source.availability === 'link_only' ? '仅跳转查阅' : '暂不可用' }}</small>
+                      <span>{{ source.title }}: {{ source.summary ?? "本次未获得可展示的来源摘要。" }}</span>
                     </summary>
                     <div class="holding-diagnosis-source-detail">
                       <p>{{ source.summary ?? "本次未获得可展示的来源摘要。" }}</p>
@@ -544,15 +548,16 @@ async function deleteAllReports(): Promise<void> {
 .holding-diagnosis-layout { display: grid; flex: 1; gap: 14px; grid-template-columns: minmax(220px, 280px) minmax(0, 1fr); min-height: 0; }
 .holding-diagnosis-archive { background: #101b2d; border: 1px solid #2b425f; border-radius: 7px; display: flex; flex-direction: column; min-height: 420px; overflow: hidden; }.holding-diagnosis-archive > header { align-items: center; border-bottom: 1px solid #2b425f; color: #dfeefa; display: flex; font-size: 13px; justify-content: space-between; padding: 11px; }.holding-diagnosis-archive-tools { align-items: center; display: flex; gap: 5px; }.holding-diagnosis-archive > header span { background: #1d3049; border-radius: 10px; color: #a8c4d7; font-size: 11px; min-width: 21px; padding: 2px 6px; text-align: center; }
 .holding-diagnosis-run-list { display: flex; flex-direction: column; overflow-y: auto; }.holding-diagnosis-run { align-items: stretch; border-bottom: 1px solid #223650; display: grid; grid-template-columns: minmax(0, 1fr); min-height: 72px; }.holding-diagnosis-run.has-report { grid-template-columns: minmax(0, 1fr) 38px; }.holding-diagnosis-run.active { background: #172b41; box-shadow: inset 3px 0 #57cfc6; }.holding-diagnosis-run-select { background: transparent; border: 0; color: inherit; cursor: pointer; display: grid; gap: 2px; min-width: 0; padding: 10px 12px; text-align: left; }.holding-diagnosis-run-select:disabled { cursor: default; }.holding-diagnosis-run-select > span { color: #7fc9c5; font-size: 11px; }.holding-diagnosis-run strong { color: #e0edf8; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.holding-diagnosis-run small { color: #9cb2c7; font-size: 11px; }.holding-diagnosis-run small.status-failed { color: #f19ca8; }.holding-diagnosis-run small.status-partial { color: #f0c878; }.holding-diagnosis-run em { color: #e5a4ad; font-size: 10px; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.holding-diagnosis-run-delete { align-self: center; justify-self: center; }
-.holding-diagnosis-report { background: #101b2d; border: 1px solid #2b425f; border-radius: 7px; min-height: 420px; overflow-y: auto; padding: 15px; }.holding-diagnosis-loading, .holding-diagnosis-empty { align-items: center; color: #91a8bf; display: flex; flex: 1; flex-direction: column; font-size: 13px; gap: 9px; justify-content: center; min-height: 190px; }.report-empty { min-height: 390px; }
+.holding-diagnosis-report { background: #101b2d; border: 1px solid #2b425f; border-radius: 7px; min-height: 420px; overflow-y: auto; padding: 15px; }.holding-diagnosis-loading, .holding-diagnosis-empty { align-items: center; color: #91a8bf; display: flex; flex: 1; flex-direction: column; font-size: 13px; gap: 9px; justify-content: center; min-height: 190px; }.holding-diagnosis-empty small { color: #91aac1; font-size: 11px; }.report-empty { min-height: 390px; }
 .holding-diagnosis-summary { border-bottom: 1px solid #2b425f; display: grid; gap: 8px; padding: 0 0 14px; }.holding-diagnosis-summary > div > span, .holding-diagnosis-summary small { color: #91aac1; font-size: 11px; }.holding-diagnosis-summary p { color: #e1eef9; font-size: 14px; line-height: 1.7; margin: 0; white-space: pre-wrap; }.holding-diagnosis-summary > small { color: #e0ad78; }.holding-diagnosis-ai-status { align-items: center; border-left: 3px solid #64c9dc; display: grid; gap: 2px 7px; grid-template-columns: auto auto minmax(0, 1fr); padding: 5px 8px; }.holding-diagnosis-ai-status > svg { color: #79cce9; grid-row: span 2; }.holding-diagnosis-ai-status > span { color: #cdeafa; font-size: 12px; }.holding-diagnosis-ai-status > small { color: #9cb7ca; font-size: 11px; min-width: 0; }.holding-diagnosis-ai-status.ai-timeout, .holding-diagnosis-ai-status.ai-unavailable { border-color: #e2a75c; }.holding-diagnosis-ai-status.ai-timeout > svg, .holding-diagnosis-ai-status.ai-unavailable > svg { color: #f0bc73; }
 .holding-diagnosis-tabs { border-bottom: 1px solid #2b425f; display: flex; gap: 5px; margin-top: 14px; overflow-x: auto; padding-bottom: 9px; scrollbar-width: thin; }.holding-diagnosis-tabs button { background: #142237; border: 1px solid #2a425e; border-radius: 4px; color: #a9bfd0; cursor: pointer; display: grid; flex: 0 0 auto; gap: 2px; min-width: 116px; padding: 7px 10px; text-align: left; }.holding-diagnosis-tabs button:hover { border-color: #579ea4; color: #e1f0fa; }.holding-diagnosis-tabs button.active { background: #173243; border-color: #5bc5bd; box-shadow: inset 0 -2px #5bc5bd; color: #edf9fa; }.holding-diagnosis-tabs b { font-size: 12px; font-weight: 600; }.holding-diagnosis-tabs span { color: #90a9bd; font-size: 10px; }.holding-diagnosis-tabs button.active span { color: #a7ded9; }
 .holding-diagnosis-item { display: grid; gap: 13px; padding: 18px 0 0; }.holding-diagnosis-item-header { align-items: flex-start; display: flex; justify-content: space-between; gap: 14px; }.holding-diagnosis-item-header h2 { color: #edf7ff; font-size: 16px; margin: 0; }.holding-diagnosis-item-header span { color: #91a9bf; font-size: 12px; }.holding-diagnosis-item-status { align-items: flex-end; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }.holding-diagnosis-item-status span { font-size: 11px; }.holding-diagnosis-item-status b { color: #f0c878; font-size: 12px; }.quality-complete { color: #79dcb2 !important; }.quality-partial, .quality-stale { color: #f0c878 !important; }.quality-unavailable { color: #f19ca8 !important; }
 .holding-diagnosis-facts { display: flex; flex-wrap: wrap; gap: 7px; }.holding-diagnosis-facts span { background: #17263a; border: 1px solid #29425e; border-radius: 4px; color: #c6d8e8; font-size: 11px; padding: 4px 7px; }
+.holding-diagnosis-item-body { border-top: 1px solid #2b425f; padding-top: 13px; }.holding-diagnosis-item-body p { color: #d6e3ee; font-size: 13px; line-height: 1.7; margin: 0; white-space: pre-wrap; }
 .holding-diagnosis-turning-points > div { display: flex; flex-wrap: wrap; gap: 7px; }.holding-diagnosis-turning-points article { background: #17263a; border-left: 3px solid #6dcdc3; display: grid; gap: 2px; min-width: 180px; padding: 7px 9px; }.holding-diagnosis-turning-points b { color: #dcebf6; font-size: 11px; }.holding-diagnosis-turning-points span { color: #a8bdce; font-size: 11px; }.holding-diagnosis-turning-points small { color: #ddbf78; font-size: 10px; }
 .holding-diagnosis-item-grid { display: grid; gap: 18px; grid-template-columns: minmax(0, 1.1fr) minmax(230px, .9fr); }.holding-diagnosis-item-grid section, .holding-diagnosis-methods, .holding-diagnosis-sources { min-width: 0; }.holding-diagnosis-item h3 { color: #a9c4d9; font-size: 11px; font-weight: 600; letter-spacing: 0; margin: 0 0 7px; text-transform: uppercase; }.holding-diagnosis-item-grid p { color: #d6e3ee; font-size: 13px; line-height: 1.65; margin: 0; }.holding-diagnosis-item-grid dl { display: grid; gap: 5px; margin: 0; }.holding-diagnosis-item-grid dl div { display: grid; font-size: 12px; grid-template-columns: 68px minmax(0, 1fr); }.holding-diagnosis-item-grid dt { color: #899fb5; }.holding-diagnosis-item-grid dd { color: #dbeaf5; margin: 0; }.holding-diagnosis-uncertainty { color: #c8a97a !important; font-size: 11px !important; margin-top: 8px !important; }.holding-diagnosis-item-error { color: #f0b27e !important; font-size: 11px !important; margin-top: 8px !important; }
 .holding-diagnosis-methods > div { display: flex; flex-wrap: wrap; gap: 7px; }.holding-diagnosis-methods article { background: #142237; border: 1px solid #2a425e; border-radius: 4px; display: grid; gap: 3px; min-width: 160px; padding: 8px; }.holding-diagnosis-methods article > span { font-size: 10px; }.method-ai_analysis { color: #74bbe4; }.method-local_function { color: #7ed9ac; }.method-hybrid_analysis { color: #efc777; }.holding-diagnosis-methods b { color: #dfeefa; font-size: 12px; }.holding-diagnosis-methods small { color: #96adc2; font-size: 10px; }.holding-diagnosis-methods p { color: #aebfd0; font-size: 11px; line-height: 1.45; margin: 0; }
-.holding-diagnosis-source-list { display: grid; gap: 5px; }.holding-diagnosis-source-list article { align-items: flex-start; background: #142237; border: 1px solid #2a425e; border-radius: 4px; display: flex; gap: 8px; padding: 7px 8px; }.holding-diagnosis-source-list details { min-width: 0; width: 100%; }.holding-diagnosis-source-list summary { cursor: pointer; display: grid; gap: 1px; list-style: none; min-width: 0; padding-right: 4px; }.holding-diagnosis-source-list summary::-webkit-details-marker { display: none; }.holding-diagnosis-source-list summary::after { color: #75cfc6; content: '+'; font-size: 14px; grid-column: 2; grid-row: 1 / span 3; justify-self: end; }.holding-diagnosis-source-list details[open] summary::after { content: '-'; }.holding-diagnosis-source-list b { color: #bbd1e3; font-size: 11px; }.holding-diagnosis-source-list summary span { color: #d7e5f0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.holding-diagnosis-source-list small { color: #91a8be; font-size: 10px; }.holding-diagnosis-source-detail { border-top: 1px solid #2a425e; display: grid; gap: 6px; margin-top: 7px; padding-top: 7px; }.holding-diagnosis-source-detail p { color: #c7d8e5; font-size: 12px; line-height: 1.55; margin: 0; }.holding-diagnosis-source-detail ul { color: #9cb5c8; display: grid; font-size: 11px; gap: 3px; margin: 0; padding-left: 16px; }.holding-diagnosis-source-list a { align-items: center; color: #6fcec6; display: inline-flex; flex: 0 0 auto; padding: 4px; }.holding-diagnosis-sources > p { color: #91a8be; font-size: 12px; margin: 0; }
+.holding-diagnosis-source-list { display: grid; gap: 5px; }.holding-diagnosis-source-list article { align-items: flex-start; background: #142237; border: 1px solid #2a425e; border-radius: 4px; display: flex; gap: 8px; padding: 7px 8px; }.holding-diagnosis-source-list details { min-width: 0; width: 100%; }.holding-diagnosis-source-list summary { cursor: pointer; display: grid; gap: 1px; list-style: none; min-width: 0; padding-right: 4px; }.holding-diagnosis-source-list summary::-webkit-details-marker { display: none; }.holding-diagnosis-source-list summary::after { color: #75cfc6; content: '+'; font-size: 14px; grid-column: 2; grid-row: 1 / span 2; justify-self: end; }.holding-diagnosis-source-list details[open] summary::after { content: '-'; }.holding-diagnosis-source-list b { color: #bbd1e3; font-size: 11px; }.holding-diagnosis-source-list summary span { color: #d7e5f0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.holding-diagnosis-source-list small { color: #91a8be; font-size: 10px; }.holding-diagnosis-source-detail { border-top: 1px solid #2a425e; display: grid; gap: 6px; margin-top: 7px; padding-top: 7px; }.holding-diagnosis-source-detail p { color: #c7d8e5; font-size: 12px; line-height: 1.55; margin: 0; }.holding-diagnosis-source-detail ul { color: #9cb5c8; display: grid; font-size: 11px; gap: 3px; margin: 0; padding-left: 16px; }.holding-diagnosis-source-list a { align-items: center; color: #6fcec6; display: inline-flex; flex: 0 0 auto; padding: 4px; }.holding-diagnosis-sources > p { color: #91a8be; font-size: 12px; margin: 0; }
 @media (max-width: 880px) { .holding-diagnosis-layout { grid-template-columns: 1fr; }.holding-diagnosis-archive { max-height: 255px; min-height: 160px; }.holding-diagnosis-report { min-height: 0; }.holding-diagnosis-run-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); }.holding-diagnosis-run { border-right: 1px solid #223650; }.holding-diagnosis-item-grid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .holding-diagnosis-header { align-items: flex-start; gap: 10px; }.holding-diagnosis-actions { flex-wrap: wrap; justify-content: flex-end; }.holding-diagnosis-actions .batman-button { font-size: 12px; }.holding-diagnosis-report { padding: 11px; }.holding-diagnosis-item-header { flex-direction: column; }.holding-diagnosis-item-status { align-items: flex-start; }.holding-diagnosis-item :deep(.kline-chart-shell) { min-width: 0; }.holding-diagnosis-item :deep(.kline-chart) { width: 100%; } }
 </style>

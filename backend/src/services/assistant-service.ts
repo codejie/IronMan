@@ -333,7 +333,7 @@ export class AssistantService {
           "可按需调用后端工具补充当前标的的行情、趋势算法和图表参数。",
           "新闻、公告或公共资讯只有在工具或输入提供摘要时才能引用；仅有链接时必须说明待核验。",
           "最终必须只返回一个 JSON 对象，不得返回 Markdown、解释过程或 JSON 之外的文字。",
-          "JSON 格式：{\"body\":\"不超过240字的单标的摘要\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"action\":\"采用操作\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"}}]}。",
+          "JSON 格式：{\"body\":\"不超过600字的当前标的报告正文\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"action\":\"采用操作\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"}}]}。",
         ].join("\n"),
       },
       {

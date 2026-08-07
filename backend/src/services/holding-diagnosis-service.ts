@@ -23,7 +23,7 @@ export type HoldingDiagnosisMethodKind =
   | "hybrid_analysis";
 export type HoldingDiagnosisSourceType = "market" | "disclosure" | "news" | "reference";
 export type HoldingDiagnosisSourceAvailability = "available" | "stale" | "failed" | "link_only";
-export type HoldingDiagnosisAiStatusState = "completed" | "local" | "timeout" | "unavailable";
+export type HoldingDiagnosisAiStatusState = "running" | "completed" | "local" | "timeout" | "unavailable";
 
 export interface HoldingDiagnosisSettings {
   enabled: boolean;
@@ -80,6 +80,7 @@ export interface HoldingDiagnosisItem {
   currentPrice: number | null;
   profit: number | null;
   dataQuality: "complete" | "partial" | "stale" | "unavailable";
+  body: string;
   analysis: string;
   errorMessage?: string | null;
   methods: HoldingDiagnosisMethod[];
@@ -653,7 +654,7 @@ export class HoldingDiagnosisService {
           itemError = appendError(itemError, `${sourceRecords.filter((source) => source.availability === "failed").length} 个外部资料源不可用`);
         }
         const output = this.normalizeOutput(generated, modelInput, itemError);
-        if (output.bodyTooLong) itemError = appendError(itemError, "AI 单标的正文超过 600 字，已忽略该正文");
+        if (output.bodyTooLong) itemError = appendError(itemError, "AI 当前标的正文超过 600 字，已使用本地摘要");
         if (itemError !== null) reportError = appendError(reportError, `${holding.name}：${itemError}`);
         aiStatuses.push(aiStatus);
         const normalized = output.items[0]!;
@@ -681,7 +682,7 @@ export class HoldingDiagnosisService {
               instrumentId: item.instrument.id,
               data: JSON.stringify({ instrument: item.instrument, quantity: item.quantity, averageCost: item.averageCost, currentPrice: item.currentPrice, profit: item.profit }),
               chart: JSON.stringify(item.chart),
-              analysis: JSON.stringify({ analysis: item.analysis, errorMessage: item.errorMessage, methods: disclosedMethods(item.methods), recommendation: item.recommendation }),
+              analysis: JSON.stringify({ body: item.body, analysis: item.analysis, errorMessage: item.errorMessage, methods: disclosedMethods(item.methods), recommendation: item.recommendation }),
               direction: item.recommendation.direction,
               price: JSON.stringify({ referencePriceLow: item.recommendation.referencePriceLow, referencePriceHigh: item.recommendation.referencePriceHigh, invalidationPrice: item.recommendation.invalidationPrice }),
               validUntil: item.recommendation.validUntil,
@@ -871,6 +872,7 @@ export class HoldingDiagnosisService {
         currentPrice,
         profit: currentPrice === null || averageCost === null ? null : round((currentPrice - averageCost) * inputItem.quantity),
         dataQuality: inputItem.bars.length === 0 ? "unavailable" : inputItem.marketError !== undefined && inputItem.marketError !== null ? "partial" : generated === null ? "partial" : "complete",
+        body: body.slice(0, 600),
         analysis: output?.analysis?.trim() || "行情与持仓数据已整理，需结合后续价格和资料变化继续评估。",
         errorMessage: modelError,
         methods: disclosedMethods(output?.methods?.length ? output.methods : defaultMethods),
@@ -1002,8 +1004,8 @@ function normalizeRecommendation(value: HoldingDiagnosisRecommendation | undefin
 function toItem(row: ItemRow): HoldingDiagnosisItem {
   const data = parseJson(row.data_snapshot_json) as { instrument: HoldingDiagnosisItem["instrument"]; quantity: number; averageCost: number | null; currentPrice: number | null; profit: number | null };
   const chart = parseJson(row.chart_snapshot_json) as HoldingDiagnosisChart;
-  const analysis = parseJson(row.analysis_json) as { analysis: string; errorMessage?: string | null; methods: HoldingDiagnosisMethod[]; recommendation: HoldingDiagnosisRecommendation };
-  return { id: row.id, instrument: data.instrument, quantity: data.quantity, averageCost: data.averageCost, currentPrice: data.currentPrice, profit: data.profit, dataQuality: row.data_quality, analysis: analysis.analysis, errorMessage: analysis.errorMessage ?? null, methods: analysis.methods, recommendation: analysis.recommendation, chart };
+  const analysis = parseJson(row.analysis_json) as { body?: string; analysis: string; errorMessage?: string | null; methods: HoldingDiagnosisMethod[]; recommendation: HoldingDiagnosisRecommendation };
+  return { id: row.id, instrument: data.instrument, quantity: data.quantity, averageCost: data.averageCost, currentPrice: data.currentPrice, profit: data.profit, dataQuality: row.data_quality, body: (analysis.body ?? analysis.analysis).slice(0, 600), analysis: analysis.analysis, errorMessage: analysis.errorMessage ?? null, methods: analysis.methods, recommendation: analysis.recommendation, chart };
 }
 
 function localBody(items: HoldingDiagnosisModelInput["items"], modelError: string | null): string {
@@ -1013,9 +1015,9 @@ function localBody(items: HoldingDiagnosisModelInput["items"], modelError: strin
 
 function initialAiStatus(model: HoldingDiagnosisModelSnapshot): HoldingDiagnosisAiStatus {
   return {
-    state: model.provider === "local" ? "local" : "unavailable",
+    state: model.provider === "local" ? "local" : "running",
     model,
-    message: model.provider === "local" ? "未配置远程 AI，使用本地行情与指标摘要。" : "AI 诊断尚未完成。",
+    message: model.provider === "local" ? "未配置远程 AI，使用本地行情与指标摘要。" : "AI 诊断处理中。",
   };
 }
 
@@ -1059,11 +1061,7 @@ function outputHasFailedSources(sources: HoldingDiagnosisSourceRecord[]): boolea
 
 function buildReportBody(items: HoldingDiagnosisItem[], totalCount: number): string {
   if (items.length === 0) return `正在整理 ${totalCount} 个持仓的诊断资料。`.slice(0, 600);
-  const parts = items.map((item) => {
-    const action = item.recommendation.action ?? recommendationActionLabel(item.recommendation.direction);
-    return `${item.instrument.name}：${item.analysis} 建议${action}`;
-  });
-  return `已完成 ${items.length}/${totalCount} 个持仓诊断。${parts.join("；")}`.slice(0, 600);
+  return `已完成 ${items.length}/${totalCount} 个持仓诊断。`.slice(0, 600);
 }
 
 function recommendationActionLabel(direction: HoldingRecommendationDirection): string {
@@ -1248,7 +1246,7 @@ function isAiStatus(value: unknown): value is HoldingDiagnosisAiStatus {
   if (typeof value !== "object" || value === null) return false;
   const item = value as Partial<HoldingDiagnosisAiStatus>;
   return (
-    (item.state === "completed" || item.state === "local" || item.state === "timeout" || item.state === "unavailable") &&
+    (item.state === "running" || item.state === "completed" || item.state === "local" || item.state === "timeout" || item.state === "unavailable") &&
     typeof item.message === "string" &&
     typeof item.model?.id === "string" &&
     typeof item.model.name === "string" &&

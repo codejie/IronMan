@@ -353,6 +353,7 @@ export interface HoldingDiagnosisItem {
   currentPrice: number | null;
   profit: number | null;
   dataQuality: "complete" | "partial" | "stale" | "unavailable";
+  body: string;
   analysis: string;
   errorMessage?: string | null;
   methods: HoldingDiagnosisMethod[];
@@ -381,7 +382,7 @@ export interface HoldingDiagnosisSource {
 }
 
 export interface HoldingDiagnosisAiStatus {
-  state: "completed" | "local" | "timeout" | "unavailable";
+  state: "running" | "completed" | "local" | "timeout" | "unavailable";
   model: { id: string; name: string; provider: string };
   message: string;
   timeoutSeconds?: number;

@@ -54,7 +54,7 @@ const runningRun = {
 const report = {
   id: "report-1",
   runId: "run-1",
-  body: "趋势呈修复状态，仍需等待价格与成交量确认。",
+  body: "已完成 2/2 个持仓诊断。",
   errorMessage: null,
   aiStatus: {
     state: "completed" as const,
@@ -78,6 +78,7 @@ const report = {
       currentPrice: 10.5,
       profit: 50,
       dataQuality: "complete" as const,
+      body: "趋势呈修复状态，仍需等待价格与成交量确认。",
       analysis: "价格站回短期均线，后续关注量能。",
       methods: [
         { kind: "ai_analysis" as const, name: "本地工作台助手", rationale: "模型综合持仓与行情。" },
@@ -115,6 +116,7 @@ const report = {
       currentPrice: 4.2,
       profit: 40,
       dataQuality: "partial" as const,
+      body: "ETF 报告正文：仍需结合指数方向和资金流复核。",
       analysis: "ETF 仍需结合指数方向和资金流复核。",
       errorMessage: "AI 服务返回 503，已使用本地摘要",
       methods: [{ kind: "local_function" as const, name: "本地行情与指标摘要", rationale: "本地数据回退。" }],
@@ -161,16 +163,17 @@ describe("HoldingDiagnosisView", () => {
     mocks.listHoldingDiagnosisRuns.mockResolvedValue({ items: [runningRun, run] });
     mocks.getHoldingDiagnosisReport.mockResolvedValue(report);
     mocks.startHoldingDiagnosis.mockResolvedValue({
-      ...run,
+      ...runningRun,
       id: "run-new",
-      reportId: "report-1",
+      reportId: null,
     });
     mocks.getHoldingDiagnosisRun.mockResolvedValue({ ...run, id: "run-new" });
     mocks.deleteHoldingDiagnosisReport.mockResolvedValue({ deleted: 1 });
     mocks.deleteAllHoldingDiagnosisReports.mockResolvedValue({ deleted: 1 });
   });
 
-  test("renders report tabs, keeps in-progress runs readable, and deletes an individual report through the shared confirmation", async () => {
+  test("renders report tabs and deletes an individual report through the shared confirmation", async () => {
+    mocks.listHoldingDiagnosisRuns.mockResolvedValue({ items: [run] });
     const wrapper = mount(HoldingDiagnosisView, {
       global: {
         stubs: {
@@ -181,17 +184,26 @@ describe("HoldingDiagnosisView", () => {
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("趋势呈修复状态");
+    expect(wrapper.text()).toContain("已完成 2/2 个持仓诊断。");
+    expect(wrapper.text()).toContain("趋势呈修复状态，仍需等待价格与成交量确认。");
+    expect(wrapper.get(".holding-diagnosis-summary").text()).not.toContain("趋势呈修复状态");
     expect(wrapper.text()).toContain("AI 与本地算法综合判断");
     expect(wrapper.text()).toContain("AI 已完成诊断");
     expect(wrapper.text()).toContain("继续持有，等待确认");
     expect(wrapper.get("[role='tablist']").findAll("[role='tab']")).toHaveLength(2);
     expect(wrapper.get("a[href*='cninfo.com.cn']").attributes("target")).toBe("_blank");
     expect(wrapper.get("details").text()).toContain("仅保留检索摘要");
+    expect(wrapper.get("details summary span").text()).toBe("浦发银行公告检索入口: 浦发银行的公告检索入口已准备，本次没有读取公告正文。");
+    expect(wrapper.text()).not.toContain("已获取摘要");
     expect(wrapper.find(".chart-stub").exists()).toBe(true);
-    expect(wrapper.get(".holding-diagnosis-run.without-report").text()).toContain("生成中 · 35%");
+    const itemElement = wrapper.get(".holding-diagnosis-item").element;
+    const itemChildren = Array.from(itemElement.children);
+    expect(itemChildren.indexOf(wrapper.get(".holding-diagnosis-item-grid").element)).toBeLessThan(
+      itemChildren.indexOf(wrapper.get(".holding-diagnosis-item-body").element),
+    );
 
     await wrapper.get("button[role='tab'][aria-label='查看 沪深300ETF 诊断']").trigger("click");
+    expect(wrapper.text()).toContain("ETF 报告正文：仍需结合指数方向和资金流复核。");
     expect(wrapper.text()).toContain("ETF 仍需结合指数方向和资金流复核");
     expect(wrapper.text()).toContain("AI 服务返回 503，已使用本地摘要");
     expect(wrapper.text()).not.toContain("价格站回短期均线");
@@ -208,15 +220,32 @@ describe("HoldingDiagnosisView", () => {
     );
   });
 
-  test("starts a manual report from the report archive entry", async () => {
+  test("shows processing after refresh without loading an old report", async () => {
     const wrapper = mount(HoldingDiagnosisView, {
       global: { stubs: { KLineChart: true, ExternalLink: true } },
     });
     await flushPromises();
 
+    expect(wrapper.text()).toContain("报告生成中");
+    expect(wrapper.text()).toContain("生成中 · 35%");
+    expect(mocks.getHoldingDiagnosisReport).not.toHaveBeenCalled();
+  });
+
+  test("starts a manual report from the report archive entry", async () => {
+    mocks.listHoldingDiagnosisRuns.mockResolvedValue({ items: [run] });
+    const wrapper = mount(HoldingDiagnosisView, {
+      global: { stubs: { KLineChart: true, ExternalLink: true } },
+    });
+    await flushPromises();
+
+    mocks.getHoldingDiagnosisReport.mockClear();
     await wrapper.get("button[aria-label='生成持仓诊断']").trigger("click");
     await flushPromises();
     expect(mocks.startHoldingDiagnosis).toHaveBeenCalledWith("test-token");
+    expect(mocks.getHoldingDiagnosisRun).not.toHaveBeenCalled();
+    expect(mocks.getHoldingDiagnosisReport).not.toHaveBeenCalled();
+    expect(mocks.listHoldingDiagnosisRuns).toHaveBeenCalledTimes(1);
+    expect(wrapper.text()).toContain("报告生成中");
   });
 
   test("clears archived reports through the shared confirmation while keeping in-progress runs", async () => {

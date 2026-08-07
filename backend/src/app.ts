@@ -413,6 +413,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     currentPrice: z.number().nullable(),
     profit: z.number().nullable(),
     dataQuality: z.enum(["complete", "partial", "stale", "unavailable"]),
+    body: z.string().max(600),
     analysis: z.string(),
     errorMessage: z.string().nullable().optional(),
     methods: z.array(holdingDiagnosisMethodSchema),
@@ -463,7 +464,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     highlights: z.array(z.string().max(160)).max(8),
   });
   const holdingDiagnosisAiStatusSchema = z.object({
-    state: z.enum(["completed", "local", "timeout", "unavailable"]),
+    state: z.enum(["running", "completed", "local", "timeout", "unavailable"]),
     model: z.object({
       id: z.string(),
       name: z.string(),
