@@ -53,7 +53,7 @@ afterEach(() => {
   rmSync(directory, { force: true, recursive: true });
 });
 
-function model(body = "趋势转强但仍需观察成交量与公告变化。") : HoldingDiagnosisModel {
+function model(body = "趋势转强但仍需观察成交量与公告变化。", withSourceInsight = false) : HoldingDiagnosisModel {
   return {
     generate: async (input) => {
       const local = await input.calculateAlgorithms(input.items[0]!.instrumentId, [
@@ -78,6 +78,13 @@ function model(body = "趋势转强但仍需观察成交量与公告变化。") 
             { kind: "ai_analysis", name: "模型趋势判断", rationale: "比较价格、持仓成本和近期波动。" },
             ...local.methods,
           ],
+          sourceInsights: withSourceInsight ? [{
+            sourceId: "cninfo",
+            summary: "公告披露公司拟回购股份，回购规模和期限以公告正文为准。",
+            keyFacts: ["拟回购股份", "资金安排待继续核验"],
+            marketImpact: "positive" as const,
+            confidence: "high" as const,
+          }] : undefined,
         })),
       };
     },
@@ -245,6 +252,37 @@ describe("holding diagnosis reports", () => {
     expect(report.body).not.toContain("独立分析");
     expect(report.items.every((item) => item.body.length <= 600)).toBe(true);
     expect(run.status).toBe("completed");
+  });
+
+  test("stores AI source insights and source metadata without transient正文", async () => {
+    const userId = createUser("source-insight@example.com");
+    addHolding(userId);
+    diagnosis = new HoldingDiagnosisService(
+      database,
+      new SettingsService(database),
+      market,
+      new TrendIndicatorService(),
+      new TradingCalendarService(new SettingsService(database)),
+      model("来源洞察测试", true),
+      [sources()],
+      () => now,
+    );
+
+    const run = await diagnosis.generate(userId, "manual");
+    const report = diagnosis.getReport(userId, run.reportId!);
+    const source = report.sources.find((item) => item.sourceId === "cninfo");
+
+    expect(source).toEqual(expect.objectContaining({
+      summaryKind: "ai",
+      summary: expect.stringContaining("拟回购股份"),
+      sourceInsight: expect.objectContaining({ marketImpact: "positive", confidence: "high" }),
+    }));
+    expect(database.get<{ source_insight_json: string; metadata_json: string }>("SELECT source_insight_json, metadata_json FROM holding_diagnosis_sources LIMIT 1")).toEqual(
+      expect.objectContaining({
+        source_insight_json: expect.stringContaining("拟回购股份"),
+      }),
+    );
+    expect(database.get<{ metadata_json: string }>("SELECT metadata_json FROM holding_diagnosis_sources LIMIT 1")?.metadata_json).not.toContain("公告摘要仅用于本次生成");
   });
 
   test("isolates an AI failure to one holding and continues the queue", async () => {

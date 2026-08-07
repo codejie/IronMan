@@ -658,6 +658,17 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS holding_diagnosis_sources_report_idx
         ON holding_diagnosis_sources(user_id, report_id, item_id);
     `
+  },
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN external_id TEXT;
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN origin TEXT;
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN content_hash TEXT;
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN retrieved_at TEXT;
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN summary_kind TEXT;
+      ALTER TABLE holding_diagnosis_sources ADD COLUMN source_insight_json TEXT;
+    `
   }
 ];
 

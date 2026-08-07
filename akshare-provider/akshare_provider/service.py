@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
+from hashlib import sha256
+from html import unescape
+from io import BytesIO
 import math
-from typing import Any, Literal, Protocol
+import re
+from typing import Any, Callable, Literal, Protocol
 
 
 AssetType = Literal["stock", "index", "fund"]
@@ -43,6 +47,8 @@ class AkShareApi(Protocol):
 
     def stock_zt_pool_em(self, **kwargs: Any) -> Frame: ...
 
+    def stock_news_em(self, symbol: str) -> Frame: ...
+
 
 class ProviderError(Exception):
     """Raised when an allowlisted upstream call cannot produce normalized data."""
@@ -79,6 +85,152 @@ class TechnicalRequest:
     category: int | None = None
     days: int | None = None
     date: str | None = None
+
+
+@dataclass(frozen=True)
+class NewsRequest:
+    code: str
+    limit: int = 5
+    since: str | None = None
+
+
+@dataclass(frozen=True)
+class DisclosureRequest:
+    code: str
+    exchange: Literal["sh", "sz", "bj"]
+    limit: int = 5
+
+
+class DisclosureClient(Protocol):
+    def post(self, url: str, **kwargs: Any) -> Any: ...
+
+    def get(self, url: str, **kwargs: Any) -> Any: ...
+
+
+PdfTextExtractor = Callable[[bytes], str]
+
+
+def fetch_news(request: NewsRequest, api: AkShareApi) -> dict[str, Any]:
+    code = request.code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise ProviderError("新闻标的代码必须为 6 位数字")
+    limit = validate_news_limit(request.limit)
+    since = parse_date(request.since) if request.since else None
+    items: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+    for row in api.stock_news_em(symbol=code).to_dict("records"):
+        title = string_value(row, "新闻标题", "标题", "title")
+        content = string_value(row, "新闻内容", "内容", "content", "摘要", "新闻摘要")
+        if title is None or content is None:
+            continue
+        published_at = normalized_timestamp(string_value(row, "发布时间", "发布日期", "datetime", "date"))
+        if since is not None and published_at is not None and published_at[:10] < since.isoformat():
+            continue
+        url = string_value(row, "新闻链接", "链接", "url")
+        external_id = url or f"{title}:{published_at or ''}"
+        if external_id in seen:
+            continue
+        seen.add(external_id)
+        items.append({
+            "externalId": external_id,
+            "title": clean_text(title),
+            "content": clean_text(content)[:20_000],
+            "contentHash": sha256(clean_text(content)[:20_000].encode("utf-8")).hexdigest(),
+            "publishedAt": published_at,
+            "sourceName": string_value(row, "文章来源", "来源", "source") or "东方财富新闻",
+            "url": url or f"https://so.eastmoney.com/news/s?keyword={code}",
+        })
+        if len(items) >= limit:
+            break
+    return {"source": "akshare_news_em", "items": items}
+
+
+def fetch_disclosures(
+    request: DisclosureRequest,
+    client: DisclosureClient,
+    *,
+    pdf_text_extractor: PdfTextExtractor | None = None,
+) -> dict[str, Any]:
+    code = request.code.strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise ProviderError("公告标的代码必须为 6 位数字")
+    limit = validate_news_limit(request.limit)
+    column = "sse" if request.exchange == "sh" else "szse"
+    response = client.post(
+        "https://www.cninfo.com.cn/new/hisAnnouncement/query",
+        data={
+            "pageNum": 1,
+            "pageSize": limit,
+            "column": column,
+            "tabName": "fulltext",
+            "plate": "",
+            "stock": f"{code},",
+            "searchkey": "",
+            "secid": "",
+            "category": "",
+            "trade": "",
+            "seDate": "",
+            "sortName": "",
+            "sortType": "",
+            "isHLtitle": "true",
+        },
+        headers={"user-agent": "IronMan/0.1 disclosure-provider", "x-requested-with": "XMLHttpRequest"},
+        timeout=10,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    announcements = payload.get("announcements", []) if isinstance(payload, dict) else []
+    if not isinstance(announcements, list):
+        raise ProviderError("巨潮资讯公告列表格式无效")
+
+    items: list[dict[str, Any]] = []
+    for announcement in announcements[:limit]:
+        if not isinstance(announcement, dict):
+            continue
+        announcement_id = string_value(announcement, "announcementId", "id")
+        title = string_value(announcement, "announcementTitle", "title")
+        adjunct = string_value(announcement, "adjunctUrl", "url")
+        if announcement_id is None or title is None or adjunct is None:
+            continue
+        url = cninfo_static_url(adjunct)
+        published_at = normalized_timestamp(announcement.get("announcementTime"))
+        item: dict[str, Any] = {
+            "externalId": announcement_id,
+            "title": clean_text(unescape(title)),
+            "publishedAt": published_at,
+            "sourceName": "巨潮资讯",
+            "url": url,
+            "content": "",
+            "contentHash": None,
+            "availability": "failed",
+            "error": None,
+        }
+        try:
+            document = client.get(
+                url,
+                headers={"user-agent": "IronMan/0.1 disclosure-provider"},
+                timeout=15,
+            )
+            document.raise_for_status()
+            content = document.content
+            if len(content) > 8_000_000:
+                raise ProviderError("公告附件超过 8 MB 限制")
+            content_type = str(document.headers.get("content-type", "")).lower()
+            if "pdf" in content_type or url.lower().endswith(".pdf"):
+                extractor = pdf_text_extractor or extract_pdf_text
+                text = extractor(content)
+            else:
+                text = extract_html_text(content.decode("utf-8", errors="ignore"))
+            text = clean_text(text)[:30_000]
+            if len(text) < 40:
+                raise ProviderError("公告正文没有可用文本层")
+            item["content"] = text
+            item["contentHash"] = sha256(text.encode("utf-8")).hexdigest()
+            item["availability"] = "available"
+        except Exception as error:
+            item["error"] = str(error) or "公告正文解析失败"
+        items.append(item)
+    return {"source": "cninfo_disclosure", "items": items}
 
 
 def fetch_history(request: HistoryRequest, api: AkShareApi) -> dict[str, Any]:
@@ -302,6 +454,12 @@ def validate_catalog_limit(value: int) -> int:
     return value
 
 
+def validate_news_limit(value: int) -> int:
+    if value < 1 or value > 10:
+        raise ProviderError("资料条数必须在 1 到 10 之间")
+    return value
+
+
 NEW_HIGH_SYMBOLS = ("创月新高", "半年新高", "一年新高", "历史新高")
 NEW_HIGH_LABELS = ("月创新高", "半年新高", "一年新高", "历史新高")
 
@@ -367,6 +525,62 @@ def string_value(row: dict[str, Any], *keys: str) -> str | None:
         if value is not None and str(value).strip():
             return str(value).strip()
     return None
+
+
+def normalized_timestamp(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            number = float(value)
+            if number > 10_000_000_000:
+                number /= 1000
+            return datetime.fromtimestamp(number).replace(microsecond=0).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+    text = str(value).strip().replace("/", "-")
+    if not text:
+        return None
+    candidate = text.replace("T", " ")
+    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(candidate[:19], pattern).isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def clean_text(value: str) -> str:
+    text = re.sub(r"<script[\s\S]*?</script>|<style[\s\S]*?</style>", " ", value, flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def extract_html_text(value: str) -> str:
+    return clean_text(value)
+
+
+def extract_pdf_text(content: bytes) -> str:
+    try:
+        from pypdf import PdfReader
+    except ImportError as error:
+        raise ProviderError("PDF 正文解析依赖未安装，请执行 bun run akshare:setup") from error
+    reader = PdfReader(BytesIO(content))
+    if len(reader.pages) > 20:
+        raise ProviderError("公告 PDF 页数超过 20 页限制")
+    return "\n".join(page.extract_text() or "" for page in reader.pages)
+
+
+def cninfo_static_url(value: str) -> str:
+    path = value.strip().lstrip("/")
+    if path.startswith("http://static.cninfo.com.cn/"):
+        return "https://" + path[len("http://"):]
+    if path.startswith("https://static.cninfo.com.cn/"):
+        return path
+    if not path or ".." in path or path.startswith(("http://", "https://")):
+        raise ProviderError("巨潮公告附件地址无效")
+    return f"https://static.cninfo.com.cn/{path}"
 
 
 def number_value(row: dict[str, Any], *keys: str) -> float | None:

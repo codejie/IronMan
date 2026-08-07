@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Instrument } from "../market/types";
 import type {
   HoldingDiagnosisSourceAdapter,
@@ -9,14 +10,150 @@ type DiagnosisInstrument = Pick<
   "id" | "code" | "exchange" | "name" | "assetType"
 >;
 
-function record(
+export interface HoldingDiagnosisSourceOptions {
+  baseUrl?: string;
+  timeoutMs?: number;
+  fetcher?: typeof fetch;
+}
+
+interface NewsDocument {
+  externalId?: unknown;
+  title?: unknown;
+  content?: unknown;
+  publishedAt?: unknown;
+  sourceName?: unknown;
+  url?: unknown;
+  contentHash?: unknown;
+}
+
+interface DisclosureDocument extends NewsDocument {
+  contentHash?: unknown;
+  availability?: unknown;
+  error?: unknown;
+}
+
+function contentText(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function stringValue(value: unknown, fallback: string): string {
+  const text = contentText(value);
+  return text || fallback;
+}
+
+function sourceExcerpt(content: string): string {
+  return content.slice(0, 220).trim() + (content.length > 220 ? "……" : "");
+}
+
+function sourceUrl(value: unknown, fallback: string): string {
+  const candidate = contentText(value);
+  if (!candidate) return fallback;
+  try {
+    const parsed = new URL(candidate);
+    const allowed = ["cninfo.com.cn", "eastmoney.com"];
+    if (!["http:", "https:"].includes(parsed.protocol) || !allowed.some((host) => parsed.hostname === host || parsed.hostname.endsWith(`.${host}`))) {
+      return fallback;
+    }
+    parsed.protocol = "https:";
+    return parsed.toString();
+  } catch {
+    return fallback;
+  }
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function baseUrl(value: string | undefined): string {
+  const candidate = (value ?? "http://127.0.0.1:6102").trim().replace(/\/$/, "");
+  if (!/^https?:\/\//i.test(candidate)) throw new Error("AKShareProvider 地址无效");
+  return candidate;
+}
+
+async function postProvider(
+  path: string,
+  body: Record<string, unknown>,
+  options: Required<Pick<HoldingDiagnosisSourceOptions, "baseUrl" | "timeoutMs" | "fetcher">>,
+): Promise<Record<string, unknown>> {
+  const response = await options.fetcher(`${options.baseUrl}${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json" },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(options.timeoutMs),
+  });
+  if (!response.ok) throw new Error(`资料服务返回 HTTP ${response.status}`);
+  const payload: unknown = await response.json();
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    throw new Error("资料服务返回格式无效");
+  }
+  return payload as Record<string, unknown>;
+}
+
+function documents(payload: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Array.isArray(payload.items)
+    ? payload.items.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && !Array.isArray(item))
+    : [];
+}
+
+function newsRecord(instrument: DiagnosisInstrument, item: NewsDocument): HoldingDiagnosisSourceRecord | null {
+  const title = stringValue(item.title, `${instrument.name} 财经新闻`);
+  const content = contentText(item.content);
+  const externalId = stringValue(item.externalId, `${instrument.code}:${title}`);
+  const fallbackUrl = `https://so.eastmoney.com/news/s?keyword=${encodeURIComponent(instrument.code)}`;
+  if (!content) return null;
+  return {
+    sourceId: `akshare_news_em:${externalId}`,
+    sourceName: stringValue(item.sourceName, "东方财富新闻"),
+    type: "news",
+    title,
+    publishedAt: typeof item.publishedAt === "string" ? item.publishedAt : null,
+    url: sourceUrl(item.url, fallbackUrl),
+    availability: "available",
+    summary: sourceExcerpt(content),
+    highlights: ["正文已采集，摘要由当前标的 AI 诊断提炼", `正文长度：${content.length} 字`],
+    transientText: content.slice(0, 30_000),
+    externalId,
+    origin: "aggregated",
+    contentHash: typeof item.contentHash === "string" ? item.contentHash : hashText(content),
+    summaryKind: "local_excerpt",
+  };
+}
+
+function disclosureRecord(instrument: DiagnosisInstrument, item: DisclosureDocument): HoldingDiagnosisSourceRecord | null {
+  const title = stringValue(item.title, `${instrument.name} 最新公告`);
+  const externalId = stringValue(item.externalId, `${instrument.code}:${title}`);
+  const fallbackUrl = `https://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice&code=${encodeURIComponent(instrument.code)}`;
+  const content = contentText(item.content);
+  const available = item.availability === "available" && content.length > 0;
+  const error = contentText(item.error);
+  return {
+    sourceId: `cninfo_disclosure:${externalId}`,
+    sourceName: stringValue(item.sourceName, "巨潮资讯"),
+    type: "disclosure",
+    title,
+    publishedAt: typeof item.publishedAt === "string" ? item.publishedAt : null,
+    url: sourceUrl(item.url, fallbackUrl),
+    availability: available ? "available" : "failed",
+    summary: available ? sourceExcerpt(content) : `公告正文暂不可用${error ? `：${error}` : ""}`.slice(0, 600),
+    highlights: available
+      ? ["公告正文已采集，摘要由当前标的 AI 诊断提炼", `正文长度：${content.length} 字`]
+      : ["公告标题和链接已取得，但正文未能解析", error || "请通过原始链接核验"],
+    transientText: available ? content.slice(0, 30_000) : undefined,
+    externalId,
+    origin: "official",
+    contentHash: typeof item.contentHash === "string" ? item.contentHash : available ? hashText(content) : undefined,
+    summaryKind: available ? "local_excerpt" : "metadata_only",
+  };
+}
+
+function metadataFallback(
   sourceId: string,
   sourceName: string,
   type: HoldingDiagnosisSourceRecord["type"],
-  title: string,
+  instrument: DiagnosisInstrument,
   url: string,
-  summary: string,
-  highlights: string[],
+  title: string,
 ): HoldingDiagnosisSourceRecord {
   return {
     sourceId,
@@ -25,21 +162,80 @@ function record(
     title,
     url,
     availability: "link_only",
-    summary,
-    highlights,
+    summary: `${instrument.name} 本次未取得该资料源正文，当前仅保留可核验入口。`,
+    highlights: ["正文采集服务暂不可用", "不将页面元信息作为事实摘要"],
+    origin: type === "disclosure" ? "official" : "aggregated",
+    summaryKind: "metadata_only",
   };
 }
 
-function xueqiuSymbol(instrument: DiagnosisInstrument): string {
-  return `${instrument.exchange === "sh" ? "SH" : "SZ"}${instrument.code}`;
+export function createHoldingDiagnosisSources(options: HoldingDiagnosisSourceOptions = {}): HoldingDiagnosisSourceAdapter[] {
+  const provider = {
+    baseUrl: baseUrl(options.baseUrl),
+    timeoutMs: options.timeoutMs ?? 12_000,
+    fetcher: options.fetcher ?? fetch,
+  };
+  const cninfo: HoldingDiagnosisSourceAdapter = {
+    id: "cninfo",
+    label: "巨潮资讯公告正文",
+    description: "A 股上市公司公告正文与附件，优先作为官方事实来源。",
+    fallbackUrl: "https://www.cninfo.com.cn/",
+    async collect(instrument) {
+      if (instrument.assetType !== "stock") return [];
+      try {
+        const payload = await postProvider("/v1/disclosures/cninfo", {
+          code: instrument.code,
+          exchange: instrument.exchange,
+          limit: 5,
+        }, provider);
+        return documents(payload)
+          .map((item) => disclosureRecord(instrument, item as DisclosureDocument))
+          .filter((item): item is HoldingDiagnosisSourceRecord => item !== null);
+      } catch {
+        return [metadataFallback(
+          "cninfo",
+          "巨潮资讯",
+          "disclosure",
+          instrument,
+          `https://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice&code=${encodeURIComponent(instrument.code)}`,
+          `${instrument.name} 公告检索入口`,
+        )];
+      }
+    },
+  };
+  const news: HoldingDiagnosisSourceAdapter = {
+    id: "akshare_news_em",
+    label: "AKShare 个股新闻",
+    description: "本地 AKShare 服务提供的个股新闻正文，作为官方公告之外的补充证据。",
+    fallbackUrl: "https://akshare.akfamily.xyz/",
+    async collect(instrument) {
+      if (instrument.assetType !== "stock") return [];
+      try {
+        const payload = await postProvider("/v1/news/stock", {
+          code: instrument.code,
+          limit: 5,
+        }, provider);
+        return documents(payload)
+          .map((item) => newsRecord(instrument, item as NewsDocument))
+          .filter((item): item is HoldingDiagnosisSourceRecord => item !== null);
+      } catch {
+        return [metadataFallback(
+          "akshare_news_em",
+          "AKShare 个股新闻",
+          "news",
+          instrument,
+          `https://so.eastmoney.com/news/s?keyword=${encodeURIComponent(instrument.code)}`,
+          `${instrument.name} 财经新闻检索入口`,
+        )];
+      }
+    },
+  };
+  return [cninfo, news];
 }
 
-const readableSourceHosts = new Set([
-  "cninfo.com.cn",
-  "eastmoney.com",
-  "sse.com.cn",
-  "xueqiu.com",
-]);
+export const holdingDiagnosisSources = createHoldingDiagnosisSources();
+
+const readableSourceHosts = new Set(["cninfo.com.cn", "eastmoney.com"]);
 
 export async function readHoldingDiagnosisSource(
   source: HoldingDiagnosisSourceRecord,
@@ -51,26 +247,22 @@ export async function readHoldingDiagnosisSource(
   const response = await fetch(url, {
     headers: {
       accept: "text/html,application/xhtml+xml,application/json",
-      "user-agent": "IronMan/0.1 source-summary",
+      "user-agent": "IronMan/0.1 source-metadata",
     },
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) throw new Error(`来源返回 HTTP ${response.status}`);
-  const contentLength = Number(response.headers.get("content-length") ?? "0");
-  if (Number.isFinite(contentLength) && contentLength > 200_000) {
-    throw new Error("来源响应超过 200 KB 限制");
-  }
   const text = await readSourceText(response, 200_000);
   const description = htmlMetaContent(text, "description") ?? htmlMetaContent(text, "og:description");
   const title = htmlTitle(text) ?? source.title;
   const summary = (description ?? title).trim().slice(0, 600);
-  if (!summary) throw new Error("来源没有可用摘要");
+  if (!summary) throw new Error("来源没有可用元信息");
   return {
     title,
     availability: "available",
-    summary: `${source.sourceName} 页面摘要：${summary}`.slice(0, 600),
-    highlights: ["状态：已读取公开页面短摘要", "正文未保存，完整内容请通过来源链接核验"],
-    transientText: summary.slice(0, 1_200),
+    summary,
+    highlights: ["状态：已读取公开页面短摘要", "未取得正文，不将元信息作为事实摘要"],
+    summaryKind: "metadata_only",
   };
 }
 
@@ -118,76 +310,3 @@ function decodeHtml(value: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 }
-
-export const holdingDiagnosisSources: HoldingDiagnosisSourceAdapter[] = [
-  {
-    id: "cninfo",
-    label: "巨潮资讯",
-    description: "A 股上市公司公告与披露入口。",
-    fallbackUrl: "https://www.cninfo.com.cn/",
-    async collect(instrument) {
-      if (instrument.assetType !== "stock") return [];
-      return [record(
-        "cninfo",
-        "巨潮资讯",
-        "disclosure",
-        `${instrument.name} 公告检索入口`,
-        `https://www.cninfo.com.cn/new/commonUrl?url=disclosure/list/notice&code=${encodeURIComponent(instrument.code)}`,
-        `${instrument.name} 的巨潮资讯披露检索入口。该来源用于核验公告线索，本次未读取或保存公告正文。`,
-        ["适用内容：定期报告、临时公告", "状态：仅提供检索入口，需跳转核验"],
-      )];
-    },
-  },
-  {
-    id: "sse",
-    label: "上交所公告",
-    description: "上交所上市公司公告入口，仅适用于沪市股票。",
-    fallbackUrl: "https://www.sse.com.cn/",
-    async collect(instrument) {
-      if (instrument.assetType !== "stock" || instrument.exchange !== "sh") return [];
-      return [record(
-        "sse",
-        "上海证券交易所",
-        "disclosure",
-        `${instrument.name} 上交所公告入口`,
-        `https://www.sse.com.cn/assortment/stock/list/info/announcement/index.shtml?productId=${encodeURIComponent(instrument.code)}`,
-        `${instrument.name} 的上交所公告检索入口。该来源用于核验沪市披露线索，本次未读取或保存公告正文。`,
-        ["适用内容：沪市公司公告", "状态：仅提供检索入口，需跳转核验"],
-      )];
-    },
-  },
-  {
-    id: "eastmoney",
-    label: "东方财富资讯",
-    description: "公开财经资讯与标的新闻检索入口，仅作为待核验线索。",
-    fallbackUrl: "https://www.eastmoney.com/",
-    async collect(instrument) {
-      return [record(
-        "eastmoney",
-        "东方财富",
-        "news",
-        `${instrument.name} 东方财富资讯检索`,
-        `https://so.eastmoney.com/news/s?keyword=${encodeURIComponent(instrument.code)}`,
-        `${instrument.name} 的东方财富公开资讯检索入口。资讯标题和正文需在来源页进一步核验，本次未抓取正文。`,
-        ["适用内容：公开财经资讯", "状态：仅提供检索入口，需跳转核验"],
-      )];
-    },
-  },
-  {
-    id: "xueqiu",
-    label: "雪球行情",
-    description: "公开行情讨论入口，仅作为待核验线索。",
-    fallbackUrl: "https://xueqiu.com/",
-    async collect(instrument) {
-      return [record(
-        "xueqiu",
-        "雪球",
-        "reference",
-        `${instrument.name} 雪球行情入口`,
-        `https://xueqiu.com/S/${xueqiuSymbol(instrument)}`,
-        `${instrument.name} 的雪球行情讨论入口。公开讨论仅作为待核验线索，本次未读取或保存讨论内容。`,
-        ["适用内容：行情讨论线索", "状态：仅提供检索入口，需跳转核验"],
-      )];
-    },
-  },
-];

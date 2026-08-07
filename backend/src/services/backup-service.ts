@@ -27,7 +27,7 @@ const exportTables: TableSpec[] = [
   { name: "holding_diagnosis_runs", columns: ["id", "trigger", "status", "progress", "scheduled_trade_date", "settings_snapshot_json", "model_snapshot_json", "error_message", "started_at", "completed_at", "created_at", "updated_at"] },
   { name: "holding_diagnosis_reports", columns: ["id", "run_id", "body", "summary_json", "market_as_of", "created_at"] },
   { name: "holding_diagnosis_items", columns: ["id", "report_id", "instrument_id", "data_snapshot_json", "chart_snapshot_json", "analysis_json", "recommendation_direction", "recommendation_price_json", "valid_until", "data_quality", "created_at"] },
-  { name: "holding_diagnosis_sources", columns: ["id", "report_id", "item_id", "source_id", "source_name", "source_type", "title", "published_at", "fetched_at", "availability", "url", "metadata_json", "created_at"] },
+  { name: "holding_diagnosis_sources", columns: ["id", "report_id", "item_id", "source_id", "source_name", "source_type", "title", "published_at", "fetched_at", "availability", "url", "metadata_json", "external_id", "origin", "content_hash", "retrieved_at", "summary_kind", "source_insight_json", "created_at"] },
   { name: "strategies", columns: ["id", "name", "instrument_ids_json", "indicators_json", "created_at", "updated_at"] },
   { name: "analysis_tasks", columns: ["id", "strategy_id", "status", "progress", "error_message", "created_at", "started_at", "completed_at"] },
   { name: "analysis_reports", columns: ["id", "task_id", "instrument_id", "result_json", "created_at"] },
@@ -71,8 +71,16 @@ export class BackupService {
     const parameters: Record<string, string | number | boolean | null> = { user_id: userId };
     for (const column of spec.columns) {
       const value = entry[column];
-      if (value === undefined) throw errors.validation(`导入数据缺少 ${spec.name}.${column}`);
-      parameters[column] = value;
+      const optionalSourceColumn = spec.name === "holding_diagnosis_sources" && [
+        "external_id",
+        "origin",
+        "content_hash",
+        "retrieved_at",
+        "summary_kind",
+        "source_insight_json",
+      ].includes(column);
+      if (value === undefined && !optionalSourceColumn) throw errors.validation(`导入数据缺少 ${spec.name}.${column}`);
+      parameters[column] = value === undefined ? null : value;
     }
     const conflict = spec.name === "cash_accounts" ? " ON CONFLICT(user_id) DO UPDATE SET available = excluded.available, updated_at = excluded.updated_at" : "";
     this.database.run(`INSERT INTO ${spec.name} (${columns.join(", ")}) VALUES (${values.join(", ")})${conflict}`, parameters);

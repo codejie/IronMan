@@ -33,6 +33,15 @@ class AkShareProviderHttpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"], [{"assetType": "index", "code": "000001", "exchange": "sh", "name": "上证指数"}])
 
+    def test_news_endpoint_returns_normalized_body_content(self):
+        client = TestClient(app)
+        with patch("akshare_provider.main.akshare_api", return_value=FakeAkShare()):
+            response = client.post("/v1/news/stock", json={"code": "600000", "limit": 5, "since": "2026-07-01"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["items"][0]["externalId"], "https://finance.eastmoney.com/a/202607301234567890.html")
+        self.assertIn("净利润同比增长", response.json()["items"][0]["content"])
+
 
 if __name__ == "__main__":
     unittest.main()

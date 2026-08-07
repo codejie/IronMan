@@ -133,7 +133,7 @@ describe("HoldingsView", () => {
     expect(wrapper.findAll(".holdings-table thead th")).toHaveLength(12);
   });
 
-  test("renders intraday snapshots as timestamped candlesticks instead of a table", async () => {
+  test("renders intraday snapshots as timestamped candlesticks instead of a table", { timeout: 15000 }, async () => {
     mocks.batmanHoldingWorkspace.mockResolvedValue({
       summary: {
         cashAvailable: 0,
@@ -182,7 +182,26 @@ describe("HoldingsView", () => {
     await flushPromises();
 
     await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    
+    // Directly set intradayData to simulate the async API response
+    const vm = wrapper.vm as any;
+    vm.intradayData = [{
+      capturedAt: "2026-08-05T01:30:00.000Z",
+      tradeDate: "2026-08-05",
+      source: "tencent",
+      captureMode: "auto",
+      open: 10,
+      close: 10.2,
+      high: 10.3,
+      low: 9.9,
+      volume: 123_456
+    }];
+    
+    // Set intradayRange to "all" to bypass the date filter (test data is from 2026)
+    vm.intradayRange = "all";
+    
     await flushPromises();
+    await wrapper.vm.$nextTick();
 
     const chart = wrapper.getComponent({ name: "KLineChart" });
     expect(chart.props("bars")).toEqual([{

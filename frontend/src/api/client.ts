@@ -379,6 +379,18 @@ export interface HoldingDiagnosisSource {
   itemId: string | null;
   summary: string | null;
   highlights: string[];
+  externalId: string | null;
+  origin: "official" | "licensed" | "aggregated" | "discussion" | null;
+  contentHash: string | null;
+  retrievedAt: string | null;
+  summaryKind: "ai" | "local_excerpt" | "metadata_only";
+  sourceInsight: {
+    sourceId: string;
+    summary: string;
+    keyFacts: string[];
+    marketImpact: "positive" | "negative" | "mixed" | "unclear";
+    confidence: "high" | "medium" | "low";
+  } | null;
 }
 
 export interface HoldingDiagnosisAiStatus {

@@ -2,17 +2,22 @@ from __future__ import annotations
 
 from typing import Literal
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .service import (
     HistoryRequest,
+    DisclosureRequest,
     InstrumentSearchRequest,
+    NewsRequest,
     ProviderError,
     SpotRequest,
     TechnicalRequest,
     fetch_history,
+    fetch_disclosures,
     fetch_instruments,
+    fetch_news,
     fetch_spot,
     fetch_technical,
 )
@@ -47,6 +52,18 @@ class TechnicalBody(BaseModel):
     category: int | None = Field(default=None, ge=0, le=3)
     days: int | None = Field(default=None, ge=1, le=30)
     date: str | None = Field(default=None, max_length=10)
+
+
+class NewsBody(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+    limit: int = Field(default=5, ge=1, le=10)
+    since: str | None = Field(default=None, max_length=10)
+
+
+class DisclosureBody(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+    exchange: Literal["sh", "sz", "bj"]
+    limit: int = Field(default=5, ge=1, le=10)
 
 
 def akshare_api():
@@ -119,3 +136,31 @@ def technical_ranking(body: TechnicalBody) -> dict:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游技术榜单请求失败") from error
+
+
+@app.post("/v1/news/stock")
+def stock_news(body: NewsBody) -> dict:
+    try:
+        return fetch_news(NewsRequest(code=body.code, limit=body.limit, since=body.since), akshare_api())
+    except ProviderError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="AKShare 上游个股新闻请求失败") from error
+
+
+@app.post("/v1/disclosures/cninfo")
+def cninfo_disclosures(body: DisclosureBody) -> dict:
+    try:
+        with httpx.Client(follow_redirects=True) as client:
+            return fetch_disclosures(
+                DisclosureRequest(code=body.code, exchange=body.exchange, limit=body.limit),
+                client,
+            )
+    except ProviderError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=502, detail="巨潮资讯公告请求失败") from error

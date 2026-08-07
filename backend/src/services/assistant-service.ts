@@ -31,6 +31,7 @@ import type {
   HoldingDiagnosisModelOutput,
   HoldingDiagnosisModelSnapshot,
   HoldingDiagnosisRecommendation,
+  HoldingDiagnosisSourceInsight,
   HoldingDiagnosisTurningPoint,
 } from "./holding-diagnosis-service";
 
@@ -331,9 +332,9 @@ export class AssistantService {
           "当前请求只处理一个持仓标的，不能分析其他标的，也不能执行交易。",
           "所有价格必须来自输入、受控后端工具或本地算法结果。",
           "可按需调用后端工具补充当前标的的行情、趋势算法和图表参数。",
-          "新闻、公告或公共资讯只有在工具或输入提供摘要时才能引用；仅有链接时必须说明待核验。",
+          "新闻和公告只能引用输入中提供的实际正文片段；仅有链接或页面元信息时必须标记待核验，不得编造事实。",
           "最终必须只返回一个 JSON 对象，不得返回 Markdown、解释过程或 JSON 之外的文字。",
-          "JSON 格式：{\"body\":\"不超过600字的当前标的报告正文\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"action\":\"采用操作\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"}}]}。",
+          "JSON 格式：{\"body\":\"不超过600字的当前标的正文\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"body\":\"不超过600字的当前标的正文\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"action\":\"采用操作\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"},\"sourceInsights\":[{\"sourceId\":\"输入来源ID\",\"summary\":\"不超过200字的事实摘要\",\"keyFacts\":[\"不超过3条事实\"],\"marketImpact\":\"positive|negative|mixed|unclear\",\"confidence\":\"high|medium|low\"}]}]}。",
         ].join("\n"),
       },
       {
@@ -353,8 +354,8 @@ export class AssistantService {
             localEvidence: initialAlgorithms,
             externalSources: item.externalSources.map(({ transientText, ...source }) => ({
               ...source,
-              ...(source.availability === "available" || source.availability === "stale"
-                ? { excerpt: transientText?.slice(0, 1_200) }
+              ...(transientText !== undefined && (source.summaryKind === "local_excerpt" || source.summaryKind === "ai")
+                ? { content: transientText.slice(0, 3_000) }
                 : {}),
             })),
           }],
@@ -1153,6 +1154,7 @@ export class AssistantService {
       };
       return {
         instrumentId: item.instrumentId,
+        body: `${item.name} 的本地诊断已整理行情、持仓和 ${item.externalSources.filter((source) => source.summaryKind === "local_excerpt").length} 条正文资料线索；远程 AI 未参与本次判断。`,
         analysis: `${item.name} 已使用本地趋势函数完成基础诊断。`,
         recommendation,
         methods: [
@@ -1702,8 +1704,10 @@ function parseHoldingDiagnosisItem(
   }
   const item = raw as {
     instrumentId?: unknown;
+    body?: unknown;
     analysis?: unknown;
     recommendation?: unknown;
+    sourceInsights?: unknown;
   };
   if (
     typeof item.instrumentId !== "string" ||
@@ -1729,6 +1733,7 @@ function parseHoldingDiagnosisItem(
   }
   return {
     instrumentId: item.instrumentId.trim(),
+    body: typeof item.body === "string" ? item.body.trim().slice(0, 1_200) : undefined,
     analysis: item.analysis.trim().slice(0, 1_200),
     recommendation: {
       direction,
@@ -1746,7 +1751,44 @@ function parseHoldingDiagnosisItem(
           : null,
       uncertainty: uncertainty.trim().slice(0, 300),
     },
+    sourceInsights: parseSourceInsights(item.sourceInsights),
   };
+}
+
+function parseSourceInsights(value: unknown): HoldingDiagnosisSourceInsight[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw): HoldingDiagnosisSourceInsight[] => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return [];
+    const item = raw as Record<string, unknown>;
+    if (
+      typeof item.sourceId !== "string" ||
+      typeof item.summary !== "string" ||
+      !Array.isArray(item.keyFacts) ||
+      !isSourceImpact(item.marketImpact) ||
+      !isSourceConfidence(item.confidence)
+    ) return [];
+    const keyFacts = item.keyFacts
+      .filter((fact): fact is string => typeof fact === "string")
+      .map((fact) => fact.trim().slice(0, 160))
+      .filter(Boolean)
+      .slice(0, 3);
+    if (keyFacts.length === 0) return [];
+    return [{
+      sourceId: item.sourceId.trim(),
+      summary: item.summary.trim().slice(0, 200),
+      keyFacts,
+      marketImpact: item.marketImpact,
+      confidence: item.confidence,
+    }];
+  }).slice(0, 8);
+}
+
+function isSourceImpact(value: unknown): value is HoldingDiagnosisSourceInsight["marketImpact"] {
+  return value === "positive" || value === "negative" || value === "mixed" || value === "unclear";
+}
+
+function isSourceConfidence(value: unknown): value is HoldingDiagnosisSourceInsight["confidence"] {
+  return value === "high" || value === "medium" || value === "low";
 }
 
 function isHoldingDiagnosisDirection(

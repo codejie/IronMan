@@ -1,6 +1,18 @@
 import unittest
 
-from akshare_provider.service import HistoryRequest, InstrumentSearchRequest, TechnicalRequest, fetch_history, fetch_instruments, fetch_technical, normalize_bars
+from akshare_provider.service import (
+    DisclosureRequest,
+    HistoryRequest,
+    InstrumentSearchRequest,
+    NewsRequest,
+    TechnicalRequest,
+    fetch_disclosures,
+    fetch_history,
+    fetch_instruments,
+    fetch_news,
+    fetch_technical,
+    normalize_bars,
+)
 
 
 class Frame:
@@ -62,6 +74,19 @@ class FakeAkShare:
         self.calls.append(("limit_up_pool", kwargs))
         return Frame([{"代码": "600000", "名称": "浦发银行", "涨跌幅": 10.01}])
 
+    def stock_news_em(self, symbol):
+        self.calls.append(("news", {"symbol": symbol}))
+        return Frame([
+            {
+                "新闻标题": "浦发银行发布业绩预告",
+                "新闻内容": "公司预计本期净利润同比增长，具体数据以正式公告为准。",
+                "发布时间": "2026-07-30 09:15:00",
+                "文章来源": "证券时报",
+                "新闻链接": "https://finance.eastmoney.com/a/202607301234567890.html",
+            },
+            {"新闻标题": "缺少正文的线索", "新闻内容": "", "新闻链接": "https://example.com/no-body"},
+        ])
+
 
 class AkShareProviderContractTest(unittest.TestCase):
     def test_maps_stock_index_and_etf_to_allowlisted_functions(self):
@@ -107,6 +132,55 @@ class AkShareProviderContractTest(unittest.TestCase):
         limit_up = fetch_technical(TechnicalRequest(kind="limit_up_pool", date="2026-07-24"), api)
         self.assertEqual(limit_up["rows"][0]["代码"], "600000")
         self.assertEqual(api.calls[-1], ("limit_up_pool", {"date": "20260724"}))
+
+    def test_normalizes_stock_news_body_and_skips_empty_body(self):
+        response = fetch_news(NewsRequest(code="600000", limit=5, since="2026-07-01"), FakeAkShare())
+
+        self.assertEqual(response["source"], "akshare_news_em")
+        self.assertEqual(len(response["items"]), 1)
+        self.assertEqual(response["items"][0]["title"], "浦发银行发布业绩预告")
+        self.assertIn("净利润同比增长", response["items"][0]["content"])
+        self.assertEqual(response["items"][0]["publishedAt"], "2026-07-30T09:15:00")
+
+    def test_normalizes_cninfo_announcement_body_without_persisting_binary_content(self):
+        class Client:
+            def post(self, url, **kwargs):
+                return Response({
+                    "announcements": [{
+                        "announcementId": "notice-1",
+                        "announcementTitle": "浦发银行关于回购股份的公告",
+                        "announcementTime": 1785402900000,
+                        "adjunctUrl": "2026/07/30/notice-1.PDF",
+                    }],
+                })
+
+            def get(self, url, **kwargs):
+                return Response(b"%PDF-1.4 ignored by fixture", {"content-type": "application/pdf"})
+
+        response = fetch_disclosures(
+            DisclosureRequest(code="600000", exchange="sh", limit=3),
+            Client(),
+            pdf_text_extractor=lambda _content: "公司拟回购股份，回购金额不超过人民币一亿元。本次回购期限、资金来源和后续安排以正式公告披露内容为准。",
+        )
+
+        self.assertEqual(response["source"], "cninfo_disclosure")
+        self.assertEqual(response["items"][0]["externalId"], "notice-1")
+        self.assertIn("回购金额", response["items"][0]["content"])
+        self.assertEqual(response["items"][0]["availability"], "available")
+        self.assertEqual(len(response["items"][0]["contentHash"]), 64)
+
+
+class Response:
+    def __init__(self, payload, headers=None):
+        self._payload = payload
+        self.content = payload if isinstance(payload, bytes) else b""
+        self.headers = headers or {"content-type": "application/json"}
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None
 
 
 if __name__ == "__main__":

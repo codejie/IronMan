@@ -30,7 +30,7 @@ import {
   HoldingDiagnosisService,
   holdingDiagnosisSettingsSchema,
 } from "./services/holding-diagnosis-service";
-import { holdingDiagnosisSources, readHoldingDiagnosisSource } from "./services/holding-diagnosis-sources";
+import { createHoldingDiagnosisSources, readHoldingDiagnosisSource } from "./services/holding-diagnosis-sources";
 import { MarketService } from "./services/market-service";
 import {
   MarketSnapshotService,
@@ -307,7 +307,10 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       generate: (input) => assistant.generateHoldingDiagnosis(input),
       getModelSnapshot: (userId) => assistant.getHoldingDiagnosisModelSnapshot(userId),
     },
-    holdingDiagnosisSources,
+    createHoldingDiagnosisSources({
+      baseUrl: config.akshareProviderUrl,
+      timeoutMs: config.akshareProviderTimeoutMs,
+    }),
     undefined,
     readHoldingDiagnosisSource,
   );
@@ -462,6 +465,18 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     itemId: z.string().uuid().nullable(),
     summary: z.string().max(600).nullable(),
     highlights: z.array(z.string().max(160)).max(8),
+    externalId: z.string().nullable(),
+    origin: z.enum(["official", "licensed", "aggregated", "discussion"]).nullable(),
+    contentHash: z.string().nullable(),
+    retrievedAt: z.string().datetime().nullable(),
+    summaryKind: z.enum(["ai", "local_excerpt", "metadata_only"]),
+    sourceInsight: z.object({
+      sourceId: z.string(),
+      summary: z.string().max(200),
+      keyFacts: z.array(z.string().max(160)).max(3),
+      marketImpact: z.enum(["positive", "negative", "mixed", "unclear"]),
+      confidence: z.enum(["high", "medium", "low"]),
+    }).nullable(),
   });
   const holdingDiagnosisAiStatusSchema = z.object({
     state: z.enum(["running", "completed", "local", "timeout", "unavailable"]),

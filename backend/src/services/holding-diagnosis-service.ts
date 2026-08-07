@@ -23,6 +23,8 @@ export type HoldingDiagnosisMethodKind =
   | "hybrid_analysis";
 export type HoldingDiagnosisSourceType = "market" | "disclosure" | "news" | "reference";
 export type HoldingDiagnosisSourceAvailability = "available" | "stale" | "failed" | "link_only";
+export type HoldingDiagnosisSourceOrigin = "official" | "licensed" | "aggregated" | "discussion";
+export type HoldingDiagnosisSourceSummaryKind = "ai" | "local_excerpt" | "metadata_only";
 export type HoldingDiagnosisAiStatusState = "running" | "completed" | "local" | "timeout" | "unavailable";
 
 export interface HoldingDiagnosisSettings {
@@ -101,6 +103,20 @@ export interface HoldingDiagnosisSource {
   itemId: string | null;
   summary: string | null;
   highlights: string[];
+  externalId: string | null;
+  origin: HoldingDiagnosisSourceOrigin | null;
+  contentHash: string | null;
+  retrievedAt: string | null;
+  summaryKind: HoldingDiagnosisSourceSummaryKind;
+  sourceInsight: HoldingDiagnosisSourceInsight | null;
+}
+
+export interface HoldingDiagnosisSourceInsight {
+  sourceId: string;
+  summary: string;
+  keyFacts: string[];
+  marketImpact: "positive" | "negative" | "mixed" | "unclear";
+  confidence: "high" | "medium" | "low";
 }
 
 export interface HoldingDiagnosisModelSnapshot {
@@ -152,6 +168,12 @@ export interface HoldingDiagnosisSourceRecord {
   summary?: string;
   highlights?: string[];
   transientText?: string;
+  externalId?: string;
+  origin?: HoldingDiagnosisSourceOrigin;
+  contentHash?: string;
+  retrievedAt?: string;
+  summaryKind?: HoldingDiagnosisSourceSummaryKind;
+  sourceInsight?: HoldingDiagnosisSourceInsight;
 }
 
 export interface HoldingDiagnosisSourceAdapter {
@@ -164,7 +186,7 @@ export interface HoldingDiagnosisSourceAdapter {
 
 export type HoldingDiagnosisSourceReader = (
   source: HoldingDiagnosisSourceRecord,
-) => Promise<Partial<Pick<HoldingDiagnosisSourceRecord, "title" | "publishedAt" | "availability" | "summary" | "highlights" | "transientText">>>;
+) => Promise<Partial<Pick<HoldingDiagnosisSourceRecord, "title" | "publishedAt" | "availability" | "summary" | "highlights" | "transientText" | "summaryKind">>>;
 
 export interface HoldingDiagnosisLocalAlgorithmResult {
   methods: HoldingDiagnosisMethod[];
@@ -202,6 +224,7 @@ export interface HoldingDiagnosisModelOutput {
   body: string;
   items: Array<{
     instrumentId: string;
+    body?: string;
     analysis: string;
     recommendation: HoldingDiagnosisRecommendation;
     methods?: HoldingDiagnosisMethod[];
@@ -210,6 +233,7 @@ export interface HoldingDiagnosisModelOutput {
       turningPoints: HoldingDiagnosisTurningPoint[];
     };
     turningPoints?: HoldingDiagnosisTurningPoint[];
+    sourceInsights?: HoldingDiagnosisSourceInsight[];
   }>;
   model?: HoldingDiagnosisModelSnapshot;
 }
@@ -284,6 +308,12 @@ interface SourceRow {
   url: string;
   item_id: string | null;
   metadata_json: string;
+  external_id: string | null;
+  origin: HoldingDiagnosisSourceOrigin | null;
+  content_hash: string | null;
+  retrieved_at: string | null;
+  summary_kind: HoldingDiagnosisSourceSummaryKind | null;
+  source_insight_json: string | null;
 }
 
 interface HoldingRow {
@@ -454,6 +484,12 @@ export class HoldingDiagnosisService {
         itemId: row.item_id,
         summary: metadata.summary,
         highlights: metadata.highlights,
+        externalId: row.external_id,
+        origin: row.origin,
+        contentHash: row.content_hash,
+        retrievedAt: row.retrieved_at,
+        summaryKind: row.summary_kind ?? metadata.summaryKind,
+        sourceInsight: parseSourceInsight(row.source_insight_json),
       };
     });
     const aiStatus = reportAiStatus(
@@ -599,7 +635,7 @@ export class HoldingDiagnosisService {
           itemHistory = { source: null, bars: [], error: error instanceof Error ? error.message : "行情数据获取失败" };
         }
         history.set(holding.instrument_id, { source: itemHistory.source, bars: itemHistory.bars });
-        const sourceRecords = await this.collectSources(holding, settings);
+        let sourceRecords = await this.collectSources(holding, settings);
         const marketRecord = marketSourceRecord(holding, itemHistory.source, itemHistory.bars);
         if (marketRecord !== undefined && (settings.sourceIds.includes("all") || settings.sourceIds.includes("market"))) {
           sourceRecords.unshift(marketRecord);
@@ -639,6 +675,10 @@ export class HoldingDiagnosisService {
         let aiStatus: HoldingDiagnosisAiStatus;
         try {
           generated = await this.model.generate(modelInput);
+          sourceRecords = attachSourceInsights(
+            sourceRecords,
+            generated.items.find((item) => item.instrumentId === holding.instrument_id)?.sourceInsights ?? [],
+          );
           const model = generated.model ?? requestedModel;
           aiStatus = {
             state: model.provider === "local" ? "local" : "completed",
@@ -694,16 +734,25 @@ export class HoldingDiagnosisService {
             this.database.run(
               `INSERT INTO holding_diagnosis_sources (
                 id, user_id, report_id, item_id, source_id, source_name, source_type, title,
-                published_at, fetched_at, availability, url, metadata_json, created_at
+                published_at, fetched_at, availability, url, metadata_json, external_id, origin,
+                content_hash, retrieved_at, summary_kind, source_insight_json, created_at
               ) VALUES (
                 $id, $userId, $reportId, $itemId, $sourceId, $sourceName, $sourceType, $title,
-                $publishedAt, $fetchedAt, $availability, $url, $metadata, $createdAt
+                $publishedAt, $fetchedAt, $availability, $url, $metadata, $externalId, $origin,
+                $contentHash, $retrievedAt, $summaryKind, $sourceInsight, $createdAt
               )`,
               {
                 id: crypto.randomUUID(), userId, reportId, itemId: item.id, sourceId: source.sourceId, sourceName: source.sourceName,
                 sourceType: source.type, title: source.title, publishedAt: source.publishedAt ?? null, fetchedAt: savedAt,
                 availability: source.availability ?? (source.transientText ? "available" : "link_only"), url: source.url,
-                metadata: JSON.stringify(sourceMetadataFromRecord(source)), createdAt: savedAt,
+                metadata: JSON.stringify(sourceMetadataFromRecord(source)),
+                externalId: source.externalId ?? null,
+                origin: source.origin ?? null,
+                contentHash: source.contentHash ?? null,
+                retrievedAt: source.retrievedAt ?? savedAt,
+                summaryKind: source.summaryKind ?? (source.transientText ? "local_excerpt" : "metadata_only"),
+                sourceInsight: source.sourceInsight === undefined ? null : JSON.stringify(source.sourceInsight),
+                createdAt: savedAt,
               },
             );
           }
@@ -824,7 +873,7 @@ export class HoldingDiagnosisService {
         });
       }
     }
-    return collected.filter((source) => source.url.length > 0);
+    return dedupeSources(collected.filter((source) => source.url.length > 0));
   }
 
   private async calculateAlgorithms(bars: PriceBar[], selections: TrendIndicatorSelection[]): Promise<HoldingDiagnosisLocalAlgorithmResult> {
@@ -847,7 +896,9 @@ export class HoldingDiagnosisService {
   }
 
   private normalizeOutput(generated: HoldingDiagnosisModelOutput | null, input: HoldingDiagnosisModelInput, modelError: string | null): { body: string; bodyTooLong: boolean; items: HoldingDiagnosisItem[] } {
-    const bodyTooLong = (generated?.body.length ?? 0) > 600;
+    const bodyTooLong = generated !== null && (
+      generated.body.length > 600 || generated.items.some((item) => (item.body ?? generated.body).length > 600)
+    );
     const body = bodyTooLong || generated === null ? localBody(input.items, modelError) : generated.body.trim() || localBody(input.items, modelError);
     const items = input.items.map((inputItem) => {
       const output = generated?.items.find((item) => item.instrumentId === inputItem.instrumentId);
@@ -858,6 +909,9 @@ export class HoldingDiagnosisService {
         ? [localFallbackMethod(modelError)]
         : [{ kind: "ai_analysis", name: generated.model?.name ?? "AI 持仓诊断", rationale: "AI 基于持仓数据包直接分析。" }];
       const recommendation = normalizeRecommendation(output?.recommendation, currentPrice);
+      const itemBody = bodyTooLong
+        ? localBody([inputItem], modelError)
+        : output?.body?.trim() || generated?.body.trim() || localBody([inputItem], modelError);
       const chart: HoldingDiagnosisChart = {
         bars: inputItem.bars,
         source: inputItem.source ?? "mock",
@@ -872,7 +926,7 @@ export class HoldingDiagnosisService {
         currentPrice,
         profit: currentPrice === null || averageCost === null ? null : round((currentPrice - averageCost) * inputItem.quantity),
         dataQuality: inputItem.bars.length === 0 ? "unavailable" : inputItem.marketError !== undefined && inputItem.marketError !== null ? "partial" : generated === null ? "partial" : "complete",
-        body: body.slice(0, 600),
+        body: itemBody.slice(0, 600),
         analysis: output?.analysis?.trim() || "行情与持仓数据已整理，需结合后续价格和资料变化继续评估。",
         errorMessage: modelError,
         methods: disclosedMethods(output?.methods?.length ? output.methods : defaultMethods),
@@ -1059,6 +1113,52 @@ function outputHasFailedSources(sources: HoldingDiagnosisSourceRecord[]): boolea
   return sources.some((source) => source.availability === "failed");
 }
 
+function dedupeSources(sources: HoldingDiagnosisSourceRecord[]): HoldingDiagnosisSourceRecord[] {
+  const indexByKey = new Map<string, number>();
+  const result: HoldingDiagnosisSourceRecord[] = [];
+  for (const source of sources) {
+    const key = source.contentHash !== undefined
+      ? `hash:${source.contentHash}`
+      : source.externalId !== undefined
+        ? `external:${source.externalId}`
+        : `title:${source.title.trim().toLocaleLowerCase()}|${source.publishedAt ?? ""}`;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex === undefined) {
+      indexByKey.set(key, result.length);
+      result.push(source);
+      continue;
+    }
+    const existing = result[existingIndex]!;
+    if (sourcePriority(source) > sourcePriority(existing)) result[existingIndex] = source;
+  }
+  return result;
+}
+
+function sourcePriority(source: HoldingDiagnosisSourceRecord): number {
+  const origin = source.origin === "official" ? 4 : source.origin === "licensed" ? 3 : source.origin === "aggregated" ? 2 : 1;
+  const availability = source.availability === "available" ? 2 : source.availability === "stale" ? 1 : 0;
+  return origin * 10 + availability;
+}
+
+function attachSourceInsights(
+  sources: HoldingDiagnosisSourceRecord[],
+  insights: HoldingDiagnosisSourceInsight[],
+): HoldingDiagnosisSourceRecord[] {
+  if (insights.length === 0) return sources;
+  const bySourceId = new Map(insights.map((insight) => [insight.sourceId, insight]));
+  return sources.map((source) => {
+    const insight = bySourceId.get(source.sourceId);
+    if (insight === undefined || source.availability === "failed" || source.summaryKind === "metadata_only") return source;
+    return {
+      ...source,
+      summary: insight.summary,
+      highlights: insight.keyFacts,
+      summaryKind: "ai",
+      sourceInsight: insight,
+    };
+  });
+}
+
 function buildReportBody(items: HoldingDiagnosisItem[], totalCount: number): string {
   if (items.length === 0) return `正在整理 ${totalCount} 个持仓的诊断资料。`.slice(0, 600);
   return `已完成 ${items.length}/${totalCount} 个持仓诊断。`.slice(0, 600);
@@ -1165,7 +1265,7 @@ function sourceMetadataFromRecord(source: HoldingDiagnosisSourceRecord): { summa
 function sourceMetadata(
   value: string,
   source?: Pick<SourceRow, "source_name" | "source_type" | "title" | "availability">,
-): { summary: string | null; highlights: string[] } {
+): { summary: string | null; highlights: string[]; summaryKind: HoldingDiagnosisSourceSummaryKind } {
   const metadata = parseJson(value);
   if (typeof metadata !== "object" || metadata === null) return fallbackSourceMetadata(source);
   const item = metadata as { summary?: unknown; highlights?: unknown };
@@ -1177,17 +1277,47 @@ function sourceMetadata(
   };
   return result.summary === null && result.highlights.length === 0
     ? fallbackSourceMetadata(source)
-    : result;
+    : { ...result, summaryKind: "metadata_only" };
+}
+
+function parseSourceInsight(value: string | null): HoldingDiagnosisSourceInsight | null {
+  if (value === null) return null;
+  const parsed = parseJson(value);
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+  const item = parsed as Record<string, unknown>;
+  if (
+    typeof item.sourceId !== "string" ||
+    typeof item.summary !== "string" ||
+    !Array.isArray(item.keyFacts) ||
+    !isSourceImpact(item.marketImpact) ||
+    !isSourceConfidence(item.confidence)
+  ) return null;
+  return {
+    sourceId: item.sourceId,
+    summary: item.summary.slice(0, 600),
+    keyFacts: item.keyFacts.filter((fact): fact is string => typeof fact === "string").map((fact) => fact.slice(0, 160)).slice(0, 8),
+    marketImpact: item.marketImpact,
+    confidence: item.confidence,
+  };
+}
+
+function isSourceImpact(value: unknown): value is HoldingDiagnosisSourceInsight["marketImpact"] {
+  return value === "positive" || value === "negative" || value === "mixed" || value === "unclear";
+}
+
+function isSourceConfidence(value: unknown): value is HoldingDiagnosisSourceInsight["confidence"] {
+  return value === "high" || value === "medium" || value === "low";
 }
 
 function fallbackSourceMetadata(
   source: Pick<SourceRow, "source_name" | "source_type" | "title" | "availability"> | undefined,
-): { summary: string | null; highlights: string[] } {
-  if (source === undefined) return { summary: null, highlights: [] };
+): { summary: string | null; highlights: string[]; summaryKind: HoldingDiagnosisSourceSummaryKind } {
+  if (source === undefined) return { summary: null, highlights: [], summaryKind: "metadata_only" };
   if (source.source_type === "market") {
     return {
       summary: `${source.title} 已用于本次报告的行情图表与指标计算。该归档生成时未保存独立来源摘要。`,
       highlights: ["状态：本地行情快照已用于报告", "详情可通过来源链接复核"],
+      summaryKind: "metadata_only",
     };
   }
   const availability = source.availability === "failed" ? "资料源当时不可用" : "本次未读取站外正文";
@@ -1197,6 +1327,7 @@ function fallbackSourceMetadata(
       `来源类型：${source.source_type === "disclosure" ? "披露公告" : source.source_type === "news" ? "财经资讯" : "参考资料"}`,
       source.availability === "failed" ? "状态：资料源不可用" : "状态：仅提供跳转入口，需自行核验",
     ],
+    summaryKind: "metadata_only",
   };
 }
 
