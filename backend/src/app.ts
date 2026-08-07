@@ -30,7 +30,7 @@ import {
   HoldingDiagnosisService,
   holdingDiagnosisSettingsSchema,
 } from "./services/holding-diagnosis-service";
-import { holdingDiagnosisSources } from "./services/holding-diagnosis-sources";
+import { holdingDiagnosisSources, readHoldingDiagnosisSource } from "./services/holding-diagnosis-sources";
 import { MarketService } from "./services/market-service";
 import {
   MarketSnapshotService,
@@ -308,6 +308,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       getModelSnapshot: (userId) => assistant.getHoldingDiagnosisModelSnapshot(userId),
     },
     holdingDiagnosisSources,
+    undefined,
+    readHoldingDiagnosisSource,
   );
   const strategies = new StrategyService(database, market);
   const tasks = new AnalysisTaskService(
@@ -381,6 +383,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       "observe",
       "research_further",
     ]),
+    action: z.string().max(120).optional(),
     timing: z.string(),
     referencePriceLow: z.number().nullable(),
     referencePriceHigh: z.number().nullable(),
@@ -411,6 +414,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     profit: z.number().nullable(),
     dataQuality: z.enum(["complete", "partial", "stale", "unavailable"]),
     analysis: z.string(),
+    errorMessage: z.string().nullable().optional(),
     methods: z.array(holdingDiagnosisMethodSchema),
     recommendation: holdingDiagnosisRecommendationSchema,
     chart: z.object({

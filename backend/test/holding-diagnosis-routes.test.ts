@@ -58,7 +58,10 @@ async function waitForReport(token: string, runId: string): Promise<string> {
     const response = await post("/api/analysis/holding-diagnosis/runs/get", { id: runId }, token);
     const body = (await response.json()) as ApiResponse<{ status: string; reportId: string | null }>;
     last = body;
-    if (body.result.reportId !== null) return body.result.reportId;
+    if (
+      body.result.reportId !== null &&
+      (body.result.status === "completed" || body.result.status === "partial")
+    ) return body.result.reportId;
     await Bun.sleep(10);
   }
   throw new Error(`holding diagnosis did not produce a report: ${JSON.stringify(last)}`);
@@ -139,38 +142,50 @@ describe("holding diagnosis routes", () => {
     );
     expect(holding.status).toBe(201);
 
-    const startResponse = await post(
-      "/api/analysis/holding-diagnosis/start",
-      {},
-      alice.token,
-    );
-    expect(startResponse.status).toBe(202);
-    const start = (await startResponse.json()) as ApiResponse<{ id: string }>;
-    const reportId = await waitForReport(alice.token, start.result.id);
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      if (init?.body === undefined) {
+        return new Response(
+          "<html><head><title>测试公告</title><meta name=\"description\" content=\"测试公告摘要\"></head></html>",
+          { headers: { "content-type": "text/html" } },
+        );
+      }
+      return originalFetch(_input, init);
+    }) as typeof fetch;
+    let reportId = "";
+    try {
+      const startResponse = await post(
+        "/api/analysis/holding-diagnosis/start",
+        {},
+        alice.token,
+      );
+      expect(startResponse.status).toBe(202);
+      const start = (await startResponse.json()) as ApiResponse<{ id: string }>;
+      reportId = await waitForReport(alice.token, start.result.id);
 
-    const reportResponse = await post(
-      "/api/analysis/holding-diagnosis/reports/get",
-      { id: reportId },
-      alice.token,
-    );
-    const report = (await reportResponse.json()) as ApiResponse<{
-      body: string;
-      aiStatus: { state: string; model: { name: string } };
-      sources: Array<{ sourceId: string; url: string; summary: string | null; highlights: string[] }>;
-    }>;
-    expect(report.result.body.length).toBeLessThanOrEqual(600);
-    expect(report.result.aiStatus).toEqual(expect.objectContaining({ state: "local" }));
-    expect(report.result.sources).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          sourceId: "cninfo",
-          url: expect.stringContaining("cninfo.com.cn"),
-          summary: expect.stringContaining("未读取或保存公告正文"),
-          highlights: expect.arrayContaining([expect.stringContaining("仅提供检索入口")]),
-        }),
-      ]),
-    );
-
+      const reportResponse = await post(
+        "/api/analysis/holding-diagnosis/reports/get",
+        { id: reportId },
+        alice.token,
+      );
+      const report = (await reportResponse.json()) as ApiResponse<{
+        body: string;
+        aiStatus: { state: string; model: { name: string } };
+        sources: Array<{ sourceId: string; url: string; availability: string; summary: string | null; highlights: string[] }>;
+      }>;
+      expect(report.result.body.length).toBeLessThanOrEqual(600);
+      expect(report.result.aiStatus).toEqual(expect.objectContaining({ state: "local" }));
+      expect(report.result.sources).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceId: "cninfo",
+            url: expect.stringContaining("cninfo.com.cn"),
+            availability: "available",
+            summary: expect.stringContaining("测试公告摘要"),
+            highlights: expect.arrayContaining([expect.stringContaining("已读取公开页面短摘要")]),
+          }),
+        ]),
+      );
     const denied = await post(
       "/api/analysis/holding-diagnosis/reports/get",
       { id: reportId },
@@ -204,6 +219,9 @@ describe("holding diagnosis routes", () => {
     expect((await cleared.json()) as ApiResponse<{ deleted: number }>).toEqual(
       expect.objectContaining({ result: { deleted: 1 } }),
     );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test("completes a remote diagnosis after returning every tool result in a batch", async () => {
@@ -248,14 +266,30 @@ describe("holding diagnosis routes", () => {
     let requestCount = 0;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+      if (init?.body === undefined) {
+        return new Response(
+          "<html><head><title>测试资讯</title><meta name=\"description\" content=\"测试资讯摘要\"></head></html>",
+          { headers: { "content-type": "text/html" } },
+        );
+      }
       requestCount += 1;
       const request = JSON.parse(String(init?.body ?? "{}")) as {
-        messages?: Array<{ role: string; tool_call_id?: string }>;
+        messages?: Array<{ role: string; content?: string; tool_call_id?: string }>;
+        tools?: Array<{ function?: { name?: string } }>;
         response_format?: { type?: string };
         max_tokens?: number;
       };
       expect(request.response_format).toEqual({ type: "json_object" });
       expect(request.max_tokens).toBe(3_000);
+      const userMessage = request.messages?.find((message) => message.role === "user")?.content;
+      expect(JSON.parse(userMessage ?? "{}").holdings).toHaveLength(1);
+      expect(request.tools?.map((tool) => tool.function?.name)).toEqual(
+        expect.arrayContaining([
+          "get_holding_market_data",
+          "calculate_local_algorithms",
+          "build_holding_chart",
+        ]),
+      );
       if (requestCount === 1) {
         return Response.json({
           choices: [{

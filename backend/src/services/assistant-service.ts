@@ -31,6 +31,7 @@ import type {
   HoldingDiagnosisModelOutput,
   HoldingDiagnosisModelSnapshot,
   HoldingDiagnosisRecommendation,
+  HoldingDiagnosisTurningPoint,
 } from "./holding-diagnosis-service";
 
 export type AiProvider = "local" | "deepseek" | "ollama" | "openai_compatible";
@@ -302,6 +303,9 @@ export class AssistantService {
   }
 
   async generateHoldingDiagnosis(input: HoldingDiagnosisModelInput): Promise<HoldingDiagnosisModelOutput> {
+    if (input.items.length !== 1) {
+      throw errors.validation("持仓诊断 AI 一次只能处理一个标的");
+    }
     const config = this.selectModel(this.privateModels(input.userId));
     if (
       config.provider === "local" ||
@@ -312,23 +316,31 @@ export class AssistantService {
       return this.localHoldingDiagnosis(input, config);
     }
 
+    const item = input.items[0]!;
+    const initialAlgorithms = await input.calculateAlgorithms(item.instrumentId, [
+      { indicatorId: "MACD" },
+      { indicatorId: "RSI" },
+      { indicatorId: "ATR" },
+    ]);
     const messages: OpenAiMessage[] = [
       {
         role: "system",
         content: [
           "你是 IronMan 的持仓诊断报告生成器。",
           "只给出条件化的决策协助，不承诺收益、不执行交易。",
-          "报告正文必须不超过 600 个中文字符，所有价格必须来自输入或本地算法结果。",
-          "可按需调用 calculate_local_algorithms 批量验证趋势指标。",
+          "当前请求只处理一个持仓标的，不能分析其他标的，也不能执行交易。",
+          "所有价格必须来自输入、受控后端工具或本地算法结果。",
+          "可按需调用后端工具补充当前标的的行情、趋势算法和图表参数。",
+          "新闻、公告或公共资讯只有在工具或输入提供摘要时才能引用；仅有链接时必须说明待核验。",
           "最终必须只返回一个 JSON 对象，不得返回 Markdown、解释过程或 JSON 之外的文字。",
-          "JSON 格式：{\"body\":\"不超过600字的报告正文\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"}}]}。",
+          "JSON 格式：{\"body\":\"不超过240字的单标的摘要\",\"items\":[{\"instrumentId\":\"输入中的标的ID\",\"analysis\":\"不超过180字的分析\",\"recommendation\":{\"direction\":\"add_evaluation|reduce_evaluation|hold|observe|research_further\",\"action\":\"采用操作\",\"timing\":\"不超过50字的条件和时机\",\"referencePriceLow\":null,\"referencePriceHigh\":null,\"invalidationPrice\":null,\"validUntil\":null,\"uncertainty\":\"不超过80字的风险说明\"}}]}。",
         ].join("\n"),
       },
       {
         role: "user",
         content: JSON.stringify({
           reportPreference: input.reportPreference,
-          holdings: input.items.map((item) => ({
+          holdings: [{
             instrumentId: item.instrumentId,
             name: item.name,
             code: item.code,
@@ -336,13 +348,22 @@ export class AssistantService {
             averageCost: item.averageCost,
             currentPrice: item.currentPrice,
             source: item.source,
+            marketError: item.marketError ?? null,
             bars: item.bars,
-            externalSources: item.externalSources.map(({ transientText, ...source }) => ({ ...source, excerpt: transientText })),
-          })),
+            localEvidence: initialAlgorithms,
+            externalSources: item.externalSources.map(({ transientText, ...source }) => ({
+              ...source,
+              ...(source.availability === "available" || source.availability === "stale"
+                ? { excerpt: transientText?.slice(0, 1_200) }
+                : {}),
+            })),
+          }],
         }),
       },
     ];
     const methodsByInstrument = new Map<string, HoldingDiagnosisMethod[]>();
+    const chartByInstrument = new Map<string, { indicators: TrendIndicatorResult[]; turningPoints: HoldingDiagnosisTurningPoint[] }>();
+    methodsByInstrument.set(item.instrumentId, initialAlgorithms.methods);
     for (let attempt = 0; attempt <= input.maxFunctionBatches; attempt += 1) {
       const response = await this.requestHoldingDiagnosisCompletion(config, messages);
       const assistantMessage = response.choices?.[0]?.message;
@@ -352,6 +373,9 @@ export class AssistantService {
         const content = assistantMessage.content?.trim();
         if (!content) throw new Error("AI 持仓诊断没有返回报告");
         const output = parseHoldingDiagnosisOutput(content);
+        if (output.items.length !== 1 || output.items[0]?.instrumentId !== item.instrumentId) {
+          throw errors.validation("AI 持仓诊断必须只返回当前标的结果");
+        }
         return {
           ...output,
           model: { id: config.id, name: config.name, provider: config.provider },
@@ -359,8 +383,9 @@ export class AssistantService {
             ...item,
             methods: [
               { kind: "ai_analysis", name: config.name, version: config.model, rationale: "模型基于持仓数据包与已调用算法生成诊断。" },
-              ...(methodsByInstrument.get(item.instrumentId) ?? []),
+              ...mergeMethods(methodsByInstrument.get(item.instrumentId) ?? []),
             ],
+            chart: chartByInstrument.get(item.instrumentId),
           })),
         };
       }
@@ -376,9 +401,25 @@ export class AssistantService {
         ) {
           throw errors.validation("AI 请求的诊断标的不在当前持仓数据包中");
         }
-        const selections = diagnosisSelections(args.selections);
-        const result = await input.calculateAlgorithms(instrumentId, selections);
-        methodsByInstrument.set(instrumentId, result.methods);
+        const name = call.function?.name;
+        let result: unknown;
+        if (name === "get_holding_market_data") {
+          result = input.getMarketData === undefined
+            ? { source: item.source, bars: item.bars, currentPrice: item.currentPrice, error: item.marketError ?? null }
+            : await input.getMarketData(instrumentId);
+        } else if (name === "calculate_local_algorithms" || name === "build_holding_chart") {
+          const selections = diagnosisSelections(args.selections);
+          const calculation = name === "build_holding_chart" && input.buildChart !== undefined
+            ? await input.buildChart(instrumentId, selections)
+            : await input.calculateAlgorithms(instrumentId, selections);
+          methodsByInstrument.set(instrumentId, mergeMethods([...(methodsByInstrument.get(instrumentId) ?? []), ...calculation.methods]));
+          if (name === "build_holding_chart") {
+            chartByInstrument.set(instrumentId, { indicators: calculation.indicators, turningPoints: calculation.turningPoints });
+          }
+          result = calculation;
+        } else {
+          throw errors.validation("AI 请求了不支持的持仓诊断工具");
+        }
         messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result) });
       }
     }
@@ -492,20 +533,32 @@ export class AssistantService {
     config: AiModelConfig,
     messages: OpenAiMessage[],
   ): Promise<OpenAiResponse> {
-    try {
-      const options = config.provider === "deepseek"
-        ? { responseFormat: "json_object" as const, maxTokens: 3_000 }
-        : {};
-      return await this.requestCompletion(config, messages, holdingDiagnosisTools, 120_000, options);
-    } catch (error) {
-      if (
-        (error instanceof DOMException && error.name === "TimeoutError") ||
-        (error instanceof Error && /timed out|timeout/i.test(error.message))
-      ) {
-        throw new Error("AI 持仓诊断请求超时（120 秒）");
+    const options = config.provider === "deepseek"
+      ? { responseFormat: "json_object" as const, maxTokens: 3_000 }
+      : {};
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.requestCompletion(config, messages, holdingDiagnosisTools, 120_000, options);
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0 && isRetryableHoldingDiagnosisError(error)) {
+          await new Promise((resolve) => setTimeout(resolve, 150));
+          continue;
+        }
+        if (config.provider === "deepseek" && attempt === 0 && error instanceof Error && /AI 服务返回 400/.test(error.message)) {
+          return await this.requestCompletion(config, messages, holdingDiagnosisTools, 120_000, { maxTokens: 3_000 });
+        }
+        break;
       }
-      throw error;
     }
+    if (
+      (lastError instanceof DOMException && lastError.name === "TimeoutError") ||
+      (lastError instanceof Error && /timed out|timeout/i.test(lastError.message))
+    ) {
+      throw new Error("AI 持仓诊断请求超时（120 秒）");
+    }
+    throw lastError instanceof Error ? lastError : new Error("AI 持仓诊断请求失败");
   }
 
   private async executeTool(
@@ -1424,6 +1477,18 @@ const holdingDiagnosisTools = [
   {
     type: "function",
     function: {
+      name: "get_holding_market_data",
+      description: "读取当前持仓标的的本地行情快照、有限日线历史和数据状态；不能访问其他标的。",
+      parameters: {
+        type: "object",
+        properties: { instrumentId: { type: "string", description: "报告输入中已有的标的 ID" } },
+        required: ["instrumentId"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "calculate_local_algorithms",
       description:
         "对一个已在输入持仓列表中的标的批量调用受控本地趋势算法。仅用于补充持仓诊断的趋势、波动、形态和拐点证据；不能执行交易或访问任意代码。",
@@ -1446,6 +1511,33 @@ const holdingDiagnosisTools = [
                   type: "object",
                   additionalProperties: { type: "number" },
                 },
+              },
+              required: ["indicatorId"],
+            },
+          },
+        },
+        required: ["instrumentId", "selections"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "build_holding_chart",
+      description: "基于当前持仓标的的本地行情和指定指标生成图表数据与拐点参数。不能执行交易。",
+      parameters: {
+        type: "object",
+        properties: {
+          instrumentId: { type: "string", description: "报告输入中已有的标的 ID" },
+          selections: {
+            type: "array",
+            minItems: 1,
+            maxItems: 12,
+            items: {
+              type: "object",
+              properties: {
+                indicatorId: { type: "string", enum: TREND_INDICATOR_IDS },
+                parameters: { type: "object", additionalProperties: { type: "number" } },
               },
               required: ["indicatorId"],
             },
@@ -1552,6 +1644,26 @@ function diagnosisSelections(value: unknown): TrendIndicatorSelection[] {
   });
 }
 
+function mergeMethods(methods: HoldingDiagnosisMethod[]): HoldingDiagnosisMethod[] {
+  const seen = new Set<string>();
+  return methods.filter((method) => {
+    const key = `${method.kind}:${method.name}:${method.version ?? ""}:${JSON.stringify(method.parameters ?? {})}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function isRetryableHoldingDiagnosisError(error: unknown): boolean {
+  const detail = error instanceof Error ? error.message : "";
+  const status = /AI 服务返回\s+(\d{3})/.exec(detail)?.[1];
+  if (status !== undefined) {
+    const code = Number(status);
+    return code === 429 || code >= 500;
+  }
+  return error instanceof TypeError || /fetch failed|network|ECONN|ENOTFOUND/i.test(detail);
+}
+
 function parseHoldingDiagnosisOutput(
   content: string,
 ): Omit<HoldingDiagnosisModelOutput, "model"> {
@@ -1620,6 +1732,9 @@ function parseHoldingDiagnosisItem(
     analysis: item.analysis.trim().slice(0, 1_200),
     recommendation: {
       direction,
+      action: typeof recommendation.action === "string"
+        ? recommendation.action.trim().slice(0, 120)
+        : undefined,
       timing: timing.trim().slice(0, 120),
       referencePriceLow: finiteNumberOrNull(recommendation.referencePriceLow),
       referencePriceHigh: finiteNumberOrNull(recommendation.referencePriceHigh),

@@ -185,6 +185,121 @@ describe("holding diagnosis reports", () => {
     );
   });
 
+  test("processes holdings sequentially and persists the previous item before starting the next one", async () => {
+    const userId = createUser("sequential-diagnosis@example.com");
+    const firstInstrumentId = addHolding(userId, "600010");
+    const secondInstrumentId = addHolding(userId, "600011");
+    const events: string[] = [];
+    let calls = 0;
+    const settings = new SettingsService(database);
+    diagnosis = new HoldingDiagnosisService(
+      database,
+      settings,
+      market,
+      new TrendIndicatorService(),
+      new TradingCalendarService(settings),
+      {
+        generate: async (input) => {
+          calls += 1;
+          expect(input.items).toHaveLength(1);
+          const item = input.items[0]!;
+          const persistedCount = database.get<{ count: number }>(
+            "SELECT COUNT(*) AS count FROM holding_diagnosis_items",
+          )?.count ?? 0;
+          events.push(`${item.instrumentId}:${persistedCount}`);
+          return {
+            body: `${item.name} 的逐标的诊断。`,
+            items: [{
+              instrumentId: item.instrumentId,
+              analysis: `${item.name} 的独立分析。`,
+              recommendation: {
+                direction: "observe" as const,
+                timing: "下一交易日确认后",
+                referencePriceLow: item.currentPrice,
+                referencePriceHigh: item.currentPrice,
+                invalidationPrice: null,
+                validUntil: null,
+                uncertainty: "逐标的测试结果需继续复核。",
+              },
+            }],
+          };
+        },
+      },
+      [sources()],
+      () => now,
+    );
+
+    const run = await diagnosis.generate(userId, "manual");
+    const report = diagnosis.getReport(userId, run.reportId!);
+
+    expect(calls).toBe(2);
+    expect(events).toEqual([
+      `${firstInstrumentId}:0`,
+      `${secondInstrumentId}:1`,
+    ]);
+    expect(report.items).toHaveLength(2);
+    expect(run.status).toBe("completed");
+  });
+
+  test("isolates an AI failure to one holding and continues the queue", async () => {
+    const userId = createUser("partial-diagnosis@example.com");
+    addHolding(userId, "600012");
+    addHolding(userId, "600013");
+    const settings = new SettingsService(database);
+    let calls = 0;
+    diagnosis = new HoldingDiagnosisService(
+      database,
+      settings,
+      market,
+      new TrendIndicatorService(),
+      new TradingCalendarService(settings),
+      {
+        generate: async (input) => {
+          calls += 1;
+          const item = input.items[0]!;
+          if (calls === 1) throw new Error("AI 服务返回 503");
+          return {
+            body: "第二个标的已完成 AI 诊断。",
+            items: [{
+              instrumentId: item.instrumentId,
+              analysis: "第二个标的完成独立分析。",
+              recommendation: {
+                direction: "hold" as const,
+                timing: "等待趋势确认",
+                referencePriceLow: item.currentPrice,
+                referencePriceHigh: item.currentPrice,
+                invalidationPrice: null,
+                validUntil: null,
+                uncertainty: "仍需结合后续行情复核。",
+              },
+            }],
+          };
+        },
+        getModelSnapshot: () => ({ id: "remote", name: "远程测试模型", provider: "deepseek" }),
+      },
+      [sources()],
+      () => now,
+    );
+
+    const run = await diagnosis.generate(userId, "manual");
+    const report = diagnosis.getReport(userId, run.reportId!);
+
+    expect(calls).toBe(2);
+    expect(run.status).toBe("partial");
+    expect(run.errorMessage).toContain("503");
+    expect(report.items).toHaveLength(2);
+    const failedItem = report.items.find((item) => item.errorMessage?.includes("503"));
+    const completedItem = report.items.find((item) => item.errorMessage === null);
+    expect(failedItem?.dataQuality).toBe("partial");
+    expect(failedItem?.errorMessage).toContain("503");
+    expect(failedItem?.methods).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "ai_analysis" })]),
+    );
+    expect(completedItem?.methods).toEqual(
+      expect.arrayContaining([expect.objectContaining({ kind: "ai_analysis" })]),
+    );
+  });
+
   test("keeps reports isolated and supports current-user batch deletion", async () => {
     const alice = createUser("alice-diagnosis@example.com");
     const bob = createUser("bob-diagnosis@example.com");

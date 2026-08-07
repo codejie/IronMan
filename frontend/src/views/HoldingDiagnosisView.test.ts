@@ -86,6 +86,7 @@ const report = {
       ],
       recommendation: {
         direction: "observe" as const,
+        action: "继续持有，等待确认",
         timing: "下一交易日确认后",
         referencePriceLow: 10.2,
         referencePriceHigh: 10.8,
@@ -115,6 +116,7 @@ const report = {
       profit: 40,
       dataQuality: "partial" as const,
       analysis: "ETF 仍需结合指数方向和资金流复核。",
+      errorMessage: "AI 服务返回 503，已使用本地摘要",
       methods: [{ kind: "local_function" as const, name: "本地行情与指标摘要", rationale: "本地数据回退。" }],
       recommendation: {
         direction: "hold" as const,
@@ -182,6 +184,7 @@ describe("HoldingDiagnosisView", () => {
     expect(wrapper.text()).toContain("趋势呈修复状态");
     expect(wrapper.text()).toContain("AI 与本地算法综合判断");
     expect(wrapper.text()).toContain("AI 已完成诊断");
+    expect(wrapper.text()).toContain("继续持有，等待确认");
     expect(wrapper.get("[role='tablist']").findAll("[role='tab']")).toHaveLength(2);
     expect(wrapper.get("a[href*='cninfo.com.cn']").attributes("target")).toBe("_blank");
     expect(wrapper.get("details").text()).toContain("仅保留检索摘要");
@@ -190,6 +193,7 @@ describe("HoldingDiagnosisView", () => {
 
     await wrapper.get("button[role='tab'][aria-label='查看 沪深300ETF 诊断']").trigger("click");
     expect(wrapper.text()).toContain("ETF 仍需结合指数方向和资金流复核");
+    expect(wrapper.text()).toContain("AI 服务返回 503，已使用本地摘要");
     expect(wrapper.text()).not.toContain("价格站回短期均线");
 
     expect(wrapper.find("input[type='checkbox']").exists()).toBe(false);

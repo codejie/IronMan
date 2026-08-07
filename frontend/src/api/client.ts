@@ -324,6 +324,7 @@ export interface HoldingDiagnosisMethod {
 
 export interface HoldingDiagnosisRecommendation {
   direction: HoldingRecommendationDirection;
+  action?: string;
   timing: string;
   referencePriceLow: number | null;
   referencePriceHigh: number | null;
@@ -353,6 +354,7 @@ export interface HoldingDiagnosisItem {
   profit: number | null;
   dataQuality: "complete" | "partial" | "stale" | "unavailable";
   analysis: string;
+  errorMessage?: string | null;
   methods: HoldingDiagnosisMethod[];
   recommendation: HoldingDiagnosisRecommendation;
   chart: {

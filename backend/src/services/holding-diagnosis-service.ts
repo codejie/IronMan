@@ -47,6 +47,7 @@ export interface HoldingDiagnosisMethod {
 
 export interface HoldingDiagnosisRecommendation {
   direction: HoldingRecommendationDirection;
+  action?: string;
   timing: string;
   referencePriceLow: number | null;
   referencePriceHigh: number | null;
@@ -80,6 +81,7 @@ export interface HoldingDiagnosisItem {
   profit: number | null;
   dataQuality: "complete" | "partial" | "stale" | "unavailable";
   analysis: string;
+  errorMessage?: string | null;
   methods: HoldingDiagnosisMethod[];
   recommendation: HoldingDiagnosisRecommendation;
   chart: HoldingDiagnosisChart;
@@ -159,6 +161,10 @@ export interface HoldingDiagnosisSourceAdapter {
   collect(instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">): Promise<HoldingDiagnosisSourceRecord[]>;
 }
 
+export type HoldingDiagnosisSourceReader = (
+  source: HoldingDiagnosisSourceRecord,
+) => Promise<Partial<Pick<HoldingDiagnosisSourceRecord, "title" | "publishedAt" | "availability" | "summary" | "highlights" | "transientText">>>;
+
 export interface HoldingDiagnosisLocalAlgorithmResult {
   methods: HoldingDiagnosisMethod[];
   indicators: TrendIndicatorResult[];
@@ -178,9 +184,17 @@ export interface HoldingDiagnosisModelInput {
     currentPrice: number | null;
     source: MarketSource | null;
     bars: PriceBar[];
+    marketError?: string | null;
     externalSources: HoldingDiagnosisSourceRecord[];
   }>;
+  getMarketData?: (instrumentId: string) => Promise<{
+    source: MarketSource | null;
+    bars: PriceBar[];
+    currentPrice: number | null;
+    error: string | null;
+  }>;
   calculateAlgorithms: (instrumentId: string, selections: TrendIndicatorSelection[]) => Promise<HoldingDiagnosisLocalAlgorithmResult>;
+  buildChart?: (instrumentId: string, selections: TrendIndicatorSelection[]) => Promise<HoldingDiagnosisLocalAlgorithmResult>;
 }
 
 export interface HoldingDiagnosisModelOutput {
@@ -190,6 +204,10 @@ export interface HoldingDiagnosisModelOutput {
     analysis: string;
     recommendation: HoldingDiagnosisRecommendation;
     methods?: HoldingDiagnosisMethod[];
+    chart?: {
+      indicators: TrendIndicatorResult[];
+      turningPoints: HoldingDiagnosisTurningPoint[];
+    };
     turningPoints?: HoldingDiagnosisTurningPoint[];
   }>;
   model?: HoldingDiagnosisModelSnapshot;
@@ -290,6 +308,7 @@ export class HoldingDiagnosisService {
     private readonly model: HoldingDiagnosisModel,
     private readonly sources: HoldingDiagnosisSourceAdapter[] = [],
     private readonly clock: () => Date = () => new Date(),
+    private readonly sourceReader?: HoldingDiagnosisSourceReader,
   ) {}
 
   getSettings(userId: string): HoldingDiagnosisSettings {
@@ -523,7 +542,7 @@ export class HoldingDiagnosisService {
     return this.getRun(userId, id);
   }
 
-  private async processRun(userId: string, runId: string): Promise<void> {
+  private async processRunSequential(userId: string, runId: string): Promise<void> {
     if (this.activeRuns.has(runId)) return;
     this.activeRuns.add(runId);
     const startedAt = this.clock().toISOString();
@@ -531,6 +550,12 @@ export class HoldingDiagnosisService {
       "UPDATE holding_diagnosis_runs SET status = 'running', progress = 5, started_at = $startedAt, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
       { id: runId, userId, startedAt, updatedAt: startedAt },
     );
+    let reportId: string | null = null;
+    const processedItems: HoldingDiagnosisItem[] = [];
+    const history = new Map<string, { source: MarketSource | null; bars: PriceBar[] }>();
+    const aiStatuses: HoldingDiagnosisAiStatus[] = [];
+    let reportError: string | null = null;
+
     try {
       const runSettings = this.database.get<{ settings_snapshot_json: string }>(
         "SELECT settings_snapshot_json FROM holding_diagnosis_runs WHERE id = $id AND user_id = $userId",
@@ -540,117 +565,107 @@ export class HoldingDiagnosisService {
       const settings = normalizeSettings(parseJson(runSettings.settings_snapshot_json));
       const holdings = this.listEligibleHoldings(userId);
       if (holdings.length === 0) throw errors.validation("当前没有可诊断的活动持仓");
-      const history = new Map<string, { source: MarketSource | null; bars: PriceBar[]; error: string | null }>();
-      const sourceRecords = new Map<string, HoldingDiagnosisSourceRecord[]>();
-      for (const holding of holdings) {
-        try {
-          const result = await this.market.getHistory(userId, holding.instrument_id, "day", false, settings.lookbackTradingDays);
-          history.set(holding.instrument_id, { source: result.source, bars: result.bars, error: null });
-        } catch (error) {
-          history.set(holding.instrument_id, { source: null, bars: [], error: error instanceof Error ? error.message : "行情数据获取失败" });
-        }
-        const sources = await this.collectSources(holding, settings);
-        const marketRecord = marketSourceRecord(
-          holding,
-          history.get(holding.instrument_id)?.source ?? null,
-          history.get(holding.instrument_id)?.bars ?? [],
-        );
-        if (
-          marketRecord !== undefined &&
-          (settings.sourceIds.includes("all") || settings.sourceIds.includes("market"))
-        ) {
-          sources.unshift(marketRecord);
-        }
-        sourceRecords.set(holding.instrument_id, sources);
-      }
-      this.database.run("UPDATE holding_diagnosis_runs SET progress = 35, updated_at = $updatedAt WHERE id = $id AND user_id = $userId", { id: runId, userId, updatedAt: this.clock().toISOString() });
-      const modelInput: HoldingDiagnosisModelInput = {
-        userId,
-        reportPreference: settings.reportPreference,
-        maxFunctionBatches: settings.maxFunctionBatches,
-        items: holdings.map((holding) => {
-          const itemHistory = history.get(holding.instrument_id)!;
-          return {
-            instrumentId: holding.instrument_id,
-            name: holding.name,
-            code: holding.code,
-            quantity: holding.quantity,
-            averageCost: holding.quantity === 0 ? null : round(holding.cost / holding.quantity),
-            currentPrice: itemHistory.bars.at(-1)?.close ?? null,
-            source: itemHistory.source,
-            bars: itemHistory.bars,
-            externalSources: sourceRecords.get(holding.instrument_id) ?? [],
-          };
-        }),
-        calculateAlgorithms: async (instrumentId, selections) => this.calculateAlgorithms(history.get(instrumentId)?.bars ?? [], selections),
-      };
-      let generated: HoldingDiagnosisModelOutput | null = null;
-      let errorMessage: string | null = null;
       const requestedModel = this.model.getModelSnapshot?.(userId) ?? localFallbackModel();
-      let aiStatus: HoldingDiagnosisAiStatus = {
-        state: requestedModel.provider === "local" ? "local" : "unavailable",
-        model: requestedModel,
-        message: requestedModel.provider === "local"
-          ? "未配置远程 AI，使用本地行情与指标摘要。"
-          : "AI 诊断尚未完成。",
-      };
-      try {
-        generated = await this.model.generate(modelInput);
-        const model = generated.model ?? requestedModel;
-        aiStatus = {
-          state: model.provider === "local" ? "local" : "completed",
-          model,
-          message: model.provider === "local"
-            ? "使用本地行情与指标摘要完成诊断。"
-            : "AI 已完成诊断。",
-        };
-      } catch (error) {
-        const fallback = diagnosisFallback(error, requestedModel);
-        errorMessage = fallback.message;
-        aiStatus = fallback.status;
-      }
-      const failedSourceCount = [...sourceRecords.values()]
-        .flat()
-        .filter((source) => source.availability === "failed").length;
-      if (failedSourceCount > 0) {
-        errorMessage = appendError(
-          errorMessage,
-          `${failedSourceCount} 个外部资料源不可用，报告仅保留可用本地数据与来源入口`,
-        );
-      }
+      reportId = crypto.randomUUID();
+      const createdAt = this.clock().toISOString();
       this.database.run(
-        "UPDATE holding_diagnosis_runs SET model_snapshot_json = $modelSnapshot, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
+        `INSERT INTO holding_diagnosis_reports (id, user_id, run_id, body, summary_json, market_as_of, created_at)
+         VALUES ($id, $userId, $runId, $body, $summary, NULL, $createdAt)`,
         {
-          id: runId,
+          id: reportId,
           userId,
-          modelSnapshot: JSON.stringify(
-            aiStatus.model,
-          ),
-          updatedAt: this.clock().toISOString(),
+          runId,
+          body: `正在逐个整理 ${holdings.length} 个持仓的诊断资料。`,
+          summary: JSON.stringify({ itemCount: 0, totalCount: holdings.length, aiStatus: initialAiStatus(requestedModel) }),
+          createdAt,
         },
       );
-      this.database.run("UPDATE holding_diagnosis_runs SET progress = 75, updated_at = $updatedAt WHERE id = $id AND user_id = $userId", { id: runId, userId, updatedAt: this.clock().toISOString() });
-      const output = this.normalizeOutput(generated, modelInput, errorMessage);
-      if (output.bodyTooLong) errorMessage = appendError(errorMessage, "AI 报告正文超过 600 字，已使用本地摘要");
-      const now = this.clock().toISOString();
-      const reportId = crypto.randomUUID();
-      this.database.transaction(() => {
+      this.database.run(
+        "UPDATE holding_diagnosis_runs SET model_snapshot_json = $modelSnapshot, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
+        { id: runId, userId, modelSnapshot: JSON.stringify(requestedModel), updatedAt: createdAt },
+      );
+
+      for (const [index, holding] of holdings.entries()) {
         this.database.run(
-          `INSERT INTO holding_diagnosis_reports (id, user_id, run_id, body, summary_json, market_as_of, created_at)
-           VALUES ($id, $userId, $runId, $body, $summary, $marketAsOf, $createdAt)`,
-          {
-            id: reportId,
-            userId,
-            runId,
-            body: output.body,
-            summary: JSON.stringify({ itemCount: output.items.length, aiStatus }),
-            marketAsOf: latestMarketDate(history),
-            createdAt: now,
-          },
+          "UPDATE holding_diagnosis_runs SET progress = $progress, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
+          { id: runId, userId, progress: 10 + Math.floor((index / holdings.length) * 80), updatedAt: this.clock().toISOString() },
         );
-        for (const item of output.items) {
-          const id = crypto.randomUUID();
-          const holding = holdings.find((candidate) => candidate.instrument_id === item.instrument.id)!;
+        let itemHistory: { source: MarketSource | null; bars: PriceBar[]; error: string | null };
+        try {
+          const result = await this.market.getHistory(userId, holding.instrument_id, "day", false, settings.lookbackTradingDays);
+          itemHistory = { source: result.source, bars: result.bars, error: null };
+        } catch (error) {
+          itemHistory = { source: null, bars: [], error: error instanceof Error ? error.message : "行情数据获取失败" };
+        }
+        history.set(holding.instrument_id, { source: itemHistory.source, bars: itemHistory.bars });
+        const sourceRecords = await this.collectSources(holding, settings);
+        const marketRecord = marketSourceRecord(holding, itemHistory.source, itemHistory.bars);
+        if (marketRecord !== undefined && (settings.sourceIds.includes("all") || settings.sourceIds.includes("market"))) {
+          sourceRecords.unshift(marketRecord);
+        }
+        const inputItem = {
+          instrumentId: holding.instrument_id,
+          name: holding.name,
+          code: holding.code,
+          quantity: holding.quantity,
+          averageCost: holding.quantity === 0 ? null : round(holding.cost / holding.quantity),
+          currentPrice: itemHistory.bars.at(-1)?.close ?? null,
+          source: itemHistory.source,
+          bars: itemHistory.bars,
+          marketError: itemHistory.error,
+          externalSources: sourceRecords,
+        };
+        const modelInput: HoldingDiagnosisModelInput = {
+          userId,
+          reportPreference: settings.reportPreference,
+          maxFunctionBatches: settings.maxFunctionBatches,
+          items: [inputItem],
+          getMarketData: async (instrumentId) => {
+            if (instrumentId !== holding.instrument_id) throw errors.validation("AI 请求的行情标的不在当前持仓任务中");
+            return { source: itemHistory.source, bars: itemHistory.bars, currentPrice: inputItem.currentPrice, error: itemHistory.error };
+          },
+          calculateAlgorithms: async (instrumentId, selections) => {
+            if (instrumentId !== holding.instrument_id) throw errors.validation("AI 请求的算法标的不在当前持仓任务中");
+            return this.calculateAlgorithms(itemHistory.bars, selections);
+          },
+          buildChart: async (instrumentId, selections) => {
+            if (instrumentId !== holding.instrument_id) throw errors.validation("AI 请求的图表标的不在当前持仓任务中");
+            return this.calculateAlgorithms(itemHistory.bars, selections);
+          },
+        };
+        let generated: HoldingDiagnosisModelOutput | null = null;
+        let itemError: string | null = itemHistory.error === null ? null : `行情数据不可用：${itemHistory.error}`;
+        let aiStatus: HoldingDiagnosisAiStatus;
+        try {
+          generated = await this.model.generate(modelInput);
+          const model = generated.model ?? requestedModel;
+          aiStatus = {
+            state: model.provider === "local" ? "local" : "completed",
+            model,
+            message: model.provider === "local" ? "使用本地行情与指标摘要完成诊断。" : "AI 已完成当前标的诊断。",
+          };
+        } catch (error) {
+          const fallback = diagnosisFallback(error, requestedModel);
+          itemError = appendError(itemError, fallback.message);
+          aiStatus = fallback.status;
+        }
+        if (outputHasFailedSources(sourceRecords)) {
+          itemError = appendError(itemError, `${sourceRecords.filter((source) => source.availability === "failed").length} 个外部资料源不可用`);
+        }
+        const output = this.normalizeOutput(generated, modelInput, itemError);
+        if (output.bodyTooLong) itemError = appendError(itemError, "AI 单标的正文超过 600 字，已忽略该正文");
+        if (itemError !== null) reportError = appendError(reportError, `${holding.name}：${itemError}`);
+        aiStatuses.push(aiStatus);
+        const normalized = output.items[0]!;
+        const item = {
+          ...normalized,
+          id: crypto.randomUUID(),
+          errorMessage: itemError,
+          dataQuality: normalized.dataQuality === "complete" && itemError !== null ? "partial" as const : normalized.dataQuality,
+        } satisfies HoldingDiagnosisItem;
+        processedItems.push(item);
+        const savedAt = this.clock().toISOString();
+        this.database.transaction(() => {
           this.database.run(
             `INSERT INTO holding_diagnosis_items (
               id, user_id, report_id, instrument_id, data_snapshot_json, chart_snapshot_json, analysis_json,
@@ -660,21 +675,21 @@ export class HoldingDiagnosisService {
               $direction, $price, $validUntil, $dataQuality, $createdAt
             )`,
             {
-              id,
+              id: item.id,
               userId,
               reportId,
               instrumentId: item.instrument.id,
-              data: JSON.stringify({ instrument: item.instrument, quantity: holding.quantity, averageCost: item.averageCost, currentPrice: item.currentPrice, profit: item.profit }),
+              data: JSON.stringify({ instrument: item.instrument, quantity: item.quantity, averageCost: item.averageCost, currentPrice: item.currentPrice, profit: item.profit }),
               chart: JSON.stringify(item.chart),
-              analysis: JSON.stringify({ analysis: item.analysis, methods: disclosedMethods(item.methods), recommendation: item.recommendation }),
+              analysis: JSON.stringify({ analysis: item.analysis, errorMessage: item.errorMessage, methods: disclosedMethods(item.methods), recommendation: item.recommendation }),
               direction: item.recommendation.direction,
               price: JSON.stringify({ referencePriceLow: item.recommendation.referencePriceLow, referencePriceHigh: item.recommendation.referencePriceHigh, invalidationPrice: item.recommendation.invalidationPrice }),
               validUntil: item.recommendation.validUntil,
               dataQuality: item.dataQuality,
-              createdAt: now,
+              createdAt: savedAt,
             },
           );
-          for (const source of sourceRecords.get(item.instrument.id) ?? []) {
+          for (const source of sourceRecords) {
             this.database.run(
               `INSERT INTO holding_diagnosis_sources (
                 id, user_id, report_id, item_id, source_id, source_name, source_type, title,
@@ -684,31 +699,66 @@ export class HoldingDiagnosisService {
                 $publishedAt, $fetchedAt, $availability, $url, $metadata, $createdAt
               )`,
               {
-                id: crypto.randomUUID(), userId, reportId, itemId: id, sourceId: source.sourceId, sourceName: source.sourceName,
-                sourceType: source.type, title: source.title, publishedAt: source.publishedAt ?? null, fetchedAt: now,
-                availability: source.availability ?? (source.transientText ? "available" : "link_only"),
-                url: source.url,
-                metadata: JSON.stringify(sourceMetadataFromRecord(source)),
-                createdAt: now,
+                id: crypto.randomUUID(), userId, reportId, itemId: item.id, sourceId: source.sourceId, sourceName: source.sourceName,
+                sourceType: source.type, title: source.title, publishedAt: source.publishedAt ?? null, fetchedAt: savedAt,
+                availability: source.availability ?? (source.transientText ? "available" : "link_only"), url: source.url,
+                metadata: JSON.stringify(sourceMetadataFromRecord(source)), createdAt: savedAt,
               },
             );
           }
-        }
-      });
-      const status: HoldingDiagnosisStatus = errorMessage === null && output.items.every((item) => item.dataQuality === "complete") ? "completed" : "partial";
+          this.database.run(
+            "UPDATE holding_diagnosis_reports SET body = $body, summary_json = $summary, market_as_of = $marketAsOf WHERE id = $id AND user_id = $userId",
+            {
+              id: reportId,
+              userId,
+              body: buildReportBody(processedItems, holdings.length),
+              summary: JSON.stringify({ itemCount: processedItems.length, totalCount: holdings.length, aiStatus: aggregateAiStatus(aiStatuses, requestedModel) }),
+              marketAsOf: latestMarketDate(history),
+            },
+          );
+        });
+      }
+      const finalStatus: HoldingDiagnosisStatus = reportError === null && processedItems.every((item) => item.dataQuality === "complete") ? "completed" : "partial";
+      const completedAt = this.clock().toISOString();
+      this.database.run(
+        "UPDATE holding_diagnosis_reports SET body = $body, summary_json = $summary, market_as_of = $marketAsOf WHERE id = $id AND user_id = $userId",
+        {
+          id: reportId,
+          userId,
+          body: buildReportBody(processedItems, holdings.length),
+          summary: JSON.stringify({ itemCount: processedItems.length, totalCount: holdings.length, aiStatus: aggregateAiStatus(aiStatuses, requestedModel) }),
+          marketAsOf: latestMarketDate(history),
+        },
+      );
       this.database.run(
         "UPDATE holding_diagnosis_runs SET status = $status, progress = 100, error_message = $errorMessage, completed_at = $completedAt, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
-        { id: runId, userId, status, errorMessage, completedAt: now, updatedAt: now },
+        { id: runId, userId, status: finalStatus, errorMessage: reportError, completedAt, updatedAt: completedAt },
       );
     } catch (error) {
-      const now = this.clock().toISOString();
+      const completedAt = this.clock().toISOString();
+      if (reportId !== null) {
+        this.database.run(
+          "UPDATE holding_diagnosis_reports SET body = $body, summary_json = $summary, market_as_of = $marketAsOf WHERE id = $id AND user_id = $userId",
+          {
+            id: reportId,
+            userId,
+            body: buildReportBody(processedItems, processedItems.length),
+            summary: JSON.stringify({ itemCount: processedItems.length, totalCount: processedItems.length, aiStatus: aggregateAiStatus(aiStatuses, localFallbackModel()) }),
+            marketAsOf: latestMarketDate(history),
+          },
+        );
+      }
       this.database.run(
         "UPDATE holding_diagnosis_runs SET status = 'failed', error_message = $errorMessage, completed_at = $completedAt, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
-        { id: runId, userId, errorMessage: error instanceof Error ? error.message : "持仓诊断失败", completedAt: now, updatedAt: now },
+        { id: runId, userId, errorMessage: reportError ?? (error instanceof Error ? error.message : "持仓诊断失败"), completedAt, updatedAt: completedAt },
       );
     } finally {
       this.activeRuns.delete(runId);
     }
+  }
+
+  private async processRun(userId: string, runId: string): Promise<void> {
+    return this.processRunSequential(userId, runId);
   }
 
   private listEligibleHoldings(userId: string): HoldingRow[] {
@@ -719,9 +769,10 @@ export class HoldingDiagnosisService {
               COALESCE(SUM(CASE WHEN holding_transactions.action = 'buy' THEN holding_transactions.quantity * holding_transactions.price + holding_transactions.fee ELSE 0 END), 0) AS cost
          FROM holdings
          JOIN instruments ON instruments.id = holdings.instrument_id
-         LEFT JOIN holding_transactions ON holding_transactions.holding_id = holdings.id AND holding_transactions.user_id = holdings.user_id
+        LEFT JOIN holding_transactions ON holding_transactions.holding_id = holdings.id AND holding_transactions.user_id = holdings.user_id
         WHERE holdings.user_id = $userId AND holdings.status = 'active'
-        GROUP BY holdings.id, instruments.id`,
+        GROUP BY holdings.id, instruments.id
+        ORDER BY instruments.code ASC, instruments.id ASC`,
       { userId },
     );
     return rows.filter((row) => isEligibleInstrument({ id: row.instrument_id, code: row.code, exchange: row.exchange, name: row.name, assetType: row.asset_type, createdAt: "", updatedAt: "" }));
@@ -735,7 +786,29 @@ export class HoldingDiagnosisService {
     for (const source of this.sources) {
       if (!all && !selected.has(source.id)) continue;
       try {
-        collected.push(...(await source.collect(instrument)).slice(0, settings.maxExternalSourcesPerHolding));
+        const records = (await source.collect(instrument)).slice(0, settings.maxExternalSourcesPerHolding);
+        for (const record of records) {
+          if (
+            this.sourceReader !== undefined &&
+            record.availability === "link_only" &&
+            (record.type === "news" || record.type === "reference" || record.type === "disclosure")
+          ) {
+            try {
+              const enriched = await this.sourceReader(record);
+              collected.push({ ...record, ...enriched });
+            } catch (error) {
+              collected.push({
+                ...record,
+                availability: "failed",
+                summary: `${record.sourceName} 暂未取得可核验摘要。`,
+                highlights: ["状态：来源摘要读取失败", "请通过来源链接自行核验"],
+                transientText: error instanceof Error ? error.message : "来源摘要读取失败",
+              });
+            }
+          } else {
+            collected.push(record);
+          }
+        }
       } catch (error) {
         collected.push({
           sourceId: source.id,
@@ -784,7 +857,12 @@ export class HoldingDiagnosisService {
         ? [localFallbackMethod(modelError)]
         : [{ kind: "ai_analysis", name: generated.model?.name ?? "AI 持仓诊断", rationale: "AI 基于持仓数据包直接分析。" }];
       const recommendation = normalizeRecommendation(output?.recommendation, currentPrice);
-      const chart: HoldingDiagnosisChart = { bars: inputItem.bars, source: inputItem.source ?? "mock", indicators: [], turningPoints: output?.turningPoints ?? [] };
+      const chart: HoldingDiagnosisChart = {
+        bars: inputItem.bars,
+        source: inputItem.source ?? "mock",
+        indicators: output?.chart?.indicators ?? [],
+        turningPoints: output?.chart?.turningPoints ?? output?.turningPoints ?? [],
+      };
       return {
         id: "",
         instrument: findInstrument(inputItem, this.market),
@@ -792,8 +870,9 @@ export class HoldingDiagnosisService {
         averageCost,
         currentPrice,
         profit: currentPrice === null || averageCost === null ? null : round((currentPrice - averageCost) * inputItem.quantity),
-        dataQuality: inputItem.bars.length === 0 ? "unavailable" : generated === null ? "partial" : "complete",
+        dataQuality: inputItem.bars.length === 0 ? "unavailable" : inputItem.marketError !== undefined && inputItem.marketError !== null ? "partial" : generated === null ? "partial" : "complete",
         analysis: output?.analysis?.trim() || "行情与持仓数据已整理，需结合后续价格和资料变化继续评估。",
+        errorMessage: modelError,
         methods: disclosedMethods(output?.methods?.length ? output.methods : defaultMethods),
         recommendation,
         chart,
@@ -906,6 +985,9 @@ function normalizeRecommendation(value: HoldingDiagnosisRecommendation | undefin
   if (value !== undefined && isDirection(value.direction) && typeof value.timing === "string" && typeof value.uncertainty === "string") {
     return {
       direction: value.direction,
+      action: typeof value.action === "string" && value.action.trim() !== ""
+        ? value.action.trim().slice(0, 120)
+        : recommendationActionLabel(value.direction),
       timing: value.timing.slice(0, 120),
       referencePriceLow: finiteOrNull(value.referencePriceLow),
       referencePriceHigh: finiteOrNull(value.referencePriceHigh),
@@ -914,19 +996,85 @@ function normalizeRecommendation(value: HoldingDiagnosisRecommendation | undefin
       uncertainty: value.uncertainty.slice(0, 300),
     };
   }
-  return { direction: "observe", timing: "等待下一交易日确认", referencePriceLow: currentPrice, referencePriceHigh: currentPrice, invalidationPrice: null, validUntil: null, uncertainty: "缺少完整 AI 或外部资料结果，建议结合后续行情复核。" };
+  return { direction: "observe", action: recommendationActionLabel("observe"), timing: "等待下一交易日确认", referencePriceLow: currentPrice, referencePriceHigh: currentPrice, invalidationPrice: null, validUntil: null, uncertainty: "缺少完整 AI 或外部资料结果，建议结合后续行情复核。" };
 }
 
 function toItem(row: ItemRow): HoldingDiagnosisItem {
   const data = parseJson(row.data_snapshot_json) as { instrument: HoldingDiagnosisItem["instrument"]; quantity: number; averageCost: number | null; currentPrice: number | null; profit: number | null };
   const chart = parseJson(row.chart_snapshot_json) as HoldingDiagnosisChart;
-  const analysis = parseJson(row.analysis_json) as { analysis: string; methods: HoldingDiagnosisMethod[]; recommendation: HoldingDiagnosisRecommendation };
-  return { id: row.id, instrument: data.instrument, quantity: data.quantity, averageCost: data.averageCost, currentPrice: data.currentPrice, profit: data.profit, dataQuality: row.data_quality, analysis: analysis.analysis, methods: analysis.methods, recommendation: analysis.recommendation, chart };
+  const analysis = parseJson(row.analysis_json) as { analysis: string; errorMessage?: string | null; methods: HoldingDiagnosisMethod[]; recommendation: HoldingDiagnosisRecommendation };
+  return { id: row.id, instrument: data.instrument, quantity: data.quantity, averageCost: data.averageCost, currentPrice: data.currentPrice, profit: data.profit, dataQuality: row.data_quality, analysis: analysis.analysis, errorMessage: analysis.errorMessage ?? null, methods: analysis.methods, recommendation: analysis.recommendation, chart };
 }
 
 function localBody(items: HoldingDiagnosisModelInput["items"], modelError: string | null): string {
   const names = items.map((item) => item.name).join("、");
   return `已整理 ${items.length} 个持仓（${names}）的本地行情与持仓数据。${modelError ? "AI 或资料源暂不可用，本报告保留本地诊断，需在数据恢复后重新生成。" : "请结合关键价格、趋势变化与资料来源进行独立判断。"}`;
+}
+
+function initialAiStatus(model: HoldingDiagnosisModelSnapshot): HoldingDiagnosisAiStatus {
+  return {
+    state: model.provider === "local" ? "local" : "unavailable",
+    model,
+    message: model.provider === "local" ? "未配置远程 AI，使用本地行情与指标摘要。" : "AI 诊断尚未完成。",
+  };
+}
+
+function aggregateAiStatus(
+  statuses: HoldingDiagnosisAiStatus[],
+  fallbackModel: HoldingDiagnosisModelSnapshot,
+): HoldingDiagnosisAiStatus {
+  if (statuses.length === 0) return initialAiStatus(fallbackModel);
+  const model = statuses[0]!.model;
+  const timeout = statuses.find((status) => status.state === "timeout");
+  if (timeout !== undefined) {
+    return {
+      state: "timeout",
+      model,
+      message: `${statuses.filter((status) => status.state === "completed").length}/${statuses.length} 个标的完成 AI 诊断，其余标的存在超时或本地降级。`,
+      timeoutSeconds: timeout.timeoutSeconds,
+    };
+  }
+  const unavailable = statuses.find((status) => status.state === "unavailable");
+  if (unavailable !== undefined) {
+    return {
+      state: "unavailable",
+      model,
+      message: `${statuses.filter((status) => status.state === "completed").length}/${statuses.length} 个标的完成 AI 诊断，其余标的未能使用远程 AI。`,
+    };
+  }
+  const localCount = statuses.filter((status) => status.state === "local").length;
+  if (localCount > 0) {
+    return {
+      state: "local",
+      model,
+      message: `${statuses.length - localCount}/${statuses.length} 个标的完成远程 AI 诊断，其余使用本地行情与指标摘要。`,
+    };
+  }
+  return { state: "completed", model, message: `已完成 ${statuses.length} 个标的的 AI 诊断。` };
+}
+
+function outputHasFailedSources(sources: HoldingDiagnosisSourceRecord[]): boolean {
+  return sources.some((source) => source.availability === "failed");
+}
+
+function buildReportBody(items: HoldingDiagnosisItem[], totalCount: number): string {
+  if (items.length === 0) return `正在整理 ${totalCount} 个持仓的诊断资料。`.slice(0, 600);
+  const parts = items.map((item) => {
+    const action = item.recommendation.action ?? recommendationActionLabel(item.recommendation.direction);
+    return `${item.instrument.name}：${item.analysis} 建议${action}`;
+  });
+  return `已完成 ${items.length}/${totalCount} 个持仓诊断。${parts.join("；")}`.slice(0, 600);
+}
+
+function recommendationActionLabel(direction: HoldingRecommendationDirection): string {
+  const labels: Record<HoldingRecommendationDirection, string> = {
+    add_evaluation: "关注加仓条件",
+    reduce_evaluation: "关注减仓条件",
+    hold: "持有复核",
+    observe: "继续观察",
+    research_further: "补充研究",
+  };
+  return labels[direction];
 }
 
 function localFallbackModel(): HoldingDiagnosisModelSnapshot {
@@ -953,12 +1101,12 @@ function diagnosisFallback(
     : /timed out|timeout|超时/i.test(detail);
   if (isTimeout) {
     return {
-      message: "AI 诊断请求在 90 秒内未完成，已使用本地行情与指标摘要。",
+      message: "AI 当前标的诊断请求在 120 秒内未完成，已使用本地行情与指标摘要。",
       status: {
         state: "timeout",
         model,
         message: "AI 请求超时，报告已降级为本地行情与指标摘要。",
-        timeoutSeconds: 90,
+        timeoutSeconds: 120,
       },
     };
   }
@@ -971,6 +1119,29 @@ function diagnosisFallback(
         message: "AI 返回内容无法解析为诊断报告，报告已降级为本地行情与指标摘要。",
       },
     };
+  }
+  const statusCode = /AI 服务返回\s+(\d{3})/.exec(detail)?.[1];
+  if (statusCode !== undefined) {
+    const status = Number(statusCode);
+    const message = status === 401 || status === 403
+      ? `AI 服务认证失败（HTTP ${status}），请检查 API Key。`
+      : status === 400
+        ? "AI 服务拒绝当前诊断请求（HTTP 400），请检查模型是否支持 JSON 和工具调用协议。"
+        : status === 404
+          ? "AI 服务地址或模型不存在（HTTP 404），请检查服务地址和模型名称。"
+          : status === 429
+            ? "AI 服务当前限流（HTTP 429），请稍后重试。"
+            : status >= 500
+              ? `AI 服务暂时不可用（HTTP ${status}），已使用本地行情与指标摘要。`
+              : `AI 服务请求失败（HTTP ${status}），已使用本地行情与指标摘要。`;
+    return {
+      message,
+      status: { state: "unavailable", model, message },
+    };
+  }
+  if (/fetch failed|network|连接|ECONN|ENOTFOUND/i.test(detail)) {
+    const message = "AI 服务无法连接，请检查服务地址和服务是否运行。";
+    return { message, status: { state: "unavailable", model, message } };
   }
   return {
     message: "AI 诊断暂不可用，已使用本地行情与指标摘要。",
@@ -1047,7 +1218,7 @@ function reportAiStatus(
       state: "timeout",
       model,
       message: "AI 请求超时，报告已降级为本地行情与指标摘要。",
-      timeoutSeconds: 45,
+      timeoutSeconds: 120,
     };
   }
   return {
