@@ -184,13 +184,21 @@ describe("HoldingDiagnosisView", () => {
     });
     await flushPromises();
 
-    expect(wrapper.text()).toContain("已完成 2/2 个持仓诊断。");
+    expect(wrapper.text()).not.toContain("已完成 2/2 个持仓诊断。");
     expect(wrapper.text()).toContain("趋势呈修复状态，仍需等待价格与成交量确认。");
-    expect(wrapper.get(".holding-diagnosis-summary").text()).not.toContain("趋势呈修复状态");
+    expect(wrapper.find(".holding-diagnosis-summary").exists()).toBe(false);
     expect(wrapper.text()).toContain("AI 与本地算法综合判断");
-    expect(wrapper.text()).toContain("AI 已完成诊断");
+    expect(wrapper.text()).not.toContain("AI 已完成诊断");
     expect(wrapper.text()).toContain("继续持有，等待确认");
-    expect(wrapper.get("[role='tablist']").findAll("[role='tab']")).toHaveLength(2);
+    const tabs = wrapper.get("[role='tablist']").findAll("[role='tab']");
+    expect(tabs).toHaveLength(2);
+    expect(tabs[0].text()).toBe("浦发银行");
+    expect(tabs[0].text()).not.toContain("600000");
+    expect(wrapper.get(".holding-diagnosis-run-meta > span").text()).toBe("手动");
+    expect(wrapper.get(".holding-diagnosis-run-status").text()).toBe("已完成");
+    expect(wrapper.get(".holding-diagnosis-run-meta > b").text()).toBe("·");
+    expect(wrapper.get(".holding-diagnosis-run-meta > strong").text()).toBe("2026/08/03 15:30:00");
+    expect(wrapper.find(".holding-diagnosis-run em").exists()).toBe(false);
     expect(wrapper.get("a[href*='cninfo.com.cn']").attributes("target")).toBe("_blank");
     expect(wrapper.get("details").text()).toContain("仅保留检索摘要");
     expect(wrapper.get("details summary span").text()).toBe("浦发银行公告检索入口: 浦发银行的公告检索入口已准备，本次没有读取公告正文。");
@@ -220,6 +228,22 @@ describe("HoldingDiagnosisView", () => {
     );
   });
 
+  test("keeps a partial report warning without restoring the overview descriptions", async () => {
+    mocks.listHoldingDiagnosisRuns.mockResolvedValue({ items: [run] });
+    mocks.getHoldingDiagnosisReport.mockResolvedValue({
+      ...report,
+      errorMessage: "山子高科：3 个外部资料源不可用；东方精工：2 个外部资料源不可用",
+    });
+    const wrapper = mount(HoldingDiagnosisView, {
+      global: { stubs: { KLineChart: true, ExternalLink: true } },
+    });
+    await flushPromises();
+
+    expect(wrapper.get(".holding-diagnosis-summary").text()).toContain("山子高科：3 个外部资料源不可用");
+    expect(wrapper.text()).not.toContain("已完成 2/2 个持仓诊断。");
+    expect(wrapper.text()).not.toContain("AI 已完成诊断");
+  });
+
   test("shows processing after refresh without loading an old report", async () => {
     const wrapper = mount(HoldingDiagnosisView, {
       global: { stubs: { KLineChart: true, ExternalLink: true } },
@@ -227,7 +251,7 @@ describe("HoldingDiagnosisView", () => {
     await flushPromises();
 
     expect(wrapper.text()).toContain("报告生成中");
-    expect(wrapper.text()).toContain("生成中 · 35%");
+    expect(wrapper.text()).toContain("生成中 35%");
     expect(mocks.getHoldingDiagnosisReport).not.toHaveBeenCalled();
   });
 

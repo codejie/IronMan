@@ -2107,6 +2107,7 @@ function buildCalendarMonths(
   border-radius: 5px;
   color: #edf6ff;
   font: inherit;
+  font-size: 12px;
   min-height: 36px;
   padding: 0 9px;
   width: 116px;
@@ -2124,8 +2125,9 @@ function buildCalendarMonths(
   justify-content: space-between;
 }
 .system-diagnosis-detail-heading h2 {
-  color: #dcecf8;
-  font-size: 13px;
+  color: #9db3c8;
+  font-size: 12px;
+  font-weight: 600;
   margin: 0;
 }
 .system-diagnosis-source-grid {
@@ -2179,6 +2181,7 @@ function buildCalendarMonths(
 .system-diagnosis-options label > span {
   color: #9db3c8;
   font-size: 12px;
+  font-weight: 600;
 }
 .system-diagnosis-prompt textarea {
   background: #16263a;
@@ -2186,6 +2189,7 @@ function buildCalendarMonths(
   border-radius: 5px;
   color: #e5f1fa;
   font: inherit;
+  font-size: 12px;
   line-height: 1.55;
   min-height: 88px;
   padding: 8px 9px;
@@ -2212,6 +2216,7 @@ function buildCalendarMonths(
   border: 1px solid #3a506d;
   border-radius: 5px;
   color: #edf6ff;
+  font-size: 12px;
   min-height: 36px;
   padding: 0 8px;
 }
