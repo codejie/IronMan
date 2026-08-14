@@ -172,6 +172,26 @@ describe("HoldingDiagnosisView", () => {
     mocks.deleteAllHoldingDiagnosisReports.mockResolvedValue({ deleted: 1 });
   });
 
+  test("keeps the archive selected state as the shared list reference", async () => {
+    const source = await import("./HoldingDiagnosisView.vue?raw");
+
+    expect(source.default).toMatch(/\.holding-diagnosis-run\.active\s*\{[^}]*background:\s*#172b41;[^}]*box-shadow:\s*inset 3px 0 #57cfc6;/s);
+  });
+
+  test("gives the report archive list horizontal breathing room", async () => {
+    const source = await import("./HoldingDiagnosisView.vue?raw");
+
+    expect(source.default).toMatch(/\.holding-diagnosis-run-list\s*\{[^}]*padding:\s*0 11px;/s);
+  });
+
+  test("uses the Trend Analysis shell baseline for the archive and report columns", async () => {
+    const source = await import("./HoldingDiagnosisView.vue?raw");
+
+    expect(source.default).toMatch(/\.holding-diagnosis-header\s*\{[^}]*border-bottom:\s*1px solid #26384f;[^}]*padding:\s*2px 0 14px;/s);
+    expect(source.default).toMatch(/\.holding-diagnosis-layout\s*\{[^}]*grid-template-columns:\s*260px minmax\(0, 1fr\);[^}]*\}/s);
+    expect(source.default).toMatch(/\.holding-diagnosis-archive\s*\{[^}]*background:\s*#0d1727;[^}]*border-right:\s*1px solid #293d56;/s);
+  });
+
   test("renders report tabs and deletes an individual report through the shared confirmation", async () => {
     mocks.listHoldingDiagnosisRuns.mockResolvedValue({ items: [run] });
     const wrapper = mount(HoldingDiagnosisView, {
@@ -185,6 +205,7 @@ describe("HoldingDiagnosisView", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("已完成 2/2 个持仓诊断。");
+    expect(wrapper.text()).not.toContain("报告日期");
     expect(wrapper.text()).toContain("趋势呈修复状态，仍需等待价格与成交量确认。");
     expect(wrapper.find(".holding-diagnosis-summary").exists()).toBe(false);
     expect(wrapper.text()).toContain("AI 与本地算法综合判断");
@@ -192,8 +213,8 @@ describe("HoldingDiagnosisView", () => {
     expect(wrapper.text()).toContain("继续持有，等待确认");
     const tabs = wrapper.get("[role='tablist']").findAll("[role='tab']");
     expect(tabs).toHaveLength(2);
-    expect(tabs[0].text()).toBe("浦发银行");
-    expect(tabs[0].text()).not.toContain("600000");
+    expect(tabs[0]!.text()).toBe("浦发银行");
+    expect(tabs[0]!.text()).not.toContain("600000");
     expect(wrapper.get(".holding-diagnosis-run-meta > span").text()).toBe("手动");
     expect(wrapper.get(".holding-diagnosis-run-status").text()).toBe("已完成");
     expect(wrapper.get(".holding-diagnosis-run-meta > b").text()).toBe("·");

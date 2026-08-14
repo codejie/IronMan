@@ -5,6 +5,7 @@ import { MarketService } from "./market-service";
 import type { MarketSnapshotService } from "./market-snapshot-service";
 import type { HoldingDiagnosisService } from "./holding-diagnosis-service";
 import { StrategyService } from "./strategy-service";
+import type { AiCandidateService } from "./ai-candidate-service";
 
 type ScheduleKind = "analysis" | "alert-scan";
 export type AlertDirection = "above" | "below";
@@ -193,6 +194,7 @@ export class AutomationService {
     private readonly tasks: AnalysisTaskService,
     private readonly snapshots?: Pick<MarketSnapshotService, "captureDueAutomatic">,
     private readonly diagnosis?: Pick<HoldingDiagnosisService, "runDueAutomatic">,
+    private readonly candidates?: Pick<AiCandidateService, "runDueAutomatic">,
   ) {}
 
   createSchedule(userId: string, input: { name: string; kind: ScheduleKind; intervalMinutes: number; strategyId: string | null }): ScheduledJob {
@@ -435,6 +437,11 @@ export class AutomationService {
       await this.diagnosis?.runDueAutomatic(now);
     } catch (error) {
       console.error("holding diagnosis schedule failed", error);
+    }
+    try {
+      await this.candidates?.runDueAutomatic(now);
+    } catch (error) {
+      console.error("AI candidate schedule failed", error);
     }
     const due = this.database.transaction(() => {
       const rows = this.database.all<ScheduleRow>("SELECT * FROM scheduled_jobs WHERE enabled = 1 AND next_run_at <= $now ORDER BY next_run_at ASC", { now: now.toISOString() });

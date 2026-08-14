@@ -1,0 +1,59 @@
+import { setTimeout } from "node:timers/promises";
+
+const backendMode = process.argv[2] === "start" ? "start" : "dev";
+const providerHost = process.env.AKSHARE_PROVIDER_HOST ?? "127.0.0.1";
+const providerPort = process.env.AKSHARE_PROVIDER_PORT ?? "6102";
+const providerUrl = process.env.AKSHARE_PROVIDER_URL ?? `http://${providerHost}:${providerPort}`;
+const autoStart = process.env.AKSHARE_PROVIDER_AUTOSTART !== "false";
+
+let provider: ReturnType<typeof Bun.spawn> | null = null;
+let backend: ReturnType<typeof Bun.spawn> | null = null;
+let frontend: ReturnType<typeof Bun.spawn> | null = null;
+
+async function waitForProvider(): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (provider !== null && provider.exitCode !== null) {
+      throw new Error("AKShareProvider 启动失败");
+    }
+    try {
+      const response = await fetch(`${providerUrl.replace(/\/$/, "")}/health`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+        signal: AbortSignal.timeout(500)
+      });
+      if (response.ok) return;
+    } catch {
+      // The backend has its own provider fallback. Keep polling briefly for local startup.
+    }
+    await setTimeout(250);
+  }
+  throw new Error(`AKShareProvider 未在 ${providerUrl} 就绪`);
+}
+
+try {
+  if (autoStart) {
+    provider = Bun.spawn({ cmd: ["bun", "run", "dev:akshare"], stdout: "inherit", stderr: "inherit" });
+    await waitForProvider();
+  }
+} catch (error) {
+  provider?.kill("SIGTERM");
+  console.error(error instanceof Error ? error.message : "AKShareProvider 启动失败");
+  process.exit(1);
+}
+
+backend = Bun.spawn({ cmd: ["bun", "run", "--cwd", "backend", backendMode], stdout: "inherit", stderr: "inherit" });
+frontend = Bun.spawn({ cmd: ["bun", "run", "--cwd", "frontend", "dev"], stdout: "inherit", stderr: "inherit" });
+
+const shutdown = (signal: NodeJS.Signals): void => {
+  backend?.kill(signal);
+  frontend?.kill(signal);
+  provider?.kill(signal);
+};
+
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
+
+const [backendExitCode, frontendExitCode] = await Promise.all([backend.exited, frontend.exited]);
+provider?.kill("SIGTERM");
+process.exit(backendExitCode ?? frontendExitCode ?? 0);

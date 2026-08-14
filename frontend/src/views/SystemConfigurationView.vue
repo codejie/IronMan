@@ -34,6 +34,7 @@ import {
   type AiModelConfig,
   type AiProvider,
   type AlertSettings,
+  type AiCandidateSettings,
   type DataSourceConfig,
   type FundHistoryState,
   type HoldingDiagnosisSettings,
@@ -48,7 +49,7 @@ import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
 
-type SectionId = "backup" | "market" | "diagnosis" | "rules" | "ai" | "maintenance";
+type SectionId = "backup" | "market" | "diagnosis" | "candidate" | "rules" | "ai" | "maintenance";
 type Dialog = "snapshot" | "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
 
 interface SectionItem {
@@ -129,11 +130,21 @@ const diagnosisSettings = ref<HoldingDiagnosisSettings>({
 });
 const diagnosisSources = ref<HoldingDiagnosisSourceCatalogItem[]>([]);
 const diagnosisModelName = ref("未配置");
+const candidateSettings = ref<AiCandidateSettings>({
+  enabled: true,
+  strategies: ["trend_event", "quality_growth", "value_repair"],
+  topN: 10,
+  explanationValidityDays: 10,
+  maxValidityDays: 20,
+  scheduledTime: "18:30",
+  retentionDays: 30,
+});
 
 const sections: SectionItem[] = [
   { id: "backup", label: "数据与备份", icon: DatabaseBackup },
   { id: "market", label: "行情与日历", icon: CalendarDays },
   { id: "diagnosis", label: "持仓诊断", icon: ScanSearch },
+  { id: "candidate", label: "AI 候选", icon: ChartNoAxesCombined },
   { id: "rules", label: "规则", icon: Bell },
   { id: "ai", label: "AI 服务", icon: BrainCircuit },
   { id: "maintenance", label: "维护", icon: ShieldAlert, adminOnly: true },
@@ -213,7 +224,7 @@ function snapshotStatusLabel(): string {
 }
 
 function isSectionId(value: unknown): value is SectionId {
-  return typeof value === "string" && ["backup", "market", "diagnosis", "rules", "ai", "maintenance"].includes(value);
+  return typeof value === "string" && ["backup", "market", "diagnosis", "candidate", "rules", "ai", "maintenance"].includes(value);
 }
 
 function fundHistoryStatusLabel(state: FundHistoryState): string {
@@ -289,6 +300,27 @@ async function loadDiagnosisSettings(): Promise<void> {
     aiConfig.models.find((model) => model.enabled && model.default) ??
     aiConfig.models.find((model) => model.enabled)
   )?.name ?? "未配置";
+}
+
+async function loadCandidateSettings(): Promise<void> {
+  if (token.value === null) return;
+  candidateSettings.value = await api.getAiCandidateSettings(token.value);
+}
+
+async function saveCandidateSettings(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    candidateSettings.value = await api.updateAiCandidateSettings(token.value, {
+      retentionDays: candidateSettings.value.retentionDays,
+    });
+    notify("success", "AI 候选记录保留设置已保存");
+  } catch (error) {
+    notify("error", message(error, "保存 AI 候选设置失败"));
+  } finally {
+    isBusy.value = false;
+  }
 }
 
 function setAllDiagnosisSources(checked: boolean): void {
@@ -786,7 +818,7 @@ function closeDialog(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadFundHistoryStatus()]);
+    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadCandidateSettings(), loadFundHistoryStatus()]);
   } catch (error) {
     notify("error", message(error, "加载系统配置失败"));
   }
@@ -1059,6 +1091,34 @@ function buildCalendarMonths(
               <label><span>每标的资料数</span><select v-model.number="diagnosisSettings.maxExternalSourcesPerHolding" :disabled="isBusy"><option :value="1">1 条</option><option :value="3">3 条</option><option :value="5">5 条</option></select></label>
             </section>
             <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存持仓诊断配置</button></footer>
+          </form>
+        </template>
+
+        <template v-else-if="activeSection === 'candidate'">
+          <header class="system-configuration-heading">
+            <div>
+              <h1>AI 候选</h1>
+              <p>候选记录按日期保存；超出保留期限的日期会在读取或生成候选时自动清理。</p>
+            </div>
+          </header>
+          <form aria-label="AI 候选配置" class="system-configuration-rows system-rule-settings" @submit.prevent="saveCandidateSettings">
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><ChartNoAxesCombined :size="18" /></div>
+              <div>
+                <h2>记录保留天数</h2>
+                <p>最多保留 30 天；删除某个日期时，该日期的替换版本和评估样本也会一并删除。</p>
+              </div>
+              <label class="system-rule-interval"><span>天</span><select v-model.number="candidateSettings.retentionDays" aria-label="AI 候选记录保留天数" :disabled="isBusy"><option v-for="days in 30" :key="days" :value="days">{{ days }}</option></select></label>
+            </section>
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><Clock3 :size="18" /></div>
+              <div>
+                <h2>自动候选</h2>
+                <p>当前按 {{ candidateSettings.scheduledTime }} 生成，运行结果仍按日期替换当天记录。</p>
+              </div>
+              <span class="system-config-value">{{ candidateSettings.enabled ? "已开启" : "已关闭" }}</span>
+            </section>
+            <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存 AI 候选配置</button></footer>
           </form>
         </template>
 
@@ -2097,6 +2157,20 @@ function buildCalendarMonths(
 .system-rule-interval input:focus {
   border-color: #65d7ca;
   outline: 1px solid #65d7ca;
+}
+.system-rule-interval select {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  min-height: 36px;
+  padding: 0 9px;
+  width: 96px;
+}
+.system-config-value {
+  color: #7ddbd0;
+  font-size: 12px;
+  justify-self: end;
 }
 .system-diagnosis-settings {
   display: grid;

@@ -1022,7 +1022,7 @@ onBeforeUnmount(() => {
 .trend-run-item {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 5px;
+  border-radius: 0;
   color: #aebfd2;
   display: grid;
   gap: 3px 6px;
@@ -1032,10 +1032,14 @@ onBeforeUnmount(() => {
   text-align: left;
   width: 100%;
 }
-.trend-run-item:hover,
-.trend-run-item.active {
+/* .trend-run-item:hover {
   background: #183345;
   border-color: #3d747a;
+} */
+.trend-run-item.active {
+  background: #172b41;
+  border-color: transparent;
+  box-shadow: inset 3px 0 #57cfc6;
 }
 .trend-run-item strong {
   color: #e3eff8;
@@ -1334,12 +1338,14 @@ onBeforeUnmount(() => {
 }
 .trend-ai-card p {
   color: #9eb1c4;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
   margin: 8px 0 0;
 }
 .trend-ai-card .trend-ai-content {
   color: #d0dfec;
+  font-size: 12px;
+  line-height: 1.6;
   white-space: pre-wrap;
 }
 .trend-drawer-backdrop {
@@ -2033,6 +2039,7 @@ onBeforeUnmount(() => {
   align-items: stretch;
   background: transparent;
   border: 1px solid transparent;
+  border-radius: 0;
   display: grid;
   gap: 3px;
   grid-template-columns: minmax(0, 1fr) 28px;
@@ -2051,10 +2058,14 @@ onBeforeUnmount(() => {
   padding: 5px;
   text-align: left;
 }
-.trend-run-item:hover,
-.trend-run-item.active {
+/* .trend-run-item:hover {
   background: #183345;
   border-color: #3d747a;
+} */
+.trend-run-item.active {
+  background: #172b41;
+  border-color: transparent;
+  box-shadow: inset 3px 0 #57cfc6;
 }
 .trend-run-item strong {
   color: #e3eff8;
@@ -2088,9 +2099,9 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 5px;
 }
-.trend-run-delete:hover:not(:disabled) {
+/* .trend-run-delete:hover:not(:disabled) {
   color: #ff9298;
-}
+} */
 .trend-run-delete:disabled {
   cursor: not-allowed;
   opacity: 0.35;

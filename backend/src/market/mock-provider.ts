@@ -30,7 +30,8 @@ export class MockMarketProvider implements MarketDataProvider {
         close: Number(close.toFixed(3)),
         high: Number(high.toFixed(3)),
         low: Number(low.toFixed(3)),
-        volume: Math.round(400_000 + ((seed * 7919 + index * 10_007) % 5_000_000))
+        volume: Math.round(400_000 + ((seed * 7919 + index * 10_007) % 5_000_000)),
+        amount: Math.round(close * (400_000 + ((seed * 7919 + index * 10_007) % 5_000_000)))
       });
       previousClose = close;
     }

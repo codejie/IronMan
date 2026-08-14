@@ -242,6 +242,109 @@ export interface PriceBar {
   high: number;
   low: number;
   volume: number;
+  amount?: number | null;
+  turnoverRate?: number | null;
+}
+
+export type CandidateStrategy = "trend_event" | "quality_growth" | "value_repair";
+export type CandidateAction = "observe" | "wait_pullback" | "wait_breakout" | "research_further" | "avoid";
+export type CandidateRunStatus = "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+export interface AiCandidateSettings {
+  enabled: boolean;
+  strategies: CandidateStrategy[];
+  topN: 5 | 10 | 20;
+  explanationValidityDays: 10;
+  maxValidityDays: 20;
+  scheduledTime: string;
+  retentionDays: number;
+}
+export interface AiCandidateRun {
+  id: string;
+  trigger: "manual" | "scheduled";
+  tradeDate: string;
+  status: CandidateRunStatus;
+  progress: number;
+  requestedTopN: 5 | 10 | 20;
+  strategies: CandidateStrategy[];
+  algorithmVersion: string;
+  marketRegime: { name: "strong" | "neutral" | "risk"; threshold: number; asOf: string; evidence: string[] };
+  dataQuality: Record<string, unknown>;
+  modelSnapshot: Record<string, unknown>;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+export interface AiCandidateEvidence {
+  id: string;
+  label: string;
+  value: string | number;
+  source: string;
+  asOf: string;
+}
+export interface AiCandidateExplanation {
+  summary: string;
+  action: CandidateAction;
+  thesis: string[];
+  counterEvidence: string[];
+  referencePriceLow: number | null;
+  referencePriceHigh: number | null;
+  invalidationPrice: number | null;
+  validUntil: string;
+  uncertainty: string;
+  evidenceIds: string[];
+}
+export interface AiCandidateItem {
+  id: string;
+  runId: string;
+  strategy: CandidateStrategy;
+  rank: number | null;
+  score: number;
+  percentile: number;
+  selected: boolean;
+  instrument: Pick<Instrument, "id" | "code" | "exchange" | "name" | "assetType">;
+  scoreSnapshot: Record<string, unknown>;
+  evidenceSnapshot: AiCandidateEvidence[];
+  explanation: AiCandidateExplanation | null;
+  aiStatus: "pending" | "completed" | "local" | "unavailable";
+  dataQuality: "complete" | "partial" | "stale" | "unavailable";
+  rejectionReason: string | null;
+  cycleId: string | null;
+  createdAt: string;
+}
+export interface AiCandidateEvaluation {
+  id: string;
+  itemId: string;
+  cycleId: string | null;
+  horizon: 5 | 10 | 20;
+  state: "pending" | "matured" | "not_executable" | "indeterminate" | "invalidated" | "insufficient_data";
+  targetDate: string | null;
+  actualDate: string | null;
+  entryPrice: number | null;
+  exitPrice: number | null;
+  grossReturn: number | null;
+  netReturn: number | null;
+  benchmarkReturn: number | null;
+  industryReturn: number | null;
+  marketExcessReturn: number | null;
+  industryExcessReturn: number | null;
+  mfe: number | null;
+  mae: number | null;
+  maxDrawdown: number | null;
+  invalidationResult: boolean | null;
+  dataQuality: "complete" | "partial" | "stale" | "unavailable";
+  createdAt: string;
+  updatedAt: string;
+}
+export interface AiCandidateRunDetail {
+  run: AiCandidateRun;
+  items: AiCandidateItem[];
+  evaluations: AiCandidateEvaluation[];
+  logs: Array<{ id: string; level: string; stage: string; message: string; createdAt: string }>;
+}
+export interface AiCandidateEvaluationSummary {
+  horizons: Record<"5" | "10" | "20", { total: number; matured: number; pending: number; hitRate: number | null; averageNetReturn: number | null; averageExcessReturn: number | null }>;
+  byStrategy: Record<CandidateStrategy, { total: number; matured: number; hitRate: number | null; averageNetReturn: number | null }>;
 }
 
 export interface DataSourceConfig {
@@ -1054,6 +1157,34 @@ export const api = {
       {},
       token,
     ),
+  getAiCandidateSettings: (token: string) =>
+    post<AiCandidateSettings>("/analysis/ai-candidates/settings/get", {}, token),
+  updateAiCandidateSettings: (
+    token: string,
+    input: Partial<AiCandidateSettings>,
+  ) =>
+    post<AiCandidateSettings>("/analysis/ai-candidates/settings/update", input, token),
+  createAiCandidateRun: (
+    token: string,
+    input: { tradeDate?: string; topN?: 5 | 10 | 20; strategies?: CandidateStrategy[] },
+  ) =>
+    post<AiCandidateRun>("/analysis/ai-candidates/runs/create", input, token),
+  listAiCandidateRuns: (token: string, limit = 60) =>
+    post<{ items: AiCandidateRun[] }>("/analysis/ai-candidates/runs/list", { limit }, token),
+  getAiCandidateRunDetail: (token: string, id: string) =>
+    post<AiCandidateRunDetail>("/analysis/ai-candidates/runs/detail", { id }, token),
+  cancelAiCandidateRun: (token: string, id: string) =>
+    post<AiCandidateRun>("/analysis/ai-candidates/runs/cancel", { id }, token),
+  deleteAiCandidateDate: (token: string, tradeDate: string) =>
+    post<{ deleted: true }>("/analysis/ai-candidates/runs/delete", { tradeDate }, token),
+  latestAiCandidates: (token: string, tradeDate?: string) =>
+    post<{ run: AiCandidateRun | null; items: AiCandidateItem[] }>(
+      "/analysis/ai-candidates/latest",
+      tradeDate === undefined ? {} : { tradeDate },
+      token,
+    ),
+  aiCandidateEvaluationSummary: (token: string) =>
+    post<AiCandidateEvaluationSummary>("/analysis/ai-candidates/evaluations/summary", {}, token),
   marketSnapshotSeries: (
     token: string,
     instrumentId: string,

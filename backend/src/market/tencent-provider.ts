@@ -41,12 +41,23 @@ export class TencentMarketProvider implements MarketDataProvider {
         close: Number(row[2]),
         high: Number(row[3]),
         low: Number(row[4]),
-        volume: Number(row[5])
+        volume: Number(row[5]),
+        amount: Number(row[6]),
+        turnoverRate: Number(row[7])
       }))
       .filter((row) => row.date.length > 0 && [row.open, row.close, row.high, row.low, row.volume].every(Number.isFinite));
     if (bars.length === 0) {
       throw errors.external("Tencent 未返回可用的历史行情");
     }
-    return bars;
+    return bars.map((bar) => ({
+      date: bar.date,
+      open: bar.open,
+      close: bar.close,
+      high: bar.high,
+      low: bar.low,
+      volume: bar.volume,
+      ...(Number.isFinite(bar.amount) ? { amount: bar.amount } : {}),
+      ...(Number.isFinite(bar.turnoverRate) ? { turnoverRate: bar.turnoverRate } : {}),
+    }));
   }
 }

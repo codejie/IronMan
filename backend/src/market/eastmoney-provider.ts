@@ -23,9 +23,18 @@ export class EastmoneyMarketProvider implements MarketDataProvider {
     const payload = (await response.json()) as EastmoneyPayload;
     const bars = (payload.data?.klines ?? [])
       .map((line) => line.split(","))
-      .map((parts) => ({ date: parts[0] ?? "", open: Number(parts[1]), close: Number(parts[2]), high: Number(parts[3]), low: Number(parts[4]), volume: Number(parts[5]) }))
+      .map((parts) => ({ date: parts[0] ?? "", open: Number(parts[1]), close: Number(parts[2]), high: Number(parts[3]), low: Number(parts[4]), volume: Number(parts[5]), amount: Number(parts[6]), turnoverRate: Number(parts[10]) }))
       .filter((bar) => bar.date.length > 0 && [bar.open, bar.close, bar.high, bar.low, bar.volume].every(Number.isFinite));
     if (bars.length === 0) throw errors.external("Eastmoney 未返回可用的历史行情");
-    return bars;
+    return bars.map((bar) => ({
+      date: bar.date,
+      open: bar.open,
+      close: bar.close,
+      high: bar.high,
+      low: bar.low,
+      volume: bar.volume,
+      ...(Number.isFinite(bar.amount) ? { amount: bar.amount } : {}),
+      ...(Number.isFinite(bar.turnoverRate) ? { turnoverRate: bar.turnoverRate } : {}),
+    }));
   }
 }

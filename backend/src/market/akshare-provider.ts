@@ -101,8 +101,19 @@ function toPriceBar(value: unknown): PriceBar | null {
   const high = numberValue(item.high);
   const low = numberValue(item.low);
   const volume = numberValue(item.volume);
+  const amount = numberValue(item.amount);
+  const turnoverRate = numberValue(item.turnoverRate);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || [open, close, high, low, volume].some((item) => item === null)) return null;
-  return { date, open: open!, close: close!, high: high!, low: low!, volume: volume! };
+  return {
+    date,
+    open: open!,
+    close: close!,
+    high: high!,
+    low: low!,
+    volume: volume!,
+    ...(amount === null ? {} : { amount }),
+    ...(turnoverRate === null ? {} : { turnoverRate }),
+  };
 }
 
 function numberValue(value: unknown): number | null {

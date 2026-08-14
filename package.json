@@ -12,6 +12,10 @@
     "dev:backend": "bun ./scripts/run-backend-with-akshare.ts",
     "start:backend": "bun ./scripts/run-backend-with-akshare.ts start",
     "dev:frontend": "bun run --cwd frontend dev",
+    "dev:all": "bun ./scripts/run-all.ts",
+    "start:all": "bun ./scripts/run-all.ts start",
+    "stop:all": "bun ./scripts/stop-all.ts",
+    "stop:all:force": "bun ./scripts/stop-all.ts -9",
     "db:recover-master": "bun ./scripts/recover-master-database.ts",
     "lint": "bun run --cwd backend lint && bun run --cwd frontend lint",
     "test": "bun run --cwd backend test && bun run --cwd frontend test"

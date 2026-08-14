@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import gc
 from typing import Literal
 
 import httpx
@@ -23,6 +25,7 @@ from .service import (
 )
 
 app = FastAPI(title="IronMan AKShareProvider", version="0.1.0")
+akshare_lock = asyncio.Lock()
 
 
 class HistoryBody(BaseModel):
@@ -80,74 +83,89 @@ def health() -> dict[str, str]:
 
 
 @app.post("/v1/market/history")
-def history(body: HistoryBody) -> dict:
+async def history(body: HistoryBody) -> dict:
     try:
-        return fetch_history(
-            HistoryRequest(
-                asset_type=body.asset_type,
-                exchange=body.exchange,
-                code=body.code,
-                timeframe=body.timeframe,
-                limit=body.limit,
-                end_date=body.end_date,
-                adjust=body.adjust,
-            ),
-            akshare_api(),
-        )
+        async with akshare_lock:
+            return fetch_history(
+                HistoryRequest(
+                    asset_type=body.asset_type,
+                    exchange=body.exchange,
+                    code=body.code,
+                    timeframe=body.timeframe,
+                    limit=body.limit,
+                    end_date=body.end_date,
+                    adjust=body.adjust,
+                ),
+                akshare_api(),
+            )
     except ProviderError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游行情请求失败") from error
+    finally:
+        gc.collect()
 
 
 @app.post("/v1/market/spot")
-def spot(body: SpotBody) -> dict:
+async def spot(body: SpotBody) -> dict:
     try:
-        return fetch_spot(SpotRequest(asset_type=body.asset_type, exchange=body.exchange, code=body.code), akshare_api())
+        async with akshare_lock:
+            return fetch_spot(SpotRequest(asset_type=body.asset_type, exchange=body.exchange, code=body.code), akshare_api())
     except ProviderError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游现货请求失败") from error
+    finally:
+        gc.collect()
 
 
 @app.post("/v1/market/instruments/search")
-def search_instruments(body: InstrumentSearchBody) -> dict:
+async def search_instruments(body: InstrumentSearchBody) -> dict:
     try:
-        return fetch_instruments(InstrumentSearchRequest(asset_type=body.asset_type, query=body.query, limit=body.limit), akshare_api())
+        async with akshare_lock:
+            return fetch_instruments(InstrumentSearchRequest(asset_type=body.asset_type, query=body.query, limit=body.limit), akshare_api())
     except ProviderError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游标的目录请求失败") from error
+    finally:
+        gc.collect()
 
 
 @app.post("/v1/technical/ranking")
-def technical_ranking(body: TechnicalBody) -> dict:
+async def technical_ranking(body: TechnicalBody) -> dict:
     try:
-        return fetch_technical(TechnicalRequest(kind=body.kind, category=body.category, days=body.days, date=body.date), akshare_api())
+        async with akshare_lock:
+            return fetch_technical(TechnicalRequest(kind=body.kind, category=body.category, days=body.days, date=body.date), akshare_api())
     except ProviderError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游技术榜单请求失败") from error
+    finally:
+        gc.collect()
 
 
 @app.post("/v1/news/stock")
-def stock_news(body: NewsBody) -> dict:
+async def stock_news(body: NewsBody) -> dict:
     try:
-        return fetch_news(NewsRequest(code=body.code, limit=body.limit, since=body.since), akshare_api())
+        async with akshare_lock:
+            return fetch_news(NewsRequest(code=body.code, limit=body.limit, since=body.since), akshare_api())
     except ProviderError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=502, detail="AKShare 上游个股新闻请求失败") from error
+    finally:
+        gc.collect()
 
 
 @app.post("/v1/disclosures/cninfo")

@@ -20,6 +20,8 @@ export interface PriceBar {
   high: number;
   low: number;
   volume: number;
+  amount?: number | null;
+  turnoverRate?: number | null;
 }
 
 export interface MarketDataProvider {

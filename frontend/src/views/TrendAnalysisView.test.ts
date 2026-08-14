@@ -114,6 +114,15 @@ describe("TrendAnalysisView strategy navigation", () => {
     expect(source.default).not.toContain("<Bot :size=\"13\" />AI 解读");
   });
 
+  test("uses the archive-style selected state without run-list hover styling", async () => {
+    const source = await import("./TrendAnalysisView.vue?raw");
+
+    expect(source.default).toMatch(/\.trend-run-item\.active\s*\{[^}]*background:\s*#172b41;[^}]*box-shadow:\s*inset 3px 0 #57cfc6;/s);
+    expect(source.default).toMatch(/\.trend-run-item\s*\{[^}]*border-radius:\s*0;/s);
+    expect(source.default).toMatch(/\/\*\s*\.trend-run-item:hover/);
+    expect(source.default).toMatch(/\/\*\s*\.trend-run-delete:hover/);
+  });
+
   test("shows report-level generation state and opens cached interpretations in place", async () => {
     const source = await import("./TrendAnalysisView.vue?raw");
 

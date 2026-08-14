@@ -269,13 +269,15 @@ function toolLabel(name: AssistantReplyMetadata["tools"][number]["name"]): strin
             ><Trash2 :size="14" /></button>
           </article>
         </div>
-        <div class="ai-prompt-panel-heading ai-quick-prompt-heading"><Sparkles :size="17" /><strong>常用问题</strong></div>
-        <button v-for="item in quickPrompts" :key="item.label" class="ai-quick-prompt" :disabled="isLoading || isConversationLoading" type="button" @click="useQuickPrompt(item.text)">
-          <span>{{ item.label }}</span><ChevronRight :size="15" />
-        </button>
-        <div class="ai-capability-note">
-          <ChartNoAxesCombined :size="16" />
-          <p>标的走势、K线和 MA、MACD、RSI、BOLL 由本地数据服务计算与绘制。</p>
+        <div class="ai-quick-prompts">
+          <div class="ai-prompt-panel-heading ai-quick-prompt-heading"><Sparkles :size="17" /><strong>常用问题</strong></div>
+          <button v-for="item in quickPrompts" :key="item.label" class="ai-quick-prompt" :disabled="isLoading || isConversationLoading" type="button" @click="useQuickPrompt(item.text)">
+            <span>{{ item.label }}</span><ChevronRight :size="15" />
+          </button>
+          <div class="ai-capability-note">
+            <ChartNoAxesCombined :size="16" />
+            <p>标的走势、K线和 MA、MACD、RSI、BOLL 由本地数据服务计算与绘制。</p>
+          </div>
         </div>
       </aside>
 
@@ -343,22 +345,27 @@ function toolLabel(name: AssistantReplyMetadata["tools"][number]["name"]): strin
 
 .ai-consultation-layout { display: grid; flex: 1 1 auto; gap: 14px; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-height: 0; }
 .ai-prompt-panel, .ai-chat-panel { background: #101a2a; border: 1px solid #2c4059; border-radius: 8px; min-height: 0; }
-.ai-prompt-panel { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; padding: 12px; }
+.ai-prompt-panel { display: flex; flex-direction: column; gap: 6px; overflow: hidden; padding: 12px; }
 .ai-prompt-panel-heading { align-items: center; border-bottom: 1px solid #273a52; color: #dcf8f5; display: flex; font-size: 13px; gap: 7px; margin-bottom: 3px; padding: 2px 2px 11px; }
 .ai-prompt-panel-heading svg { color: #6cdbcf; }
 .ai-conversation-heading { justify-content: space-between; }
 .ai-conversation-title { align-items: center; display: inline-flex; gap: 7px; }
 .ai-new-chat { font-size: 12px; min-height: 27px; padding: 0 7px; }
-.ai-conversation-list { display: grid; gap: 3px; max-height: 168px; overflow-y: auto; padding-right: 2px; }
-.ai-conversation-item { align-items: stretch; background: transparent; border: 1px solid transparent; border-radius: 5px; color: #b6c7d8; display: grid; gap: 2px; grid-template-columns: minmax(0, 1fr) 24px; min-width: 0; padding: 2px; }
-.ai-conversation-item:hover, .ai-conversation-item:focus-within, .ai-conversation-item.active { background: #182a42; border-color: #355270; color: #eaf8ff; }
-.ai-conversation-select { background: transparent; border: 0; color: inherit; display: grid; gap: 2px; min-width: 0; padding: 3px 4px; text-align: left; }
+.ai-conversation-list { display: grid; flex: 1 1 auto; gap: 0; grid-auto-rows: 56px; min-height: 0; overflow-y: auto; padding-right: 2px; }
+.ai-conversation-item { align-items: stretch; background: transparent; border: 1px solid transparent; border-radius: 0; box-sizing: border-box; color: #b6c7d8; display: grid; gap: 6px; grid-template-columns: minmax(0, 1fr) 24px; height: 56px; min-height: 56px; min-width: 0; padding: 6px 8px; }
+.ai-conversation-item:not(:last-child) { border-bottom-color: #273a52; }
+/* .ai-conversation-item:hover { background: #182a42; border-color: #355270; color: #eaf8ff; } */
+.ai-conversation-item:not(.active):focus-within { background: #182a42; border-color: #355270; color: #eaf8ff; }
+.ai-conversation-item.active { background: #172b41; box-shadow: inset 3px 0 #57cfc6; color: #eaf8ff; }
+.ai-conversation-select { background: transparent; border: 0; color: inherit; display: grid; gap: 6px; min-width: 0; padding: 4px 4px; text-align: left; }
 .ai-conversation-item strong, .ai-conversation-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-conversation-item strong { color: inherit; font-size: 11px; font-weight: 650; }
-.ai-conversation-item span { color: #839bb2; font-size: 10px; }
+.ai-conversation-item strong { color: inherit; font-size: 12px; font-weight: 650; }
+.ai-conversation-item span { color: #839bb2; font-size: 11px; }
 .ai-conversation-delete { align-items: center; align-self: center; background: transparent; border: 0; border-radius: 4px; color: #8099b1; display: inline-flex; height: 24px; justify-content: center; opacity: 0; padding: 0; transition: color 140ms ease, opacity 140ms ease; width: 24px; }
-.ai-conversation-item:hover .ai-conversation-delete, .ai-conversation-item:focus-within .ai-conversation-delete, .ai-conversation-item.active .ai-conversation-delete { opacity: 1; }
-.ai-conversation-delete:hover:not(:disabled) { background: #352536; color: #ff9ba1; }
+/* .ai-conversation-item:hover .ai-conversation-delete { opacity: 1; } */
+.ai-conversation-item:focus-within .ai-conversation-delete, .ai-conversation-item.active .ai-conversation-delete { opacity: 1; }
+/* .ai-conversation-delete:hover:not(:disabled) { background: #352536; color: #ff9ba1; } */
+.ai-quick-prompts { flex: 0 0 auto; }
 .ai-quick-prompt-heading { margin-top: 7px; }
 .ai-quick-prompt { align-items: center; background: transparent; border: 1px solid transparent; border-radius: 5px; color: #b6c7d8; display: flex; font-size: 12px; justify-content: space-between; min-height: 37px; padding: 0 8px; text-align: left; }
 .ai-quick-prompt:hover:not(:disabled) { background: #182a42; border-color: #355270; color: #eaf8ff; }
@@ -398,12 +405,23 @@ function toolLabel(name: AssistantReplyMetadata["tools"][number]["name"]): strin
 .ai-composer textarea:focus { border-color: #65d7ca; outline: 1px solid #65d7ca; }
 .ai-send-button { flex: 0 0 78px; padding: 0 8px; }
 
+/* Match the Trend Analysis shell and keep the conversation rail compact. */
+.ai-consultation { max-width: none; }
+.ai-consultation-header { border-bottom: 1px solid #26384f; margin-bottom: 14px; padding: 2px 0 14px; }
+.ai-consultation-layout { background: #101a2a; border: 1px solid #2d4059; border-radius: 7px; gap: 0; grid-template-columns: 190px minmax(0, 1fr); overflow: hidden; }
+.ai-prompt-panel { background: #0d1727; border: 0; border-right: 1px solid #293d56; border-radius: 0; }
+.ai-chat-panel { background: transparent; border: 0; border-radius: 0; }
+
 @media (max-width: 960px) {
   .ai-consultation-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
   .ai-prompt-panel { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ai-prompt-panel-heading, .ai-capability-note { grid-column: 1 / -1; }
+  .ai-prompt-panel-heading, .ai-conversation-list, .ai-quick-prompts { grid-column: 1 / -1; }
   .ai-capability-note { margin-top: 4px; }
   .ai-consultation-header { align-items: stretch; flex-direction: column; }
   .ai-model-control { justify-content: flex-end; }
+  .ai-prompt-panel { border-bottom: 1px solid #293d56; border-right: 0; }
 }
+.ai-consultation-layout { grid-template-columns: 260px minmax(0, 1fr); }
+@media (max-width: 1080px) { .ai-consultation-layout { grid-template-columns: 238px minmax(0, 1fr); } }
+@media (max-width: 840px) { .ai-consultation-layout { grid-template-columns: 1fr; } }
 </style>

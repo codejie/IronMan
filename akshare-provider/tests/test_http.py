@@ -1,9 +1,11 @@
+import asyncio
+import time
 import unittest
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from akshare_provider.main import app
+from akshare_provider.main import TechnicalBody, app, technical_ranking
 from test_contract import FakeAkShare
 
 
@@ -41,6 +43,27 @@ class AkShareProviderHttpTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["items"][0]["externalId"], "https://finance.eastmoney.com/a/202607301234567890.html")
         self.assertIn("净利润同比增长", response.json()["items"][0]["content"])
+
+    def test_heavy_technical_requests_are_serialized_in_one_process(self):
+        active = 0
+        maximum = 0
+
+        def fake_fetch(_request, _api):
+            nonlocal active, maximum
+            active += 1
+            maximum = max(maximum, active)
+            time.sleep(0.02)
+            active -= 1
+            return {"source": "akshare", "columns": ["股票代码"], "rows": []}
+
+        async def run_requests():
+            bodies = [TechnicalBody(kind="uptrend"), TechnicalBody(kind="high_volume")]
+            return await asyncio.gather(*(technical_ranking(body) for body in bodies))
+
+        with patch("akshare_provider.main.fetch_technical", side_effect=fake_fetch), patch("akshare_provider.main.akshare_api", return_value=FakeAkShare()):
+            asyncio.run(run_requests())
+
+        self.assertEqual(maximum, 1)
 
 
 if __name__ == "__main__":

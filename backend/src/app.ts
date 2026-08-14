@@ -24,6 +24,10 @@ import {
 } from "./services/automation-service";
 import { BackupService } from "./services/backup-service";
 import { AuthService, type PublicUser } from "./services/auth-service";
+import {
+  AiCandidateService,
+  CANDIDATE_STRATEGIES,
+} from "./services/ai-candidate-service";
 import { IndicatorService } from "./services/indicator-service";
 import { FundHistoryService } from "./services/fund-history-service";
 import {
@@ -99,6 +103,8 @@ const priceBarSchema = z.object({
   high: z.number(),
   low: z.number(),
   volume: z.number(),
+  amount: z.number().nullable().optional(),
+  turnoverRate: z.number().nullable().optional(),
 });
 const marketSnapshotPointSchema = z.object({
   capturedAt: z.string().datetime(),
@@ -201,6 +207,33 @@ const thirdPartyInfoGroupSchema = z.object({
       openInNewWindow: z.boolean(),
     }),
   ),
+});
+const candidateStrategySchema = z.enum(CANDIDATE_STRATEGIES);
+const candidateSettingsSchema = z.object({
+  enabled: z.boolean(),
+  strategies: z.array(candidateStrategySchema).min(1),
+  topN: z.union([z.literal(5), z.literal(10), z.literal(20)]),
+  explanationValidityDays: z.literal(10),
+  maxValidityDays: z.literal(20),
+  scheduledTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  retentionDays: z.number().int().min(1).max(30),
+});
+const candidateRunSchema = z.object({
+  id: z.string().uuid(),
+  trigger: z.enum(["manual", "scheduled"]),
+  tradeDate: z.string(),
+  status: z.enum(["queued", "running", "completed", "partial", "failed", "cancelled"]),
+  progress: z.number().int().min(0).max(100),
+  requestedTopN: z.union([z.literal(5), z.literal(10), z.literal(20)]),
+  strategies: z.array(candidateStrategySchema),
+  algorithmVersion: z.string(),
+  marketRegime: z.unknown(),
+  dataQuality: z.record(z.string(), z.unknown()),
+  modelSnapshot: z.record(z.string(), z.unknown()),
+  errorMessage: z.string().nullable(),
+  createdAt: z.string().datetime(),
+  startedAt: z.string().datetime().nullable(),
+  completedAt: z.string().datetime().nullable(),
 });
 
 function responseSchema<T extends z.ZodType>(result: T) {
@@ -305,7 +338,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     tradingCalendar,
     {
       generate: (input) => assistant.generateHoldingDiagnosis(input),
-      getModelSnapshot: (userId) => assistant.getHoldingDiagnosisModelSnapshot(userId),
+      getModelSnapshot: (userId) => ({ ...assistant.getHoldingDiagnosisModelSnapshot(userId) }),
     },
     createHoldingDiagnosisSources({
       baseUrl: config.akshareProviderUrl,
@@ -313,6 +346,17 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     }),
     undefined,
     readHoldingDiagnosisSource,
+  );
+  const candidates = new AiCandidateService(
+    database,
+    settings,
+    market,
+    thirdParty,
+    tradingCalendar,
+    {
+      generate: (userId, input) => assistant.generateCandidateExplanation(userId, input),
+      getModelSnapshot: (userId) => ({ ...assistant.getHoldingDiagnosisModelSnapshot(userId) }),
+    },
   );
   const strategies = new StrategyService(database, market);
   const tasks = new AnalysisTaskService(
@@ -335,6 +379,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     tasks,
     snapshots,
     diagnosis,
+    candidates,
   );
   const scheduler = new AutomationScheduler(automation);
   const notes = new NoteService(database, market);
@@ -4794,6 +4839,115 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       }
     });
   });
+
+  const candidateStartSchema = z.object({
+    trigger: z.enum(["manual", "scheduled"]).optional(),
+    tradeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    topN: z.union([z.literal(5), z.literal(10), z.literal(20)]).optional(),
+    strategies: z.array(candidateStrategySchema).min(1).max(3).optional(),
+  });
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/settings/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: { 200: { description: "AI candidate settings", content: { "application/json": { schema: responseSchema(candidateSettingsSchema) } } } },
+    }),
+    (context) => context.json(success(candidates.getSettings(context.get("currentUser").id)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/settings/update",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(candidateSettingsSchema.partial()) },
+      responses: { 200: { description: "Updated AI candidate settings", content: { "application/json": { schema: responseSchema(candidateSettingsSchema) } } } },
+    }),
+    (context) => context.json(success(candidates.updateSettings(context.get("currentUser").id, context.req.valid("json"))), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/runs/create",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(candidateStartSchema) },
+      responses: { 202: { description: "Queued AI candidate run", content: { "application/json": { schema: responseSchema(candidateRunSchema) } } } },
+    }),
+    (context) => context.json(success(candidates.start(context.get("currentUser").id, context.req.valid("json")), "候选分析已排队"), 202),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/runs/list",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ limit: z.number().int().min(1).max(200).default(60) })) },
+      responses: { 200: { description: "AI candidate runs", content: { "application/json": { schema: responseSchema(z.object({ items: z.array(candidateRunSchema) })) } } } },
+    }),
+    (context) => context.json(success({ items: candidates.listRuns(context.get("currentUser").id, context.req.valid("json").limit) }), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/runs/detail",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ id: z.string().uuid() })) },
+      responses: { 200: { description: "AI candidate run detail", content: { "application/json": { schema: responseSchema(z.unknown()) } } } },
+    }),
+    (context) => context.json(success(candidates.detail(context.get("currentUser").id, context.req.valid("json").id)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/runs/cancel",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ id: z.string().uuid() })) },
+      responses: { 200: { description: "Cancelled AI candidate run", content: { "application/json": { schema: responseSchema(candidateRunSchema) } } } },
+    }),
+    (context) => context.json(success(candidates.cancel(context.get("currentUser").id, context.req.valid("json").id)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/runs/delete",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ tradeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) })) },
+      responses: { 200: { description: "Deleted AI candidate date record", content: { "application/json": { schema: responseSchema(z.object({ deleted: z.literal(true) })) } } } },
+    }),
+    (context) => context.json(success(candidates.deleteDate(context.get("currentUser").id, context.req.valid("json").tradeDate)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/latest",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ tradeDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() })) },
+      responses: { 200: { description: "Latest AI candidate report", content: { "application/json": { schema: responseSchema(z.unknown()) } } } },
+    }),
+    async (context) => context.json(success(await candidates.latest(context.get("currentUser").id, context.req.valid("json").tradeDate)), 200),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/analysis/ai-candidates/evaluations/summary",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: { 200: { description: "AI candidate evaluation summary", content: { "application/json": { schema: responseSchema(z.unknown()) } } } },
+    }),
+    async (context) => {
+      await candidates.settle(context.get("currentUser").id);
+      return context.json(success(candidates.evaluationSummary(context.get("currentUser").id)), 200);
+    },
+  );
 
   app.openapi(
     createRoute({

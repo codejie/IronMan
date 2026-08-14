@@ -128,6 +128,54 @@ describe("AiConsultationView", () => {
     expect(mocks.chat).not.toHaveBeenCalled();
   });
 
+  test("keeps quick prompts in a fixed bottom region below the scrollable conversation list", async () => {
+    mocks.listAssistantConversations.mockResolvedValue({
+      items: [
+        { id: "conversation-1", title: "最新会话", lastMessagePreview: "最新内容", createdAt: "2026-07-27T00:00:00.000Z", updatedAt: "2026-07-27T00:02:00.000Z" },
+        { id: "conversation-2", title: "较早会话", lastMessagePreview: "较早内容", createdAt: "2026-07-27T00:00:00.000Z", updatedAt: "2026-07-27T00:01:00.000Z" }
+      ]
+    });
+    mocks.getAssistantConversation.mockImplementation(async (_token: string, id: string) => ({
+      id,
+      title: id === "conversation-1" ? "最新会话" : "较早会话",
+      lastMessagePreview: id === "conversation-1" ? "最新内容" : "较早内容",
+      createdAt: "2026-07-27T00:00:00.000Z",
+      updatedAt: id === "conversation-1" ? "2026-07-27T00:02:00.000Z" : "2026-07-27T00:01:00.000Z",
+      messages: []
+    }));
+    const wrapper = mount(AiConsultationView);
+    await flushPromises();
+
+    const panel = wrapper.get(".ai-prompt-panel");
+    const sections = Array.from(panel.element.children);
+    const conversationList = panel.get(".ai-conversation-list").element;
+    const quickPromptPanel = panel.get(".ai-quick-prompts").element;
+    const rows = panel.findAll(".ai-conversation-item");
+
+    expect(sections.indexOf(conversationList)).toBeLessThan(sections.indexOf(quickPromptPanel));
+    expect(rows).toHaveLength(2);
+    expect(quickPromptPanel.querySelector(".ai-quick-prompt-heading")).not.toBeNull();
+    expect(quickPromptPanel.querySelectorAll(".ai-quick-prompt")).toHaveLength(4);
+    expect(quickPromptPanel.querySelector(".ai-capability-note")).not.toBeNull();
+  });
+
+  test("uses the archive-style selected state without conversation hover styling", async () => {
+    const source = await import("./AiConsultationView.vue?raw");
+
+    expect(source.default).toMatch(/\.ai-conversation-item\.active\s*\{[^}]*background:\s*#172b41;[^}]*box-shadow:\s*inset 3px 0 #57cfc6;/s);
+    expect(source.default).toMatch(/\.ai-conversation-item\s*\{[^}]*border-radius:\s*0;/s);
+    expect(source.default).toMatch(/\/\*\s*\.ai-conversation-item:hover/);
+    expect(source.default).toMatch(/\/\*\s*\.ai-conversation-delete:hover/);
+  });
+
+  test("uses the Trend Analysis shell baseline for the conversation workspace", async () => {
+    const source = await import("./AiConsultationView.vue?raw");
+
+    expect(source.default).toMatch(/\.ai-consultation-header\s*\{[^}]*border-bottom:\s*1px solid #26384f;[^}]*padding:\s*2px 0 14px;/s);
+    expect(source.default).toMatch(/\.ai-consultation-layout\s*\{[^}]*grid-template-columns:\s*260px minmax\(0, 1fr\);[^}]*\}/s);
+    expect(source.default).toMatch(/\.ai-prompt-panel\s*\{[^}]*background:\s*#0d1727;[^}]*border-right:\s*1px solid #293d56;/s);
+  });
+
   test("uses a compact left-panel command for a new conversation", async () => {
     const wrapper = mount(AiConsultationView);
     await flushPromises();

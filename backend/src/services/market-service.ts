@@ -35,6 +35,8 @@ interface BarRow {
   high: number;
   low: number;
   volume: number;
+  amount: number | null;
+  turnover_rate: number | null;
 }
 
 const defaultConfig: DataSourceConfig = { primary: "tencent", fallback: "mock" };
@@ -320,12 +322,21 @@ export class MarketService {
   private getCachedBars(instrumentId: string, timeframe: Timeframe, source: MarketSource): PriceBar[] {
     return this.database
       .all<BarRow>(
-        `SELECT trade_date, open, close, high, low, volume FROM market_bars
+        `SELECT trade_date, open, close, high, low, volume, amount, turnover_rate FROM market_bars
           WHERE instrument_id = $instrumentId AND timeframe = $timeframe AND source = $source
           ORDER BY trade_date ASC`,
         { instrumentId, timeframe, source }
       )
-      .map((row) => ({ date: row.trade_date, open: row.open, close: row.close, high: row.high, low: row.low, volume: row.volume }));
+      .map((row) => ({
+        date: row.trade_date,
+        open: row.open,
+        close: row.close,
+        high: row.high,
+        low: row.low,
+        volume: row.volume,
+        ...(row.amount === null ? {} : { amount: row.amount }),
+        ...(row.turnover_rate === null ? {} : { turnoverRate: row.turnover_rate }),
+      }));
   }
 
   private takeRecentBars(bars: PriceBar[], limit: number): PriceBar[] {
@@ -340,10 +351,10 @@ export class MarketService {
     const now = new Date().toISOString();
     for (const bar of bars) {
       this.database.run(
-        `INSERT INTO market_bars (id, instrument_id, timeframe, source, trade_date, open, close, high, low, volume, created_at)
-         VALUES ($id, $instrumentId, $timeframe, $source, $tradeDate, $open, $close, $high, $low, $volume, $createdAt)
+        `INSERT INTO market_bars (id, instrument_id, timeframe, source, trade_date, open, close, high, low, volume, amount, turnover_rate, created_at)
+         VALUES ($id, $instrumentId, $timeframe, $source, $tradeDate, $open, $close, $high, $low, $volume, $amount, $turnoverRate, $createdAt)
          ON CONFLICT(instrument_id, timeframe, source, trade_date)
-         DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume`,
+         DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume, amount = excluded.amount, turnover_rate = excluded.turnover_rate`,
         {
           id: crypto.randomUUID(),
           instrumentId,
@@ -355,6 +366,8 @@ export class MarketService {
           high: bar.high,
           low: bar.low,
           volume: bar.volume,
+          amount: bar.amount ?? null,
+          turnoverRate: bar.turnoverRate ?? null,
           createdAt: now
         }
       );

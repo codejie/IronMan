@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   marketSnapshotStatus: vi.fn(),
   deleteMarketSnapshots: vi.fn(),
   getAiConfig: vi.fn(),
+  getAiCandidateSettings: vi.fn(),
+  updateAiCandidateSettings: vi.fn(),
   getAlertSettings: vi.fn(),
   getHoldingDiagnosisSettings: vi.fn(),
   holdingDiagnosisSourceCatalog: vi.fn(),
@@ -30,6 +32,8 @@ vi.mock("@/api/client", () => ({
     marketSnapshotStatus: mocks.marketSnapshotStatus,
     deleteMarketSnapshots: mocks.deleteMarketSnapshots,
     getAiConfig: mocks.getAiConfig,
+    getAiCandidateSettings: mocks.getAiCandidateSettings,
+    updateAiCandidateSettings: mocks.updateAiCandidateSettings,
     getAlertSettings: mocks.getAlertSettings,
     getHoldingDiagnosisSettings: mocks.getHoldingDiagnosisSettings,
     holdingDiagnosisSourceCatalog: mocks.holdingDiagnosisSourceCatalog,
@@ -61,6 +65,8 @@ describe("SystemConfigurationView", () => {
     mocks.marketSnapshotStatus.mockReset();
     mocks.deleteMarketSnapshots.mockReset();
     mocks.getAiConfig.mockReset();
+    mocks.getAiCandidateSettings.mockReset();
+    mocks.updateAiCandidateSettings.mockReset();
     mocks.getAlertSettings.mockReset();
     mocks.getHoldingDiagnosisSettings.mockReset();
     mocks.holdingDiagnosisSourceCatalog.mockReset();
@@ -107,6 +113,24 @@ describe("SystemConfigurationView", () => {
       models: [{ id: "local", name: "本地工作台助手", provider: "local", enabled: true, default: true }],
       systemPrompt: "test",
       defaultSystemPrompt: "test",
+    });
+    mocks.getAiCandidateSettings.mockResolvedValue({
+      enabled: true,
+      strategies: ["trend_event", "quality_growth", "value_repair"],
+      topN: 10,
+      explanationValidityDays: 10,
+      maxValidityDays: 20,
+      scheduledTime: "18:30",
+      retentionDays: 30,
+    });
+    mocks.updateAiCandidateSettings.mockResolvedValue({
+      enabled: true,
+      strategies: ["trend_event", "quality_growth", "value_repair"],
+      topN: 10,
+      explanationValidityDays: 10,
+      maxValidityDays: 20,
+      scheduledTime: "18:30",
+      retentionDays: 20,
     });
     mocks.getAlertSettings.mockResolvedValue({
       systemMode: "suggest",
@@ -279,13 +303,27 @@ describe("SystemConfigurationView", () => {
     expect(wrapper.text()).toContain("持仓诊断配置已保存");
   });
 
+  test("saves AI candidate date retention settings", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+    const candidateNav = wrapper.findAll(".system-configuration-nav-item").find((button) => button.text().includes("AI 候选"));
+    if (candidateNav === undefined) throw new Error("AI candidate section was not rendered");
+    await candidateNav.trigger("click");
+    const form = wrapper.get("form[aria-label='AI 候选配置']");
+    await form.get("select[aria-label='AI 候选记录保留天数']").setValue("20");
+    await form.trigger("submit");
+    await flushPromises();
+    expect(mocks.updateAiCandidateSettings).toHaveBeenCalledWith("test-token", { retentionDays: 20 });
+    expect(wrapper.text()).toContain("AI 候选记录保留设置已保存");
+  });
+
   test("keeps AI models in a compact collapsible list and expands a new model for editing", async () => {
     const wrapper = mount(SystemConfigurationView);
     await flushPromises();
 
     const aiNav = wrapper
       .findAll(".system-configuration-nav-item")
-      .find((button) => button.text().includes("AI"));
+      .find((button) => button.text().includes("AI 服务"));
     if (aiNav === undefined) throw new Error("AI section was not rendered");
     await aiNav.trigger("click");
 

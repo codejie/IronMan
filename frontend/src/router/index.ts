@@ -59,6 +59,16 @@ const router = createRouter({
           meta: { title: "持仓诊断" },
         },
         {
+          path: "analysis/ai-candidates",
+          component: () => import("@/views/AiCandidatesView.vue"),
+          meta: { title: "AI候选" },
+        },
+        {
+          path: "analysis/ai-candidates/evaluation",
+          component: () => import("@/views/AiCandidateEvaluationView.vue"),
+          meta: { title: "AI候选效果评估" },
+        },
+        {
           path: "analysis/agent",
           component: () => import("@/views/AiConsultationView.vue"),
           meta: { title: "AI咨询" },

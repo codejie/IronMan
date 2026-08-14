@@ -669,6 +669,149 @@ const migrations: Migration[] = [
       ALTER TABLE holding_diagnosis_sources ADD COLUMN summary_kind TEXT;
       ALTER TABLE holding_diagnosis_sources ADD COLUMN source_insight_json TEXT;
     `
+  },
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE market_bars ADD COLUMN amount REAL;
+      ALTER TABLE market_bars ADD COLUMN turnover_rate REAL;
+
+      CREATE TABLE IF NOT EXISTS ai_candidate_runs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        trigger TEXT NOT NULL CHECK (trigger IN ('manual', 'scheduled')),
+        trade_date TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'completed', 'partial', 'failed', 'cancelled')),
+        progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+        requested_top_n INTEGER NOT NULL CHECK (requested_top_n IN (5, 10, 20)),
+        strategies_json TEXT NOT NULL,
+        algorithm_version TEXT NOT NULL,
+        market_regime_json TEXT NOT NULL,
+        data_quality_json TEXT NOT NULL,
+        model_snapshot_json TEXT NOT NULL,
+        error_message TEXT,
+        cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK (cancel_requested IN (0, 1)),
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS ai_candidate_runs_owner_idx ON ai_candidate_runs(user_id, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS ai_candidate_active_run_idx
+        ON ai_candidate_runs(user_id, trigger, trade_date)
+        WHERE status IN ('queued', 'running');
+
+      CREATE TABLE IF NOT EXISTS ai_candidate_items (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES ai_candidate_runs(id) ON DELETE CASCADE,
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        strategy TEXT NOT NULL CHECK (strategy IN ('trend_event', 'quality_growth', 'value_repair')),
+        rank INTEGER,
+        score REAL NOT NULL,
+        percentile REAL NOT NULL,
+        selected INTEGER NOT NULL DEFAULT 0 CHECK (selected IN (0, 1)),
+        score_snapshot_json TEXT NOT NULL,
+        evidence_snapshot_json TEXT NOT NULL,
+        explanation_json TEXT,
+        ai_status TEXT NOT NULL CHECK (ai_status IN ('pending', 'completed', 'local', 'unavailable')),
+        data_quality TEXT NOT NULL CHECK (data_quality IN ('complete', 'partial', 'stale', 'unavailable')),
+        rejection_reason TEXT,
+        cycle_id TEXT,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ai_candidate_items_run_idx ON ai_candidate_items(user_id, run_id, strategy, selected, score DESC);
+      CREATE INDEX IF NOT EXISTS ai_candidate_items_instrument_idx ON ai_candidate_items(user_id, instrument_id, strategy, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_candidate_cycles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        strategy TEXT NOT NULL CHECK (strategy IN ('trend_event', 'quality_growth', 'value_repair')),
+        instrument_id TEXT NOT NULL REFERENCES instruments(id) ON DELETE RESTRICT,
+        first_item_id TEXT NOT NULL REFERENCES ai_candidate_items(id) ON DELETE CASCADE,
+        latest_item_id TEXT NOT NULL REFERENCES ai_candidate_items(id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN ('waiting_entry', 'tracking', 'matured', 'invalidated', 'not_executable', 'indeterminate')),
+        signal_date TEXT NOT NULL,
+        entry_date TEXT,
+        entry_price REAL,
+        valid_until TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS ai_candidate_active_cycle_idx ON ai_candidate_cycles(user_id, strategy, instrument_id) WHERE state IN ('waiting_entry', 'tracking');
+
+      CREATE TABLE IF NOT EXISTS ai_candidate_evaluations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES ai_candidate_items(id) ON DELETE CASCADE,
+        cycle_id TEXT REFERENCES ai_candidate_cycles(id) ON DELETE SET NULL,
+        horizon INTEGER NOT NULL CHECK (horizon IN (5, 10, 20)),
+        state TEXT NOT NULL CHECK (state IN ('pending', 'matured', 'not_executable', 'indeterminate', 'invalidated', 'insufficient_data')),
+        target_date TEXT,
+        actual_date TEXT,
+        entry_price REAL,
+        exit_price REAL,
+        benchmark_return REAL,
+        industry_return REAL,
+        gross_return REAL,
+        net_return REAL,
+        market_excess_return REAL,
+        industry_excess_return REAL,
+        mfe REAL,
+        mae REAL,
+        max_drawdown REAL,
+        invalidation_result INTEGER,
+        data_quality TEXT NOT NULL CHECK (data_quality IN ('complete', 'partial', 'stale', 'unavailable')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(item_id, horizon)
+      );
+      CREATE INDEX IF NOT EXISTS ai_candidate_evaluations_owner_idx ON ai_candidate_evaluations(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ai_candidate_run_logs (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES ai_candidate_runs(id) ON DELETE CASCADE,
+        level TEXT NOT NULL CHECK (level IN ('info', 'error')),
+        stage TEXT NOT NULL,
+        message TEXT NOT NULL,
+        context_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ai_candidate_run_logs_idx ON ai_candidate_run_logs(user_id, run_id, created_at ASC);
+    `
+  },
+  {
+    version: 16,
+    sql: `
+      CREATE TABLE IF NOT EXISTS ai_candidate_daily_runs (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        trade_date TEXT NOT NULL,
+        current_run_id TEXT NOT NULL REFERENCES ai_candidate_runs(id) ON DELETE RESTRICT,
+        pending_run_id TEXT REFERENCES ai_candidate_runs(id) ON DELETE SET NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(user_id, trade_date),
+        UNIQUE(current_run_id)
+      );
+      CREATE INDEX IF NOT EXISTS ai_candidate_daily_runs_date_idx
+        ON ai_candidate_daily_runs(user_id, trade_date DESC);
+
+      WITH ranked AS (
+        SELECT id, user_id, trade_date, created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY user_id, trade_date
+            ORDER BY
+              CASE WHEN status IN ('queued', 'running', 'completed', 'partial') THEN 0 ELSE 1 END,
+              created_at DESC,
+              id DESC
+          ) AS row_num
+        FROM ai_candidate_runs
+      )
+      INSERT OR IGNORE INTO ai_candidate_daily_runs (user_id, trade_date, current_run_id, pending_run_id, created_at, updated_at)
+      SELECT user_id, trade_date, id, NULL, created_at, created_at
+      FROM ranked
+      WHERE row_num = 1;
+    `
   }
 ];
 

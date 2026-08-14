@@ -34,6 +34,10 @@ import type {
   HoldingDiagnosisSourceInsight,
   HoldingDiagnosisTurningPoint,
 } from "./holding-diagnosis-service";
+import type {
+  CandidateExplanation,
+  CandidateExplanationRequest,
+} from "./ai-candidate-service";
 
 export type AiProvider = "local" | "deepseek" | "ollama" | "openai_compatible";
 
@@ -301,6 +305,44 @@ export class AssistantService {
       userMessage,
       assistantMessage,
     };
+  }
+
+  async generateCandidateExplanation(
+    userId: string,
+    input: CandidateExplanationRequest,
+  ): Promise<{ explanation: CandidateExplanation; model: Record<string, unknown> } | null> {
+    const config = this.selectModel(this.privateModels(userId));
+    if (
+      config.provider === "local" ||
+      !config.baseUrl ||
+      !config.model ||
+      (config.provider !== "ollama" && !config.apiKey)
+    ) return null;
+
+    const system = [
+      "你是 IronMan 的股票研究候选解释器。",
+      "只把给定的结构化量化证据整理成条件化研究建议，不修改评分，不新增标的，不执行交易。",
+      "只能引用 evidence 中的 evidenceId；没有依据的价格字段必须返回 null。",
+      "必须只返回 JSON：{summary,action,thesis,counterEvidence,referencePriceLow,referencePriceHigh,invalidationPrice,validUntil,uncertainty,evidenceIds}。",
+      "action 只能是 observe、wait_pullback、wait_breakout、research_further、avoid。",
+    ].join("\n");
+    const messages: OpenAiMessage[] = [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(input) },
+    ];
+    try {
+      const response = await this.requestCompletion(config, messages, [], 45_000, {
+        responseFormat: config.provider === "deepseek" ? "json_object" : undefined,
+        maxTokens: 1_200,
+      });
+      const content = response.choices?.[0]?.message?.content?.trim();
+      if (!content) return null;
+      const explanation = validateCandidateExplanation(JSON.parse(content), input);
+      if (explanation === null) return null;
+      return { explanation, model: { id: config.id, name: config.name, provider: config.provider, model: config.model } };
+    } catch {
+      return null;
+    }
   }
 
   async generateHoldingDiagnosis(input: HoldingDiagnosisModelInput): Promise<HoldingDiagnosisModelOutput> {
@@ -2197,4 +2239,23 @@ function trendDirectionLabel(
 
 function trendRiskLabel(level: TrendReportAssessment["risk"]["level"]): string {
   return level === "high" ? "高风险" : level === "medium" ? "中风险" : "低风险";
+}
+
+function validateCandidateExplanation(value: unknown, input: CandidateExplanationRequest): CandidateExplanation | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const actions = new Set(["observe", "wait_pullback", "wait_breakout", "research_further", "avoid"]);
+  const action = typeof raw.action === "string" && actions.has(raw.action) ? raw.action as CandidateExplanation["action"] : null;
+  const summary = typeof raw.summary === "string" ? raw.summary.trim().slice(0, 600) : "";
+  const thesis = Array.isArray(raw.thesis) ? raw.thesis.filter((item): item is string => typeof item === "string").map((item) => item.trim().slice(0, 160)).filter(Boolean).slice(0, 5) : [];
+  const counterEvidence = Array.isArray(raw.counterEvidence) ? raw.counterEvidence.filter((item): item is string => typeof item === "string").map((item) => item.trim().slice(0, 160)).filter(Boolean).slice(0, 5) : [];
+  const evidenceIds = Array.isArray(raw.evidenceIds) ? raw.evidenceIds.filter((item): item is string => typeof item === "string" && input.evidence.some((evidence) => evidence.id === item)).slice(0, 12) : [];
+  const price = (key: string): number | null => raw[key] === null ? null : typeof raw[key] === "number" && Number.isFinite(raw[key]) && raw[key] >= 0 ? raw[key] : null;
+  const low = price("referencePriceLow");
+  const high = price("referencePriceHigh");
+  const invalidation = price("invalidationPrice");
+  const validUntil = typeof raw.validUntil === "string" && raw.validUntil >= input.signalDate && raw.validUntil <= input.maxValidUntil ? raw.validUntil : input.fallbackValidUntil;
+  if (action === null || summary.length === 0 || evidenceIds.length === 0) return null;
+  if (low !== null && high !== null && low > high) return null;
+  return { summary, action, thesis, counterEvidence, referencePriceLow: low, referencePriceHigh: high, invalidationPrice: invalidation, validUntil, uncertainty: typeof raw.uncertainty === "string" ? raw.uncertainty.trim().slice(0, 200) : "模型解释存在不确定性，请结合原始证据复核。", evidenceIds };
 }
