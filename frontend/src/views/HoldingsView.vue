@@ -14,6 +14,7 @@ import { holdingProfitSummary, holdingQuoteDateLabel } from "./holdings-presenta
 import { formatDateTime, formatDate } from "@/utils/date-format";
 
 type Dialog = "create" | "capital" | "delete-holding";
+const intradaySnapshotLookbackDays = 45;
 
 const { token } = useSession();
 const router = useRouter();
@@ -261,8 +262,8 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
   try {
     const now = new Date();
     const endAt = now.toISOString();
-    // Always fetch 5 days of data to support all range options
-    const startAt = new Date(now.getTime() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    // The backend limits storage to at most 15 trading days; this covers holidays and weekends.
+    const startAt = new Date(now.getTime() - intradaySnapshotLookbackDays * 24 * 60 * 60 * 1000).toISOString();
     const response = await api.marketSnapshotSeries(accessToken, instrumentId, startAt, endAt);
     if (version !== intradayRequestVersion) return;
     // Store full data in cache

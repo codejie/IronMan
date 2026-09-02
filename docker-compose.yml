@@ -1,40 +1,40 @@
 services:
-  backend:
+  app:
+    image: ironman:arm64
+    platform: linux/arm64
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: Dockerfile
+      platforms:
+        - linux/arm64
     environment:
-      DATABASE_PATH: /app/data/ironman.sqlite
-      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before starting IronMan}
-      IRONMAN_BACKEND_HOST: 0.0.0.0
-      IRONMAN_BACKEND_PORT: ${IRONMAN_BACKEND_PORT:-6101}
-      TOKEN_TTL_SECONDS: 604800
+      - DATABASE_PATH=/app/data/ironman.sqlite
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env before starting IronMan}
+      - IRONMAN_BACKEND_HOST=0.0.0.0
+      - IRONMAN_BACKEND_PORT=${IRONMAN_BACKEND_PORT:-6101}
+      - IRONMAN_FRONTEND_HOST=0.0.0.0
+      - IRONMAN_FRONTEND_PORT=6100
+      - AKSHARE_PROVIDER_AUTOSTART=false
+      - AKSHARE_PROVIDER_URL
+      - TOKEN_TTL_SECONDS=604800
     volumes:
-      - ${IRONMAN_DATA_DIR:-./data}:/app/data
+      - type: bind
+        source: ${IRONMAN_DATA_DIR:-./data}
+        target: /app/data
+        bind:
+          create_host_path: true
+    ports:
+      - ${IRONMAN_FRONTEND_PORT:-6100}:6100
     healthcheck:
       test:
         [
           "CMD",
           "bun",
           "-e",
-          "const response = await fetch('http://127.0.0.1:${IRONMAN_BACKEND_PORT:-6101}/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); if (!response.ok) process.exit(1);"
+          "const response = await fetch('http://127.0.0.1:6100/api/health', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }); if (!response.ok) process.exit(1);"
         ]
       interval: 15s
       timeout: 5s
       retries: 5
       start_period: 10s
-    restart: unless-stopped
-
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    depends_on:
-      backend:
-        condition: service_healthy
-    environment:
-      BACKEND_UPSTREAM_HOST: backend
-      BACKEND_UPSTREAM_PORT: ${IRONMAN_BACKEND_PORT:-6101}
-    ports:
-      - ${IRONMAN_FRONTEND_PORT:-6100}:80
     restart: unless-stopped

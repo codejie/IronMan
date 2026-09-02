@@ -206,7 +206,8 @@ export class MarketSnapshotService {
     const config = this.getSettings(userId);
     if (!config.enabled || config.mode !== "manual" || !this.isEligibleNow(userId, config, now)) return false;
     if (!this.scopeIncludesOrigin(config.scope, origin) || !this.isCurrentScopeTarget(userId, config.scope, instrumentId)) return false;
-    return this.storeCurrentSnapshot(userId, instrumentId, source, "manual", bar, now);
+    const cleanupTradeDate = this.cleanupExpiredSnapshots(userId, config.retentionDays, localParts(now).date);
+    return this.storeCurrentSnapshot(userId, instrumentId, source, "manual", bar, now, cleanupTradeDate);
   }
 
   async captureDueAutomatic(now = this.clock()): Promise<void> {
@@ -236,7 +237,7 @@ export class MarketSnapshotService {
 
   private async captureAutomaticForUser(userId: string, config: MarketSnapshotSettings, now: Date): Promise<void> {
     const local = localParts(now);
-    this.cleanupExpiredSnapshots(userId, config.retentionDays, local.date);
+    const cleanupTradeDate = this.cleanupExpiredSnapshots(userId, config.retentionDays, local.date);
     const targets = this.listScopeInstrumentIds(userId, config.scope);
     let captured = 0;
     let skipped = 0;
@@ -262,7 +263,7 @@ export class MarketSnapshotService {
       failed,
       lastError,
       success: captured > 0,
-      cleanupTradeDate: local.date,
+      cleanupTradeDate,
     });
   }
 
@@ -273,6 +274,7 @@ export class MarketSnapshotService {
     mode: MarketSnapshotMode,
     bar: PriceBar,
     now: Date,
+    cleanupTradeDate?: string,
   ): boolean {
     const local = localParts(now);
     if (bar.date !== local.date || !this.isSupportedInstrument(instrumentId)) return false;
@@ -315,19 +317,23 @@ export class MarketSnapshotService {
       failed: 0,
       lastError: null,
       success: true,
+      cleanupTradeDate,
     });
     return true;
   }
 
-  private cleanupExpiredSnapshots(userId: string, retentionDays: number, tradeDate: string): void {
+  private cleanupExpiredSnapshots(userId: string, retentionDays: number, tradeDate: string): string | undefined {
     const state = this.stateFor(userId);
-    if (state?.last_cleanup_trade_date === tradeDate) return;
-    const threshold = new Date(`${tradeDate}T00:00:00.000Z`);
-    threshold.setUTCDate(threshold.getUTCDate() - retentionDays);
+    if (state?.last_cleanup_trade_date === tradeDate) return undefined;
+    const firstCalendarYear = Number(tradeDate.slice(0, 4)) - 1;
+    const retainedTradeDates = this.calendar.getTradeDays(userId, `${firstCalendarYear}-01-01`, tradeDate);
+    const earliestRetainedTradeDate = retainedTradeDates.at(-retentionDays);
+    if (earliestRetainedTradeDate === undefined) return undefined;
     this.database.run(
-      "DELETE FROM market_intraday_snapshots WHERE user_id = $userId AND captured_at < $threshold",
-      { userId, threshold: threshold.toISOString() },
+      "DELETE FROM market_intraday_snapshots WHERE user_id = $userId AND trade_date < $earliestRetainedTradeDate",
+      { userId, earliestRetainedTradeDate },
     );
+    return tradeDate;
   }
 
   private isEligibleNow(userId: string, config: MarketSnapshotSettings, now: Date): boolean {

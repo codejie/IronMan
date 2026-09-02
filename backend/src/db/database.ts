@@ -812,6 +812,13 @@ const migrations: Migration[] = [
       FROM ranked
       WHERE row_num = 1;
     `
+  },
+  {
+    version: 17,
+    sql: `
+      CREATE INDEX IF NOT EXISTS market_intraday_snapshots_trade_date_idx
+        ON market_intraday_snapshots(user_id, trade_date ASC);
+    `
   }
 ];
 

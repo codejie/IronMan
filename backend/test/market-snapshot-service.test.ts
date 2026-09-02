@@ -18,6 +18,7 @@ let snapshots: MarketSnapshotService;
 let providerCalls = 0;
 
 const tradingMorning = new Date("2026-07-31T02:00:00.000Z");
+const mondayTradingMorning = new Date("2026-08-03T02:00:00.000Z");
 const latestBar: PriceBar = {
   date: "2026-07-31",
   open: 10,
@@ -26,6 +27,7 @@ const latestBar: PriceBar = {
   low: 9.8,
   volume: 3200,
 };
+const mondayBar: PriceBar = { ...latestBar, date: "2026-08-03" };
 
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "ironman-market-snapshot-"));
@@ -81,6 +83,20 @@ function addHolding(userId: string, assetType: "stock" | "fund" = "stock"): stri
     { id: crypto.randomUUID(), userId, instrumentId: instrument.id, createdAt: now, updatedAt: now },
   );
   return instrument.id;
+}
+
+function insertSnapshot(userId: string, instrumentId: string, tradeDate: string): void {
+  const capturedAt = `${tradeDate}T02:00:00.000Z`;
+  database.run(
+    `INSERT INTO market_intraday_snapshots (
+      id, user_id, instrument_id, captured_at, captured_minute, trade_date, source, capture_mode,
+      open, close, high, low, volume, created_at
+    ) VALUES (
+      $id, $userId, $instrumentId, $capturedAt, $capturedMinute, $tradeDate, 'mock', 'auto',
+      1, 1, 1, 1, 1, $capturedAt
+    )`,
+    { id: crypto.randomUUID(), userId, instrumentId, capturedAt, capturedMinute: `${tradeDate} 10:00`, tradeDate },
+  );
 }
 
 describe("market intraday snapshots", () => {
@@ -162,6 +178,75 @@ describe("market intraday snapshots", () => {
     expect(snapshots.listSeries(userId, stockId, "2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z")).toHaveLength(1);
     expect(snapshots.listSeries(userId, fundId, "2026-07-01T00:00:00.000Z", "2026-08-01T00:00:00.000Z")).toHaveLength(0);
     expect(snapshots.getStatus(userId)).toMatchObject({ totalCount: 1, lastCaptureMode: "auto", lastTargetCount: 1, lastCapturedCount: 1 });
+  });
+
+  test("retains the configured number of trading dates across a weekend during automatic collection", async () => {
+    const userId = createUser("trading-day-auto@example.com");
+    const instrumentId = addHolding(userId);
+    const mondayMarket = new MarketService(database, settings, [{
+      source: "mock",
+      history: async () => [mondayBar],
+    }]);
+    const mondaySnapshots = new MarketSnapshotService(
+      database,
+      settings,
+      new TradingCalendarService(settings),
+      mondayMarket,
+    );
+    mondaySnapshots.updateSettings(userId, {
+      enabled: true,
+      mode: "auto",
+      startTime: "09:30",
+      endTime: "15:00",
+      intervalMinutes: 15,
+      scope: "holdings",
+      retentionDays: 5,
+    });
+    for (const tradeDate of ["2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31"]) {
+      insertSnapshot(userId, instrumentId, tradeDate);
+    }
+
+    await mondaySnapshots.captureDueAutomatic(mondayTradingMorning);
+
+    expect(mondaySnapshots.listSeries(userId, instrumentId, "2026-07-01T00:00:00.000Z", "2026-08-04T00:00:00.000Z").map((item) => item.tradeDate)).toEqual([
+      "2026-07-28",
+      "2026-07-29",
+      "2026-07-30",
+      "2026-07-31",
+      "2026-08-03",
+    ]);
+  });
+
+  test("applies trading-day cleanup before a manual refresh stores its point", () => {
+    const userId = createUser("trading-day-manual@example.com");
+    const instrumentId = addHolding(userId);
+    snapshots.updateSettings(userId, {
+      enabled: true,
+      mode: "manual",
+      startTime: "09:30",
+      endTime: "15:00",
+      intervalMinutes: 15,
+      scope: "holdings",
+      retentionDays: 5,
+    });
+    for (const tradeDate of ["2026-07-27", "2026-07-28", "2026-07-29", "2026-07-30", "2026-07-31"]) {
+      insertSnapshot(userId, instrumentId, tradeDate);
+    }
+
+    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "mock", mondayBar, mondayTradingMorning)).toBe(true);
+    expect(snapshots.listSeries(userId, instrumentId, "2026-07-01T00:00:00.000Z", "2026-08-04T00:00:00.000Z").map((item) => item.tradeDate)).toEqual([
+      "2026-07-28",
+      "2026-07-29",
+      "2026-07-30",
+      "2026-07-31",
+      "2026-08-03",
+    ]);
+  });
+
+  test("indexes snapshots by user and trading date for retention cleanup", () => {
+    const indexes = database.all<{ name: string }>("PRAGMA index_list('market_intraday_snapshots')");
+
+    expect(indexes.map((index) => index.name)).toContain("market_intraday_snapshots_trade_date_idx");
   });
 
   test("keeps snapshot storage and deletion isolated by user", () => {

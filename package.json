@@ -16,6 +16,12 @@
     "start:all": "bun ./scripts/run-all.ts start",
     "stop:all": "bun ./scripts/stop-all.ts",
     "stop:all:force": "bun ./scripts/stop-all.ts -9",
+    "service:build": "bun run build",
+    "service:start": "bun ./scripts/service-start.ts",
+    "service:stop": "bun ./scripts/service-stop.ts",
+    "docker:build": "docker buildx build --platform linux/arm64 --load -t ironman:arm64 -f Dockerfile .",
+    "docker:start": "docker compose up -d --no-build",
+    "docker:stop": "docker compose down",
     "db:recover-master": "bun ./scripts/recover-master-database.ts",
     "lint": "bun run --cwd backend lint && bun run --cwd frontend lint",
     "test": "bun run --cwd backend test && bun run --cwd frontend test"

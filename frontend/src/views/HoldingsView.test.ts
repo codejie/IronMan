@@ -217,6 +217,44 @@ describe("HoldingsView", () => {
     expect(wrapper.find(".intraday-table").exists()).toBe(false);
   });
 
+  test("requests enough history to render the maximum fifteen-trading-day retention", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    mocks.marketSnapshotSeries.mockResolvedValue({ items: [] });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    const [, , startAt, endAt] = mocks.marketSnapshotSeries.mock.calls[0] as [string, string, string, string];
+    expect(Date.parse(endAt) - Date.parse(startAt)).toBe(45 * 24 * 60 * 60 * 1000);
+  });
+
   test("does not keep the nested operation table behavior in the holdings list", async () => {
     const source = await import("./HoldingsView.vue?raw");
 

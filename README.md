@@ -25,12 +25,27 @@ bun run lint
 bun run build
 ```
 
+## 本地生产服务
+
+本地生产模式直接运行已构建的 `backend/dist` 与 `frontend/dist`，前端静态服务会将 `/api` 和 `/openapi.json` 代理到后端。它不使用 Vite 开发服务器。
+
+```bash
+bun run service:build
+bun run service:start
+bun run service:stop
+```
+
+启动脚本会在 `.ironman/service/` 写入仅属于当前项目的 PID 清单和日志；停止脚本只终止清单中的受管进程。生产环境需要在 `.env` 中配置至少 24 位的 `JWT_SECRET`。
+
 ## Docker
 
 ```bash
 cp .env.example .env
 # 编辑 .env，替换 JWT_SECRET
-docker compose up --build
+bun run docker:build
+bun run docker:start
+# 停止容器
+bun run docker:stop
 ```
 
-访问 `http://127.0.0.1:6100`。Compose 只运行前端与单个后端实例，SQLite 数据、WAL 文件和备份目录均由 `IRONMAN_DATA_DIR` 持久化。
+`docker:build` 使用 Buildx 构建 `linux/arm64` 单镜像，镜像同时包含 backend 与 frontend 的构建产物；`docker:start` 使用 `docker compose up -d --no-build` 启动该镜像。容器内部由前端静态服务代理 `/api` 到后端，Compose 只将前端端口 `6100` 暴露到宿主机，因此访问 `http://127.0.0.1:6100` 即可。默认宿主机目录 `./data` 会绑定到容器 `/app/data`，数据库文件为 `./data/ironman.sqlite`；设置 `IRONMAN_DATA_DIR` 可改用其他宿主机目录，SQLite 的 `-wal`、`-shm` 和备份文件也会保留在该目录中，更新镜像或重建容器不会丢失数据。容器默认关闭 AKShareProvider 自动启动，可通过 `AKSHARE_PROVIDER_URL` 连接外部行情服务。
