@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { IronManDatabase, LATEST_SCHEMA_VERSION } from "../src/db/database";
 
 interface ApiResponse<T> { code: number; result: T; message?: string }
 interface Session { token: string }
@@ -173,5 +174,69 @@ describe("trend analysis", () => {
     const events = await response.text();
     expect(events).toContain("event: snapshot");
     expect(events).toContain("event: completed");
+  });
+
+  test("rebuilds interpretation storage so opencode_go rows survive the migration", () => {
+    const legacyPath = join(tempDirectory, "legacy-interpreted.sqlite");
+    const now = "2026-10-14T00:00:00.000Z";
+    const legacy = new Database(legacyPath, { create: true, strict: true });
+    legacy.run(`
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
+      CREATE TABLE users (id TEXT PRIMARY KEY);
+      CREATE TABLE trend_runs (id TEXT PRIMARY KEY);
+      CREATE TABLE trend_run_reports (id TEXT PRIMARY KEY);
+      CREATE TABLE trend_run_report_interpretations (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES trend_runs(id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES trend_run_reports(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK (provider IN ('local', 'deepseek', 'ollama', 'openai_compatible')),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(report_id)
+      );
+      CREATE INDEX trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
+      INSERT INTO users (id) VALUES ('user-1');
+      INSERT INTO trend_runs (id) VALUES ('run-1');
+      INSERT INTO trend_run_reports (id) VALUES ('report-1'), ('report-2');
+      INSERT INTO trend_run_report_interpretations (id, user_id, run_id, report_id, provider, content, created_at)
+        VALUES ('interpretation-1', 'user-1', 'run-1', 'report-1', 'deepseek', '历史解读', '2026-10-01T00:00:00.000Z');
+    `);
+    for (let version = 1; version <= 17; version += 1) {
+      legacy.query("INSERT INTO schema_migrations (version, applied_at) VALUES ($version, $now)").run({ version, now });
+    }
+    legacy.close();
+
+    const database = new IronManDatabase(legacyPath);
+    try {
+      expect(database.getAppliedMigrationVersions().at(-1)).toBe(LATEST_SCHEMA_VERSION);
+      expect(
+        database.get<{ provider: string; content: string }>(
+          "SELECT provider, content FROM trend_run_report_interpretations WHERE id = $id",
+          { id: "interpretation-1" },
+        ),
+      ).toEqual({ provider: "deepseek", content: "历史解读" });
+      expect(
+        database
+          .all<{ name: string }>(
+            "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'trend_run_report_interpretations'",
+          )
+          .map((index) => index.name),
+      ).toContain("trend_run_report_interpretations_owner_idx");
+
+      database.run(
+        `INSERT INTO trend_run_report_interpretations (id, user_id, run_id, report_id, provider, content, created_at)
+         VALUES ('interpretation-2', 'user-1', 'run-1', 'report-2', 'opencode_go', 'OpenCode Go 解读', $now)`,
+        { now },
+      );
+      expect(
+        database.get<{ provider: string }>(
+          "SELECT provider FROM trend_run_report_interpretations WHERE id = $id",
+          { id: "interpretation-2" },
+        ),
+      ).toEqual({ provider: "opencode_go" });
+    } finally {
+      database.close();
+    }
   });
 });

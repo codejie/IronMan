@@ -1,4 +1,4 @@
-import { flushPromises, mount } from "@vue/test-utils";
+import { flushPromises, mount, type VueWrapper } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import SystemConfigurationView from "./SystemConfigurationView.vue";
 
@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   marketSnapshotStatus: vi.fn(),
   deleteMarketSnapshots: vi.fn(),
   getAiConfig: vi.fn(),
+  listOpenCodeGoModels: vi.fn(),
   getAiCandidateSettings: vi.fn(),
   updateAiCandidateSettings: vi.fn(),
   getAlertSettings: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("@/api/client", () => ({
     marketSnapshotStatus: mocks.marketSnapshotStatus,
     deleteMarketSnapshots: mocks.deleteMarketSnapshots,
     getAiConfig: mocks.getAiConfig,
+    listOpenCodeGoModels: mocks.listOpenCodeGoModels,
     getAiCandidateSettings: mocks.getAiCandidateSettings,
     updateAiCandidateSettings: mocks.updateAiCandidateSettings,
     getAlertSettings: mocks.getAlertSettings,
@@ -65,6 +67,7 @@ describe("SystemConfigurationView", () => {
     mocks.marketSnapshotStatus.mockReset();
     mocks.deleteMarketSnapshots.mockReset();
     mocks.getAiConfig.mockReset();
+    mocks.listOpenCodeGoModels.mockReset();
     mocks.getAiCandidateSettings.mockReset();
     mocks.updateAiCandidateSettings.mockReset();
     mocks.getAlertSettings.mockReset();
@@ -357,5 +360,88 @@ describe("SystemConfigurationView", () => {
     const modelNameInput = models[1]!.get("input[aria-label='模型名称']");
     await modelNameInput.setValue("诊断助手");
     expect((modelNameInput.element as HTMLInputElement).value).toBe("诊断助手");
+  });
+
+  async function openAiModelDialog(wrapper: VueWrapper): Promise<VueWrapper> {
+    const aiNav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("AI 服务"));
+    if (aiNav === undefined) throw new Error("AI section was not rendered");
+    await aiNav.trigger("click");
+
+    const aiConfigRow = wrapper
+      .findAll(".system-configuration-row")
+      .find((row) => row.text().includes("模型配置"));
+    if (aiConfigRow === undefined) throw new Error("AI configuration row was not rendered");
+    await aiConfigRow.get(".batman-button").trigger("click");
+    await flushPromises();
+
+    const modelCard = wrapper.get(".system-ai-model");
+    const providerSelect = modelCard.get("select[aria-label='模型服务商 1']");
+    await providerSelect.setValue("opencode_go");
+    await providerSelect.trigger("change");
+    return wrapper;
+  }
+
+  test("auto-fills baseUrl and model when OpenCode Go is selected", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+    await openAiModelDialog(wrapper);
+
+    const modelCard = wrapper.get(".system-ai-model");
+    const baseUrlInput = modelCard.get("input[aria-label='模型 Base URL 1']");
+    const modelInput = modelCard.get("input[aria-label='模型标识 1']");
+    expect((baseUrlInput.element as HTMLInputElement).value).toBe("https://opencode.ai/zen/go/v1");
+    expect((modelInput.element as HTMLInputElement).value).toBe("step-5-preview-free");
+  });
+
+  test("fetches the OpenCode Go model catalog and fills the model input from the list", async () => {
+    mocks.listOpenCodeGoModels.mockResolvedValue({
+      models: [{ id: "step-5-preview-free" }, { id: "opencode-gpt-5" }],
+    });
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+    await openAiModelDialog(wrapper);
+
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("获取模型列表"));
+    if (fetchButton === undefined) throw new Error("model catalog control was not rendered");
+    await fetchButton.trigger("click");
+    await flushPromises();
+
+    expect(mocks.listOpenCodeGoModels).toHaveBeenCalledWith("test-token");
+    const catalogItem = wrapper
+      .findAll(".system-ai-catalog button")
+      .find((button) => button.text() === "opencode-gpt-5");
+    if (catalogItem === undefined) throw new Error("catalog item was not rendered");
+    await catalogItem.trigger("click");
+    await flushPromises();
+
+    const modelInput = wrapper.get("input[aria-label='模型标识 1']");
+    expect((modelInput.element as HTMLInputElement).value).toBe("opencode-gpt-5");
+  });
+
+  test("shows an inline error and keeps the model value when the catalog fetch fails", async () => {
+    mocks.listOpenCodeGoModels.mockRejectedValue(new Error("upstream unavailable"));
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+    await openAiModelDialog(wrapper);
+
+    const modelInput = wrapper.get("input[aria-label='模型标识 1']");
+    await modelInput.setValue("keep-me");
+
+    const fetchButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("获取模型列表"));
+    if (fetchButton === undefined) throw new Error("model catalog control was not rendered");
+    await fetchButton.trigger("click");
+    await flushPromises();
+
+    const error = wrapper.find(".system-ai-grid .system-configuration-feedback.error");
+    expect(error.exists()).toBe(true);
+    expect(error.text()).toContain("获取模型列表失败");
+    expect(wrapper.findAll(".system-ai-catalog")).toHaveLength(0);
+    expect((wrapper.get("input[aria-label='模型标识 1']").element as HTMLInputElement).value).toBe("keep-me");
   });
 });

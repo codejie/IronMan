@@ -201,7 +201,7 @@ async function scrollToLatest(): Promise<void> {
 
 function providerLabel(model: AiModelConfig | null): string {
   if (model === null) return "未选择";
-  return model.provider === "local" ? "本地工具" : model.provider === "ollama" ? "Ollama" : model.provider === "deepseek" ? "DeepSeek" : "OpenAI 兼容";
+  return model.provider === "local" ? "本地工具" : model.provider === "ollama" ? "Ollama" : model.provider === "deepseek" ? "DeepSeek" : model.provider === "opencode_go" ? "OpenCode Go" : "OpenAI 兼容";
 }
 
 function toolLabel(name: AssistantReplyMetadata["tools"][number]["name"]): string {

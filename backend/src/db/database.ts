@@ -819,6 +819,27 @@ const migrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS market_intraday_snapshots_trade_date_idx
         ON market_intraday_snapshots(user_id, trade_date ASC);
     `
+  },
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE trend_run_report_interpretations_widened (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL REFERENCES trend_runs(id) ON DELETE CASCADE,
+        report_id TEXT NOT NULL REFERENCES trend_run_reports(id) ON DELETE CASCADE,
+        provider TEXT NOT NULL CHECK (provider IN ('local', 'deepseek', 'ollama', 'openai_compatible', 'opencode_go')),
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(report_id)
+      );
+      INSERT INTO trend_run_report_interpretations_widened (id, user_id, run_id, report_id, provider, content, created_at)
+        SELECT id, user_id, run_id, report_id, provider, content, created_at
+        FROM trend_run_report_interpretations;
+      DROP TABLE trend_run_report_interpretations;
+      ALTER TABLE trend_run_report_interpretations_widened RENAME TO trend_run_report_interpretations;
+      CREATE INDEX IF NOT EXISTS trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
+    `
   }
 ];
 

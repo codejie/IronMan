@@ -3532,6 +3532,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
                     "deepseek",
                     "ollama",
                     "openai_compatible",
+                    "opencode_go",
                   ]),
                   content: z.string(),
                   cached: z.boolean(),
@@ -4424,6 +4425,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     "deepseek",
     "ollama",
     "openai_compatible",
+    "opencode_go",
   ]);
   const aiModelInputSchema = z.object({
     id: z.string().trim().min(1).max(80),
@@ -4447,6 +4449,15 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const aiConfigInputSchema = z.object({
     models: z.array(aiModelInputSchema).min(1).max(12),
     systemPrompt: aiSystemPromptSchema.optional(),
+  });
+  const openCodeGoModelSchema = z.object({
+    id: z.string(),
+    object: z.string(),
+    created: z.number(),
+    ownedBy: z.string(),
+  });
+  const openCodeGoModelListSchema = z.object({
+    models: z.array(openCodeGoModelSchema),
   });
   const assistantToolEventSchema = z.object({
     id: z.string(),
@@ -4609,6 +4620,27 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
         ),
         200,
       ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/ai/opencode-go/models",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "OpenCode Go model catalog",
+          content: {
+            "application/json": {
+              schema: responseSchema(openCodeGoModelListSchema),
+            },
+          },
+        },
+      },
+    }),
+    async (context) =>
+      context.json(success(await assistant.listOpenCodeGoModels()), 200),
   );
 
   app.openapi(

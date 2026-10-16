@@ -163,6 +163,84 @@ describe("system configuration", () => {
     expect(invalid.status).toBe(400);
   });
 
+  test("stores an OpenCode Go model and masks its API key on reads", async () => {
+    const user = await register("opencode-go@example.com");
+    const update = await post(
+      "/api/settings/ai/update",
+      {
+        models: [
+          {
+            id: "opencode-go",
+            name: "OpenCode Go",
+            provider: "opencode_go",
+            baseUrl: "https://opencode.ai/zen/go/v1",
+            model: "step-5-preview-free",
+            apiKey: "opencode-go-secret",
+            enabled: true,
+            default: true,
+          },
+        ],
+      },
+      user.token,
+    );
+    expect(update.status).toBe(200);
+
+    const body = (await update.json()) as ApiResponse<{
+      models: Array<{
+        id: string;
+        provider: string;
+        apiKey?: string;
+        apiKeyConfigured: boolean;
+      }>;
+    }>;
+    expect(body.code).toBe(0);
+    expect(body.result.models).toHaveLength(1);
+    expect(body.result.models[0]).toEqual(
+      expect.objectContaining({
+        id: "opencode-go",
+        provider: "opencode_go",
+        baseUrl: "https://opencode.ai/zen/go/v1",
+        model: "step-5-preview-free",
+        apiKeyConfigured: true,
+      }),
+    );
+    expect(body.result.models[0]?.apiKey).toBeUndefined();
+
+    const read = await post("/api/settings/ai/get", {}, user.token);
+    expect(read.status).toBe(200);
+    const readBody = (await read.json()) as ApiResponse<{
+      models: Array<{
+        provider: string;
+        apiKey?: string;
+        apiKeyConfigured: boolean;
+      }>;
+    }>;
+    expect(readBody.result.models).toHaveLength(1);
+    expect(readBody.result.models[0]).toEqual(
+      expect.objectContaining({ provider: "opencode_go", apiKeyConfigured: true }),
+    );
+    expect(readBody.result.models[0]?.apiKey).toBeUndefined();
+
+    const missingKey = await post(
+      "/api/settings/ai/update",
+      {
+        models: [
+          {
+            id: "opencode-go-no-key",
+            name: "OpenCode Go 无密钥",
+            provider: "opencode_go",
+            baseUrl: "https://opencode.ai/zen/go/v1",
+            model: "step-5-preview-free",
+            enabled: true,
+            default: true,
+          },
+        ],
+      },
+      user.token,
+    );
+    expect(missingKey.status).toBe(400);
+  });
+
   test("refreshes only instruments referenced by the current user", async () => {
     const admin = await register("admin@example.com");
     const alice = await register("alice@example.com");

@@ -741,3 +741,133 @@ describe("AI consultation", () => {
     }
   });
 });
+
+describe("OpenCode Go model catalog", () => {
+  interface ModelCatalog {
+    models: Array<{ id: string; object: string; created: number; ownedBy: string }>;
+  }
+  interface ErrorBody {
+    code: number;
+    message?: string;
+    result: null;
+  }
+
+  test("requires authentication before consulting the public catalog", async () => {
+    const response = await post("/api/settings/ai/opencode-go/models", {});
+    expect(response.status).toBe(401);
+    expect(((await response.json()) as ErrorBody).code).toBe(10002);
+  });
+
+  test("maps an upstream non-2xx response to a readable business error", async () => {
+    const user = await register("opencode-go-failure@example.com");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: URL | RequestInfo) =>
+      new Response("upstream unavailable", { status: 503 })) as typeof fetch;
+    try {
+      const response = await post(
+        "/api/settings/ai/opencode-go/models",
+        {},
+        user.token,
+      );
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as ErrorBody;
+      expect(body.code).toBe(20001);
+      expect(body.message).toContain("OpenCode Go");
+      expect(body.result).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("maps a malformed upstream payload to a readable business error", async () => {
+    const user = await register("opencode-go-malformed@example.com");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: URL | RequestInfo) =>
+      Response.json({ object: "list", data: "not-a-model-list" })) as typeof fetch;
+    try {
+      const response = await post(
+        "/api/settings/ai/opencode-go/models",
+        {},
+        user.token,
+      );
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as ErrorBody;
+      expect(body.code).toBe(20001);
+      expect(body.message).toContain("OpenCode Go");
+      expect(body.result).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("maps a network failure to a readable business error", async () => {
+    const user = await register("opencode-go-network@example.com");
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (_input: URL | RequestInfo): Promise<Response> => {
+      throw new Error("socket hang up");
+    }) as typeof fetch;
+    try {
+      const response = await post(
+        "/api/settings/ai/opencode-go/models",
+        {},
+        user.token,
+      );
+      expect(response.status).toBe(502);
+      const body = (await response.json()) as ErrorBody;
+      expect(body.code).toBe(20001);
+      expect(body.message).toContain("OpenCode Go");
+      expect(body.result).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("serves the catalog once and reuses the cached listing without refetching", async () => {
+    const user = await register("opencode-go-catalog@example.com");
+    const firstPayload = {
+      object: "list",
+      data: [
+        { id: "step-5-preview-free", object: "model", created: 1765000000, owned_by: "opencode" },
+        { id: "step-5-preview", object: "model", created: 1765000001, owned_by: "opencode" },
+      ],
+    };
+    let fetchCount = 0;
+    const requestedUrls: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: URL | RequestInfo) => {
+      fetchCount += 1;
+      requestedUrls.push(String(input));
+      if (fetchCount > 1) {
+        throw new Error("catalog must be served from the cache");
+      }
+      return Response.json(firstPayload);
+    }) as typeof fetch;
+    try {
+      const first = await post(
+        "/api/settings/ai/opencode-go/models",
+        {},
+        user.token,
+      );
+      const firstBody = (await first.json()) as ApiResponse<ModelCatalog>;
+      expect(first.status).toBe(200);
+      expect(firstBody.code).toBe(0);
+      expect(firstBody.result.models).toEqual([
+        { id: "step-5-preview-free", object: "model", created: 1765000000, ownedBy: "opencode" },
+        { id: "step-5-preview", object: "model", created: 1765000001, ownedBy: "opencode" },
+      ]);
+      expect(requestedUrls[0]).toContain("https://opencode.ai/zen/go/v1/models");
+
+      const second = await post(
+        "/api/settings/ai/opencode-go/models",
+        {},
+        user.token,
+      );
+      const secondBody = (await second.json()) as ApiResponse<ModelCatalog>;
+      expect(second.status).toBe(200);
+      expect(secondBody.result).toEqual(firstBody.result);
+      expect(fetchCount).toBe(1);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});

@@ -1,4 +1,5 @@
 import { errors } from "../errors";
+import { z } from "@hono/zod-openapi";
 import type { IndicatorResult, IndicatorType } from "./indicator-service";
 import { IndicatorService } from "./indicator-service";
 import {
@@ -39,7 +40,12 @@ import type {
   CandidateExplanationRequest,
 } from "./ai-candidate-service";
 
-export type AiProvider = "local" | "deepseek" | "ollama" | "openai_compatible";
+export type AiProvider =
+  | "local"
+  | "deepseek"
+  | "ollama"
+  | "openai_compatible"
+  | "opencode_go";
 
 export interface AiModelConfig {
   id: string;
@@ -141,8 +147,44 @@ const providerNames = new Set<AiProvider>([
   "deepseek",
   "ollama",
   "openai_compatible",
+  "opencode_go",
 ]);
 const modelIdPattern = /^[a-zA-Z][a-zA-Z0-9_-]{0,79}$/;
+
+const OPEN_CODE_GO_CATALOG_URL = "https://opencode.ai/zen/go/v1/models";
+const OPEN_CODE_GO_CATALOG_TIMEOUT_MS = 5_000;
+const OPEN_CODE_GO_CATALOG_TTL_MS = 10 * 60 * 1_000;
+
+const openCodeGoCatalogEntrySchema = z.object({
+  id: z.string().min(1),
+  object: z.string(),
+  created: z.number(),
+  owned_by: z.string(),
+});
+const openCodeGoCatalogSchema = z.object({
+  object: z.string(),
+  data: z.array(openCodeGoCatalogEntrySchema),
+});
+
+export interface OpenCodeGoModel {
+  id: string;
+  object: string;
+  created: number;
+  ownedBy: string;
+}
+
+export interface OpenCodeGoModelList {
+  models: OpenCodeGoModel[];
+}
+
+interface OpenCodeGoCatalogCache {
+  expiresAt: number;
+  promise: Promise<OpenCodeGoModel[]>;
+}
+
+// The OpenCode Go catalog is global upstream data, so it is cached in memory
+// for every caller instead of per user and is never persisted.
+let openCodeGoCatalogCache: OpenCodeGoCatalogCache | null = null;
 
 export class AssistantService {
   constructor(
@@ -200,6 +242,56 @@ export class AssistantService {
     this.settings.upsert(userId, "ai.models", { models });
     this.settings.upsert(userId, "ai.system-prompt", { systemPrompt });
     return this.publicConfig(userId, models);
+  }
+
+  async listOpenCodeGoModels(): Promise<OpenCodeGoModelList> {
+    const now = Date.now();
+    if (openCodeGoCatalogCache !== null && openCodeGoCatalogCache.expiresAt > now) {
+      return { models: await openCodeGoCatalogCache.promise };
+    }
+    const entry: OpenCodeGoCatalogCache = {
+      expiresAt: now + OPEN_CODE_GO_CATALOG_TTL_MS,
+      promise: this.fetchOpenCodeGoModels(),
+    };
+    openCodeGoCatalogCache = entry;
+    try {
+      return { models: await entry.promise };
+    } catch (error) {
+      if (openCodeGoCatalogCache === entry) openCodeGoCatalogCache = null;
+      throw error;
+    }
+  }
+
+  private async fetchOpenCodeGoModels(): Promise<OpenCodeGoModel[]> {
+    let response: Response;
+    try {
+      response = await fetch(OPEN_CODE_GO_CATALOG_URL, {
+        method: "GET",
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(OPEN_CODE_GO_CATALOG_TIMEOUT_MS),
+      });
+    } catch {
+      throw errors.external("OpenCode Go 模型目录服务暂不可用");
+    }
+    if (!response.ok) throw errors.external("OpenCode Go 模型目录服务暂不可用");
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw errors.external("OpenCode Go 模型目录服务返回了无效响应");
+    }
+    const parsed = openCodeGoCatalogSchema.safeParse(payload);
+    if (!parsed.success) {
+      throw errors.external("OpenCode Go 模型目录服务返回了无效响应");
+    }
+    const catalog = parsed.data;
+    return catalog.data.map((model) => ({
+      id: model.id,
+      object: model.object,
+      created: model.created,
+      ownedBy: model.owned_by,
+    }));
   }
 
   async chat(

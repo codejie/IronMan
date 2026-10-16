@@ -113,6 +113,9 @@ const calendarLoading = ref(false);
 const aiModels = ref<AiModelConfig[]>([]);
 const aiModelList = ref<HTMLElement | null>(null);
 const expandedAiModel = ref<AiModelConfig | null>(null);
+const aiModelCatalog = ref<string[]>([]);
+const aiModelCatalogLoading = ref(false);
+const aiModelCatalogError = ref<string | null>(null);
 const aiSystemPrompt = ref("");
 const defaultAiSystemPrompt = ref("");
 const autoScanEnabledDraft = ref(false);
@@ -187,6 +190,7 @@ const providerOptions: Array<{ value: AiProvider; label: string }> = [
   { value: "deepseek", label: "DeepSeek" },
   { value: "ollama", label: "Ollama" },
   { value: "openai_compatible", label: "OpenAI 兼容" },
+  { value: "opencode_go", label: "OpenCode Go" },
 ];
 
 function message(error: unknown, fallback: string): string {
@@ -623,6 +627,7 @@ async function openAiDialog(): Promise<void> {
     aiModels.value = cloneModels(config.models);
     expandedAiModel.value =
       aiModels.value.find((model) => model.default) ?? aiModels.value[0] ?? null;
+    resetAiModelCatalog();
     dialog.value = "ai";
   } catch (error) {
     notify("error", message(error, "读取 AI 服务配置失败"));
@@ -721,6 +726,31 @@ function onProviderChange(model: AiModelConfig): void {
   } else if (model.provider === "ollama") {
     model.baseUrl = "http://localhost:11434/v1";
     model.model = "qwen2.5:7b";
+  } else if (model.provider === "opencode_go") {
+    model.baseUrl = "https://opencode.ai/zen/go/v1";
+    model.model = "step-5-preview-free";
+  }
+  resetAiModelCatalog();
+}
+
+function resetAiModelCatalog(): void {
+  aiModelCatalog.value = [];
+  aiModelCatalogLoading.value = false;
+  aiModelCatalogError.value = null;
+}
+
+async function fetchOpenCodeGoModels(): Promise<void> {
+  if (token.value === null || aiModelCatalogLoading.value) return;
+  aiModelCatalog.value = [];
+  aiModelCatalogError.value = null;
+  aiModelCatalogLoading.value = true;
+  try {
+    const result = await api.listOpenCodeGoModels(token.value);
+    aiModelCatalog.value = result.models.map((model) => model.id);
+  } catch (error) {
+    aiModelCatalogError.value = message(error, "获取模型列表失败");
+  } finally {
+    aiModelCatalogLoading.value = false;
   }
 }
 
@@ -813,7 +843,10 @@ async function clearMarketCache(): Promise<void> {
 }
 
 function closeDialog(): void {
-  if (!isBusy.value) dialog.value = null;
+  if (!isBusy.value) {
+    dialog.value = null;
+    resetAiModelCatalog();
+  }
 }
 
 onMounted(async () => {
@@ -1165,8 +1198,8 @@ function buildCalendarMonths(
               <div>
                 <h2>模型配置</h2>
                 <p>
-                  支持本地工作台助手、DeepSeek、Ollama 和 OpenAI
-                  兼容服务，可设置默认模型。
+                  支持本地工作台助手、DeepSeek、Ollama、OpenCode Go
+                  和 OpenAI 兼容服务，可设置默认模型。
                 </p>
               </div>
               <button class="batman-button" type="button" @click="openAiDialog">
@@ -1526,12 +1559,44 @@ function buildCalendarMonths(
                   </select></label
                 ><label
                   ><span>模型</span
-                  ><input
-                    v-model.trim="model.model"
-                    :aria-label="`模型标识 ${index + 1}`"
-                    :disabled="model.provider === 'local'"
-                    maxlength="200" /></label
-                ><label class="span-2"
+                  ><span class="system-ai-model-picker"
+                    ><input
+                      v-model.trim="model.model"
+                      :aria-label="`模型标识 ${index + 1}`"
+                      :disabled="model.provider === 'local'"
+                      maxlength="200"
+                    /><button
+                      class="batman-button"
+                      :disabled="
+                        aiModelCatalogLoading || model.provider === 'local'
+                      "
+                      type="button"
+                      @click="fetchOpenCodeGoModels"
+                      >{{
+                        aiModelCatalogLoading ? "获取中…" : "获取模型列表"
+                      }}</button
+                    ></span
+                  ></label
+                ><p
+                  v-if="aiModelCatalogLoading"
+                  class="system-configuration-feedback"
+                >
+                  正在获取 OpenCode Go 模型列表…
+                </p>
+                <p
+                  v-else-if="aiModelCatalogError !== null"
+                  class="system-configuration-feedback error"
+                >
+                  {{ aiModelCatalogError }}
+                </p>
+                <ul v-if="aiModelCatalog.length > 0" class="system-ai-catalog">
+                  <li v-for="modelId in aiModelCatalog" :key="modelId">
+                    <button type="button" @click="model.model = modelId">
+                      {{ modelId }}
+                    </button>
+                  </li>
+                </ul>
+                <label class="span-2"
                   ><span>Base URL</span
                   ><input
                     v-model.trim="model.baseUrl"
@@ -1953,6 +2018,8 @@ function buildCalendarMonths(
   pointer-events: none;
 }
 .batman-dialog.system-ai-modal {
+  display: flex;
+  flex-direction: column;
   max-height: calc(100dvh - 56px);
   max-width: 760px;
   overflow: hidden;
@@ -1960,12 +2027,15 @@ function buildCalendarMonths(
   width: min(100%, 760px);
 }
 .batman-dialog.system-ai-modal > header {
+  flex: none;
   margin-bottom: 10px;
   padding-bottom: 9px;
 }
 .system-ai-dialog {
   display: grid;
   gap: 13px;
+  min-height: 0;
+  overflow-y: auto;
 }
 .system-ai-modal .system-ai-dialog {
   gap: 8px;
@@ -2036,9 +2106,14 @@ function buildCalendarMonths(
   padding-right: 5px;
 }
 .system-ai-modal .system-ai-dialog > footer {
+  background: #151f30;
   border-top: 1px solid #2a4058;
+  bottom: 0;
+  flex: none;
   margin-top: 0;
   padding-top: 8px;
+  position: sticky;
+  z-index: 1;
 }
 .system-ai-model {
   border: 1px solid #2a4058;
@@ -2128,6 +2203,43 @@ function buildCalendarMonths(
 .system-ai-grid input:disabled {
   color: #6f8193;
   opacity: 0.72;
+}
+.system-ai-model-picker {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+.system-ai-model-picker input {
+  flex: 1;
+  min-width: 0;
+}
+.system-ai-grid .system-configuration-feedback {
+  margin: 0;
+}
+.system-ai-catalog {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  max-height: 142px;
+  overflow-y: auto;
+  padding: 0;
+  scrollbar-gutter: stable;
+}
+.system-ai-catalog button {
+  background: #17283a;
+  border: 1px solid #31506a;
+  border-radius: 5px;
+  color: #b9c9d9;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 9px;
+}
+.system-ai-catalog button:hover {
+  border-color: #65d7ca;
+  color: #edf6ff;
 }
 .system-rule-settings-footer {
   display: flex;

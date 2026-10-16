@@ -546,7 +546,12 @@ export interface TradingCalendar {
   nonTradingDays: string[];
 }
 
-export type AiProvider = "local" | "deepseek" | "ollama" | "openai_compatible";
+export type AiProvider =
+  | "local"
+  | "deepseek"
+  | "ollama"
+  | "openai_compatible"
+  | "opencode_go";
 
 export interface AiModelConfig {
   id: string;
@@ -1552,6 +1557,12 @@ export const api = {
     post<AiModelsConfig>("/settings/ai/get", {}, token),
   updateAiConfig: (token: string, input: AiModelsConfigInput) =>
     post<AiModelsConfig>("/settings/ai/update", input, token),
+  listOpenCodeGoModels: (token: string) =>
+    post<{ models: Array<{ id: string }> }>(
+      "/settings/ai/opencode-go/models",
+      {},
+      token,
+    ),
   createAssistantConversation: (token: string) =>
     post<AssistantConversationDetail>(
       "/assistant/conversations/create",
