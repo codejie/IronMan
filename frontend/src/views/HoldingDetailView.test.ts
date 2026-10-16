@@ -1,5 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { formatDate } from "@/utils/date-format";
 import HoldingDetailView from "./HoldingDetailView.vue";
 
 const mocks = vi.hoisted(() => ({
@@ -73,6 +74,45 @@ describe("HoldingDetailView", () => {
     expect(mocks.holdingChart).toHaveBeenCalledTimes(2);
   });
 
+  test("renders operation timestamps as dates only", async () => {
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    const cells = wrapper.findAll(".holding-detail-table tbody tr td:first-child");
+    expect(cells).toHaveLength(2);
+    expect(cells[0]!.text()).toBe(formatDate("2026-07-01T00:00:00.000Z"));
+    expect(cells[1]!.text()).toBe(formatDate("2026-07-05T00:00:00.000Z"));
+    for (const cell of cells) expect(cell.text()).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
+  });
+
+  test("records a dividend through the interest action with holding quantity and per-share price", async () => {
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    await wrapper.get(".holding-detail-operations-toolbar button").trigger("click");
+    const dialog = wrapper.get("form[aria-label='新增操作']");
+    await dialog.get("select").setValue("interest");
+
+    expect((dialog.get("input[aria-label='持仓数量']").element as HTMLInputElement).value).toBe("100");
+    await dialog.get("input[aria-label='分红单价']").setValue("0.5");
+    expect(dialog.text()).toContain("分红金额 = 持仓数量 × 分红单价：50.00");
+
+    await dialog.trigger("submit");
+    await flushPromises();
+
+    expect(mocks.addHoldingTransaction).toHaveBeenCalledWith("test-token", expect.objectContaining({
+      holdingId: "holding-1",
+      action: "interest",
+      quantity: 100,
+      price: 0.5,
+      fee: 0,
+    }));
+  });
+
   test("deletes an operation through confirmation and reloads the holding summary", async () => {
     const wrapper = mount(HoldingDetailView, {
       global: { stubs: { HoldingPerformanceChart: true } },
@@ -119,6 +159,7 @@ function detail(status: "active" | "closed" = "active") {
     },
     transactions: [
       { id: "operation-1", action: "buy", quantity: 100, price: 10, fee: 0, cashImpact: -1000, occurredAt: "2026-07-01T00:00:00.000Z", note: "" },
+      { id: "operation-3", action: "interest", quantity: 100, price: 0.5, fee: 0, cashImpact: 50, occurredAt: "2026-07-05T00:00:00.000Z", note: "分红" },
     ],
     bars: [{ date: "2026-07-01", open: 10, close: 11, high: 11, low: 10, volume: 1000 }],
     trace: [{ date: "2026-07-01", quantity: 100, netCost: 1000, averageCost: 10, marketValue: 1100, profit: 100 }],

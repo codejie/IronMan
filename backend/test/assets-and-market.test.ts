@@ -241,7 +241,7 @@ describe("market data and asset workspace", () => {
 
     const interest = await post(
       "/api/assets/holdings/transaction",
-      { holdingId: holding.result.id, action: "interest", quantity: 0, price: 50, fee: 0, occurredAt: "2026-01-02T00:00:00.000Z", note: "计息" },
+      { holdingId: holding.result.id, action: "interest", quantity: 100, price: 0.5, fee: 0, occurredAt: "2026-01-02T00:00:00.000Z", note: "分红" },
       alice.token
     );
     const interestBody = (await interest.json()) as ApiResponse<{ id: string }>;
@@ -256,11 +256,12 @@ describe("market data and asset workspace", () => {
     expect(partialSell.status).toBe(201);
 
     const detail = await post("/api/assets/holdings/detail", { id: holding.result.id }, alice.token);
-    const detailBody = (await detail.json()) as ApiResponse<{ holding: { quantity: number; cost: number }; transactions: Array<{ action: string; quantity: number }> }>;
+    const detailBody = (await detail.json()) as ApiResponse<{ holding: { quantity: number; cost: number }; transactions: Array<{ action: string; quantity: number; price: number; fee: number; cashImpact: number }> }>;
     expect(detailBody.result.holding.quantity).toBe(75);
     expect(detailBody.result.holding.cost).toBe(650);
     expect(detailBody.result.transactions.map((transaction) => transaction.action)).toEqual(["sell", "interest", "buy"]);
     expect(detailBody.result.transactions[0]?.quantity).toBe(-25);
+    expect(detailBody.result.transactions[1]).toMatchObject({ action: "interest", quantity: 100, price: 0.5, fee: 0, cashImpact: 50 });
 
     const foreignDelete = await post(
       "/api/assets/holdings/transaction/delete",
@@ -323,7 +324,7 @@ describe("market data and asset workspace", () => {
     const holding = (await created.json()) as ApiResponse<{ id: string }>;
     await post(
       "/api/assets/holdings/transaction",
-      { holdingId: holding.result.id, action: "interest", quantity: 0, price: 20, fee: 0, occurredAt: "2026-07-19T09:30:00.000Z" },
+      { holdingId: holding.result.id, action: "interest", quantity: 100, price: 0.2, fee: 0, occurredAt: "2026-07-19T09:30:00.000Z" },
       alice.token
     );
     await post(
@@ -356,6 +357,61 @@ describe("market data and asset workspace", () => {
 
     const foreign = await post("/api/assets/holdings/detail/chart", { id: holding.result.id }, bob.token);
     expect(foreign.status).toBe(404);
+  });
+
+  test("keeps legacy lump-sum dividend records readable and deletable", async () => {
+    const admin = await register("legacy-admin@example.com");
+    const alice = await register("legacy-alice@example.com");
+    const instrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "601318", exchange: "sh", name: "中国平安", assetType: "stock" },
+      admin.token
+    );
+    const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
+    const created = await post(
+      "/api/assets/holdings/create",
+      { instrumentId: instrument.result.id, quantity: 100, price: 10, fee: 0, occurredAt: "2026-07-18T09:30:00.000Z" },
+      alice.token
+    );
+    const holding = (await created.json()) as ApiResponse<{ id: string }>;
+
+    const legacy = new IronManDatabase(join(tempDirectory, "ironman.sqlite"));
+    const transactionId = crypto.randomUUID();
+    const occurredAt = "2026-07-19T09:30:00.000Z";
+    const now = new Date().toISOString();
+    legacy.run(
+      `INSERT INTO holding_transactions (id, user_id, holding_id, action, quantity, price, fee, note, occurred_at, created_at)
+       VALUES ($id, $userId, $holdingId, 'dividend', 0, 50, 0, '历史分红', $occurredAt, $createdAt)`,
+      { id: transactionId, userId: alice.user.id, holdingId: holding.result.id, occurredAt, createdAt: now }
+    );
+    legacy.run(
+      `INSERT INTO cash_ledger (id, user_id, amount, category, reference_id, holding_transaction_id, note, occurred_at, created_at)
+       VALUES ($id, $userId, 50, 'dividend', $holdingId, $transactionId, '历史分红', $occurredAt, $createdAt)`,
+      { id: crypto.randomUUID(), userId: alice.user.id, holdingId: holding.result.id, transactionId, occurredAt, createdAt: now }
+    );
+    legacy.run("UPDATE cash_accounts SET available = available + 50, updated_at = $updatedAt WHERE user_id = $userId", {
+      updatedAt: now,
+      userId: alice.user.id
+    });
+    legacy.close();
+
+    const detail = await post("/api/assets/holdings/detail", { id: holding.result.id }, alice.token);
+    const detailBody = (await detail.json()) as ApiResponse<{ transactions: Array<{ id: string; action: string; quantity: number; price: number; fee: number; cashImpact: number }> }>;
+    expect(detail.status).toBe(200);
+    expect(detailBody.result.transactions[0]).toMatchObject({ id: transactionId, action: "interest", quantity: 0, price: 50, fee: 0, cashImpact: 50 });
+    expect(detailBody.result.transactions.map((transaction) => transaction.action)).toEqual(["interest", "buy"]);
+
+    const remove = await post(
+      "/api/assets/holdings/transaction/delete",
+      { holdingId: holding.result.id, transactionId },
+      alice.token
+    );
+    expect(remove.status).toBe(200);
+
+    const cash = await post("/api/assets/cash/summary", {}, alice.token);
+    expect(((await cash.json()) as ApiResponse<{ available: number }>).result.available).toBe(9000);
   });
 
   test("builds a Batman-style watchlist workspace and isolates target-price updates", async () => {

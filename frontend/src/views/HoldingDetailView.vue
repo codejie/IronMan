@@ -12,7 +12,7 @@ import {
 import { api, ApiError, type HoldingChartData } from "@/api/client";
 import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
-import { formatDate, formatDateTime } from "@/utils/date-format";
+import { formatDate } from "@/utils/date-format";
 import { instrumentTypeLabel } from "./instrument-kline-presentation";
 import { holdingDetailRouteQuery, holdingNavigationTarget } from "./holding-detail-presentation";
 
@@ -55,6 +55,13 @@ const summary = computed(() => data.value === null || latestTrace.value === null
   marketValue: latestTrace.value.marketValue,
   profit: latestTrace.value.profit,
   profitRate: latestTrace.value.netCost === 0 ? null : latestTrace.value.profit / Math.abs(latestTrace.value.netCost) * 100
+});
+const dividendAmount = computed(() => {
+  if (operationAction.value !== "interest") return null;
+  const quantity = Number(operationQuantity.value);
+  const price = Number(operationPrice.value);
+  if (!Number.isFinite(quantity) || !Number.isFinite(price)) return null;
+  return Number((quantity * price).toFixed(4));
 });
 
 function savePreferences(): void {
@@ -130,7 +137,7 @@ async function createOperation(): Promise<void> {
     await api.addHoldingTransaction(accessToken, {
       holdingId: holding.id,
       action: operationAction.value,
-      quantity: operationAction.value === "interest" ? 0 : Number(operationQuantity.value),
+      quantity: Number(operationQuantity.value),
       price: Number(operationPrice.value),
       fee: Number(operationFee.value),
       occurredAt: toIso(operationOccurredAt.value),
@@ -176,6 +183,9 @@ function actionLabel(value: "buy" | "sell" | "interest"): string { return value 
 function nowInputValue(): string { const now = new Date(); now.setMinutes(now.getMinutes() - now.getTimezoneOffset()); return now.toISOString().slice(0, 16); }
 function toIso(value: string): string { return new Date(value).toISOString(); }
 
+watch(operationAction, (action) => {
+  if (action === "interest") operationQuantity.value = String(data.value?.holding.quantity ?? 100);
+});
 watch(subchart, savePreferences);
 watch(holdingId, () => { void load(); });
 onMounted(() => { void load(); });
@@ -223,7 +233,7 @@ onMounted(() => { void load(); });
         <button v-if="data.holding.status === 'active'" :aria-label="`为 ${data.holding.instrument.name} 增加操作`" class="batman-button primary" type="button" @click="openOperation"><CirclePlus :size="15" />增加操作</button>
       </div>
       <div class="batman-table-frame holding-detail-table-frame">
-        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th><th class="batman-action-header">操作</th></tr></thead><tbody><tr v-for="item in data.transactions" :key="item.id"><td>{{ formatDateTime(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`删除${actionLabel(item.action)}操作`" class="batman-icon-button danger" data-hint="删除操作" data-hint-position="top" :disabled="deletingOperationId !== null" type="button" @click="deleteOperation(item)"><Trash2 :size="14" /></button></div></td></tr><tr v-if="data.transactions.length === 0"><td class="batman-empty-cell" colspan="8">暂无操作记录</td></tr></tbody></table>
+        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th><th class="batman-action-header">操作</th></tr></thead><tbody><tr v-for="item in data.transactions" :key="item.id"><td>{{ formatDate(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`删除${actionLabel(item.action)}操作`" class="batman-icon-button danger" data-hint="删除操作" data-hint-position="top" :disabled="deletingOperationId !== null" type="button" @click="deleteOperation(item)"><Trash2 :size="14" /></button></div></td></tr><tr v-if="data.transactions.length === 0"><td class="batman-empty-cell" colspan="8">暂无操作记录</td></tr></tbody></table>
         <table v-else class="batman-table holding-detail-table"><thead><tr><th>日期</th><th>数量</th><th>净成本</th><th>均价</th><th>收盘价</th><th>市值</th><th>盈亏</th></tr></thead><tbody><tr v-for="item in visibleTrace" :key="item.date"><td>{{ item.date }}</td><td>{{ item.quantity }}</td><td>{{ money(item.netCost) }}</td><td>{{ money(item.averageCost) }}</td><td>{{ money(visibleBars.find((bar) => bar.date === item.date)?.close ?? null) }}</td><td>{{ money(item.marketValue) }}</td><td :class="tone(item.profit)">{{ signed(item.profit) }}</td></tr><tr v-if="visibleTrace.length === 0"><td class="batman-empty-cell" colspan="7">暂无持仓跟踪数据</td></tr></tbody></table>
       </div>
     </template>
@@ -233,9 +243,10 @@ onMounted(() => { void load(); });
         <header><strong>增加操作 · {{ data?.holding.instrument.name }}</strong><button aria-label="关闭对话框" class="batman-icon-button" :disabled="isSavingOperation" title="关闭" type="button" @click="closeOperationDialog"><X :size="17" /></button></header>
         <form aria-label="新增操作" class="batman-form" @submit.prevent="createOperation">
           <label>操作<select v-model="operationAction"><option value="buy">买入</option><option value="sell">卖出</option><option value="interest">计息</option></select></label>
-          <label v-if="operationAction !== 'interest'">数量<input v-model="operationQuantity" aria-label="数量" min="0.0001" required step="any" type="number" /></label>
-          <label>{{ operationAction === 'interest' ? '计息金额' : '价格' }}<input v-model="operationPrice" :aria-label="operationAction === 'interest' ? '计息金额' : '价格'" min="0" required step="0.001" type="number" /></label>
+          <label>{{ operationAction === 'interest' ? '持仓数量' : '数量' }}<input v-model="operationQuantity" :aria-label="operationAction === 'interest' ? '持仓数量' : '数量'" min="0.0001" required step="any" type="number" /></label>
+          <label>{{ operationAction === 'interest' ? '分红单价' : '价格' }}<input v-model="operationPrice" :aria-label="operationAction === 'interest' ? '分红单价' : '价格'" min="0" required step="0.001" type="number" /></label>
           <label>费用<input v-model="operationFee" aria-label="费用" min="0" required step="0.001" type="number" /></label>
+          <p v-if="dividendAmount !== null" class="batman-selected">分红金额 = 持仓数量 × 分红单价：{{ money(dividendAmount) }}</p>
           <label>操作时间<input v-model="operationOccurredAt" aria-label="操作时间" required type="datetime-local" /></label>
           <label>备注<input v-model.trim="operationNote" aria-label="备注" maxlength="500" /></label>
           <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>

@@ -496,11 +496,11 @@ export class AssetsService {
     return this.database.all<HoldingRow>(
       `SELECT holdings.id, holdings.status, holdings.instrument_id, holdings.created_at, holdings.updated_at, instruments.code, instruments.exchange, instruments.name, instruments.asset_type,
               COALESCE(SUM(CASE holding_transactions.action WHEN 'buy' THEN holding_transactions.quantity WHEN 'sell' THEN -holding_transactions.quantity ELSE 0 END), 0) AS quantity,
-              COALESCE(SUM(CASE holding_transactions.action
-                WHEN 'buy' THEN holding_transactions.quantity * holding_transactions.price + holding_transactions.fee
-                WHEN 'sell' THEN -(holding_transactions.quantity * holding_transactions.price - holding_transactions.fee)
-                WHEN 'dividend' THEN -(holding_transactions.price - holding_transactions.fee)
-                ELSE 0 END), 0) AS cost
+               COALESCE(SUM(CASE holding_transactions.action
+                 WHEN 'buy' THEN holding_transactions.quantity * holding_transactions.price + holding_transactions.fee
+                 WHEN 'sell' THEN -(holding_transactions.quantity * holding_transactions.price - holding_transactions.fee)
+                 WHEN 'dividend' THEN -(CASE WHEN holding_transactions.quantity = 0 THEN holding_transactions.price ELSE holding_transactions.quantity * holding_transactions.price END - holding_transactions.fee)
+                 ELSE 0 END), 0) AS cost
          FROM holdings
          JOIN instruments ON instruments.id = holdings.instrument_id
          LEFT JOIN holding_transactions ON holding_transactions.holding_id = holdings.id AND holding_transactions.user_id = holdings.user_id
@@ -623,7 +623,7 @@ export class AssetsService {
       throw errors.validation("价格和费用不能为负数");
     }
     if (action === "interest") {
-      if (quantity !== 0) throw errors.validation("计息操作的数量必须为 0");
+      if (quantity <= 0) throw errors.validation("计息操作的持仓数量必须大于 0");
       return;
     }
     if (quantity <= 0) {
@@ -735,7 +735,11 @@ function toPublicAction(action: StoredHoldingAction): HoldingAction {
 function cashAmount(action: StoredHoldingAction, quantity: number, price: number, fee: number): number {
   if (action === "buy") return -(quantity * price + fee);
   if (action === "sell") return quantity * price - fee;
-  return price - fee;
+  return dividendAmount(quantity, price, fee);
+}
+
+function dividendAmount(quantity: number, price: number, fee: number): number {
+  return (quantity === 0 ? price : quantity * price) - fee;
 }
 
 function quantityDelta(action: StoredHoldingAction, quantity: number): number {
@@ -774,7 +778,7 @@ function buildHoldingTrace(
   for (const bar of bars) {
     while (transactionIndex < transactions.length && datePart(transactions[transactionIndex]!.occurredAt) <= bar.date) {
       const transaction = transactions[transactionIndex]!;
-      quantity += transaction.quantity;
+      if (transaction.action !== "interest") quantity += transaction.quantity;
       netCost -= transaction.cashImpact;
       hasOperation = true;
       transactionIndex += 1;
