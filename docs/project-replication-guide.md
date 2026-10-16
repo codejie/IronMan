@@ -1,5 +1,15 @@
 # Batman 工程功能梳理与复制指南
 
+> **说明：本文描述的是原工程 codejie/Batman（Python FastAPI + Vue 3），用于回答“要复刻什么”。** IronMan 的实际实现与本文存在已知偏差，阅读时以本节为准：
+>
+> - 认证：IronMan 为真实多用户（argon2id + JWT + DB 会话 + 行级 `user_id` 隔离），**没有** `DEFAULT_UID = 99` 和 `x-token` 占位校验；请求头为 `Authorization: Bearer`。
+> - 路由：IronMan 后端为 Hono + OpenAPI 的 `/api/*` RPC 风格（`/api/auth`、`/api/assets`、`/api/analysis`…），不是本文第 4.1 节的 Python 模块前缀。
+> - 存储：`bun:sqlite` + 17 版手写迁移；历史行情为单表 `market_bars`，不是动态 `history_*_{code}` 表。
+> - 行情源配置：用户级 DB 设置（`user_settings` 键 `market.data-source`，主源 + 回退源），不是 `data_config.json` 文件。
+> - 实时通道：WebSocket `/ws/spot_data` **未复刻**，由 SSE `/api/stream/watchlist` 轮询替代；SSE token 仍走 query 参数。
+> - `/sytem/configuration` 拼写：后端无此路由（功能拆入 `/api/settings/*`），仅前端保留一条重定向兜底。
+> - 前端实现现状见 [frontend-menu.md](frontend-menu.md)。
+
 本文档用于指导复制 Batman 工程：既说明当前系统提供什么功能，也说明复刻时应该按哪些模块、数据结构和运行流程重建。
 
 ## 1. 项目定位
