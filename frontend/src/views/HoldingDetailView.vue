@@ -49,6 +49,23 @@ const holdingIds = computed(() => {
 const currentIndex = computed(() => holdingIds.value.indexOf(holdingId.value));
 const visibleBars = computed(() => data.value?.bars ?? []);
 const visibleTrace = computed(() => data.value?.trace ?? []);
+const sortedTransactions = computed(() =>
+  [...(data.value?.transactions ?? [])].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+);
+const traceTableRows = computed(() => {
+  const trace = data.value?.trace ?? [];
+  const rows = trace.map((item, index) => {
+    const previous = index > 0 ? trace[index - 1]! : null;
+    const prevDiff = previous === null ? null : item.marketValue - previous.marketValue;
+    return {
+      ...item,
+      profitRate: item.netCost === 0 ? null : item.profit / Math.abs(item.netCost) * 100,
+      prevDiff,
+      prevDiffRate: previous === null || previous.marketValue === 0 || prevDiff === null ? null : prevDiff / Math.abs(previous.marketValue) * 100,
+    };
+  });
+  return rows.reverse();
+});
 const latestTrace = computed(() => visibleTrace.value.at(-1) ?? data.value?.trace.at(-1) ?? null);
 const summary = computed(() => data.value === null || latestTrace.value === null ? null : {
   currentPrice: visibleBars.value.at(-1)?.close ?? null,
@@ -233,8 +250,8 @@ onMounted(() => { void load(); });
         <button v-if="data.holding.status === 'active'" :aria-label="`为 ${data.holding.instrument.name} 增加操作`" class="batman-button primary" type="button" @click="openOperation"><CirclePlus :size="15" />增加操作</button>
       </div>
       <div class="batman-table-frame holding-detail-table-frame">
-        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th><th class="batman-action-header">操作</th></tr></thead><tbody><tr v-for="item in data.transactions" :key="item.id"><td>{{ formatDate(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`删除${actionLabel(item.action)}操作`" class="batman-icon-button danger" data-hint="删除操作" data-hint-position="top" :disabled="deletingOperationId !== null" type="button" @click="deleteOperation(item)"><Trash2 :size="14" /></button></div></td></tr><tr v-if="data.transactions.length === 0"><td class="batman-empty-cell" colspan="8">暂无操作记录</td></tr></tbody></table>
-        <table v-else class="batman-table holding-detail-table"><thead><tr><th>日期</th><th>数量</th><th>净成本</th><th>均价</th><th>收盘价</th><th>市值</th><th>盈亏</th></tr></thead><tbody><tr v-for="item in visibleTrace" :key="item.date"><td>{{ item.date }}</td><td>{{ item.quantity }}</td><td>{{ money(item.netCost) }}</td><td>{{ money(item.averageCost) }}</td><td>{{ money(visibleBars.find((bar) => bar.date === item.date)?.close ?? null) }}</td><td>{{ money(item.marketValue) }}</td><td :class="tone(item.profit)">{{ signed(item.profit) }}</td></tr><tr v-if="visibleTrace.length === 0"><td class="batman-empty-cell" colspan="7">暂无持仓跟踪数据</td></tr></tbody></table>
+        <table v-if="selectedTable === 'operations'" class="batman-table holding-detail-table"><thead><tr><th>时间</th><th>操作</th><th>数量</th><th>价格</th><th>费用</th><th>资金影响</th><th>备注</th><th class="batman-action-header">操作</th></tr></thead><tbody><tr v-for="item in sortedTransactions" :key="item.id"><td>{{ formatDate(item.occurredAt) }}</td><td :class="item.action === 'buy' ? 'up' : item.action === 'sell' ? 'down' : ''">{{ actionLabel(item.action) }}</td><td>{{ item.quantity }}</td><td>{{ money(item.price) }}</td><td>{{ money(item.fee) }}</td><td :class="tone(item.cashImpact)">{{ signed(item.cashImpact) }}</td><td>{{ item.note || '-' }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`删除${actionLabel(item.action)}操作`" class="batman-icon-button danger" data-hint="删除操作" data-hint-position="top" :disabled="deletingOperationId !== null" type="button" @click="deleteOperation(item)"><Trash2 :size="14" /></button></div></td></tr><tr v-if="sortedTransactions.length === 0"><td class="batman-empty-cell" colspan="8">暂无操作记录</td></tr></tbody></table>
+        <table v-else class="batman-table holding-detail-table"><thead><tr><th>日期</th><th>数量</th><th>净成本</th><th>均价</th><th>收盘价</th><th>市值</th><th>盈亏</th><th>前日差值</th></tr></thead><tbody><tr v-for="item in traceTableRows" :key="item.date"><td>{{ item.date }}</td><td>{{ item.quantity }}</td><td>{{ money(item.netCost) }}</td><td>{{ money(item.averageCost) }}</td><td>{{ money(visibleBars.find((bar) => bar.date === item.date)?.close ?? null) }}</td><td>{{ money(item.marketValue) }}</td><td :class="tone(item.profit)">{{ signed(item.profit) }} / {{ percent(item.profitRate) }}</td><td :class="tone(item.prevDiff)">{{ item.prevDiff === null ? '-' : `${signed(item.prevDiff)} / ${percent(item.prevDiffRate)}` }}</td></tr><tr v-if="traceTableRows.length === 0"><td class="batman-empty-cell" colspan="8">暂无持仓跟踪数据</td></tr></tbody></table>
       </div>
     </template>
 

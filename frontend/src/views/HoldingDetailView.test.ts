@@ -82,9 +82,58 @@ describe("HoldingDetailView", () => {
 
     const cells = wrapper.findAll(".holding-detail-table tbody tr td:first-child");
     expect(cells).toHaveLength(2);
-    expect(cells[0]!.text()).toBe(formatDate("2026-07-01T00:00:00.000Z"));
-    expect(cells[1]!.text()).toBe(formatDate("2026-07-05T00:00:00.000Z"));
+    expect(cells[0]!.text()).toBe(formatDate("2026-07-05T00:00:00.000Z"));
+    expect(cells[1]!.text()).toBe(formatDate("2026-07-01T00:00:00.000Z"));
     for (const cell of cells) expect(cell.text()).toMatch(/^\d{4}\/\d{2}\/\d{2}$/);
+  });
+
+  test("renders daily trace in descending order with profit rate and previous-day diff", async () => {
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    const tabs = wrapper.findAll(".holding-detail-tabs button");
+    await tabs[1]!.trigger("click");
+
+    const rows = wrapper.findAll(".holding-detail-table tbody tr");
+    expect(rows).toHaveLength(2);
+    const firstCells = rows[0]!.findAll("td");
+    const secondCells = rows[1]!.findAll("td");
+    expect(firstCells[0]!.text()).toBe("2026-07-02");
+    expect(secondCells[0]!.text()).toBe("2026-07-01");
+
+    expect(firstCells[6]!.text()).toBe("+200.00 / 18.18%");
+    expect(firstCells[6]!.classes()).toContain("up");
+    expect(firstCells[7]!.text()).toBe("+200.00 / 18.18%");
+    expect(firstCells[7]!.classes()).toContain("up");
+
+    expect(secondCells[6]!.text()).toBe("+100.00 / 10.00%");
+    expect(secondCells[6]!.classes()).toContain("up");
+    expect(secondCells[7]!.text()).toBe("-");
+  });
+
+  test("renders negative trace values with the down tone", async () => {
+    mocks.holdingChart.mockResolvedValue(detailNegative());
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    const tabs = wrapper.findAll(".holding-detail-tabs button");
+    await tabs[1]!.trigger("click");
+
+    const rows = wrapper.findAll(".holding-detail-table tbody tr");
+    const firstCells = rows[0]!.findAll("td");
+    const secondCells = rows[1]!.findAll("td");
+    expect(firstCells[0]!.text()).toBe("2026-07-02");
+    expect(firstCells[6]!.classes()).toContain("down");
+    expect(firstCells[6]!.text()).toBe("-120.00 / -12.00%");
+    expect(firstCells[7]!.classes()).toContain("down");
+    expect(firstCells[7]!.text()).toBe("-100.00 / -10.00%");
+    expect(secondCells[6]!.classes()).toContain("down");
+    expect(secondCells[6]!.text()).toBe("-100.00 / -10.00%");
+    expect(secondCells[7]!.text()).toBe("-");
   });
 
   test("records a dividend through the interest action with holding quantity and per-share price", async () => {
@@ -161,8 +210,24 @@ function detail(status: "active" | "closed" = "active") {
       { id: "operation-1", action: "buy", quantity: 100, price: 10, fee: 0, cashImpact: -1000, occurredAt: "2026-07-01T00:00:00.000Z", note: "" },
       { id: "operation-3", action: "interest", quantity: 100, price: 0.5, fee: 0, cashImpact: 50, occurredAt: "2026-07-05T00:00:00.000Z", note: "分红" },
     ],
-    bars: [{ date: "2026-07-01", open: 10, close: 11, high: 11, low: 10, volume: 1000 }],
-    trace: [{ date: "2026-07-01", quantity: 100, netCost: 1000, averageCost: 10, marketValue: 1100, profit: 100 }],
+    bars: [
+      { date: "2026-07-01", open: 10, close: 11, high: 11, low: 10, volume: 1000 },
+      { date: "2026-07-02", open: 11, close: 13, high: 13, low: 11, volume: 1200 },
+    ],
+    trace: [
+      { date: "2026-07-01", quantity: 100, netCost: 1000, averageCost: 10, marketValue: 1100, profit: 100 },
+      { date: "2026-07-02", quantity: 100, netCost: 1100, averageCost: 11, marketValue: 1300, profit: 200 },
+    ],
     macdLines: {},
+  };
+}
+
+function detailNegative() {
+  return {
+    ...detail(),
+    trace: [
+      { date: "2026-07-01", quantity: 100, netCost: 1000, averageCost: 10, marketValue: 1000, profit: -100 },
+      { date: "2026-07-02", quantity: 100, netCost: 1000, averageCost: 10, marketValue: 900, profit: -120 },
+    ],
   };
 }
