@@ -54,7 +54,7 @@ try {
 
 function start(name: ServiceProcess["name"], command: string[], commandMarker: string, cwd = projectRoot): void {
   const filePath = logPath(name);
-  writeFileSync(filePath, "");
+  writeFileSync(filePath, "", "utf8");
   const logFile = Bun.file(filePath);
   const child = Bun.spawn({
     cmd: command,

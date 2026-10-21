@@ -12,6 +12,7 @@ import {
   ThirdPartyDataService,
   thirdPartyInfoLinks
 } from "../src/services/third-party-data-service";
+import { gbkBytes, thsCharsetMetaMarkup } from "./helpers/gbk-fixture";
 
 const unavailableAkShare = { technical: async () => Promise.reject(new Error("AKShare unavailable")) };
 
@@ -66,6 +67,34 @@ describe("third-party market data adapters", () => {
     const groups = thirdPartyInfoLinks();
     expect(groups.map((group) => group.label)).toEqual(expect.arrayContaining(["热度信息", "行情数据", "财经资讯", "个股数据"]));
     expect(groups.find((group) => group.label === "个股数据")?.links.some((link) => link.needCode)).toBe(true);
+  });
+
+  test("decodes Tonghuashun GBK ranking pages so column names and day filters stay intact", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-gbk-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async () =>
+          new Response(gbkBytes(thsCharsetMetaMarkup), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=gbk" }
+          }),
+        unavailableAkShare
+      );
+
+      const table = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+
+      expect(table.source).toBe("tonghuashun");
+      expect(table.columns).toEqual(["序号", "股票代码", "股票简称", "连涨天数"]);
+      expect(table.rows).toHaveLength(2);
+      expect(table.rows[0]?.values).toMatchObject({ 股票代码: "600000", 股票简称: "浦发银行", 连涨天数: "4" });
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   test("falls back to only the current user's cached instruments when an upstream ranking is unavailable", async () => {

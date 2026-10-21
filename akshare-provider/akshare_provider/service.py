@@ -220,7 +220,7 @@ def fetch_disclosures(
                 extractor = pdf_text_extractor or extract_pdf_text
                 text = extractor(content)
             else:
-                text = extract_html_text(content.decode("utf-8", errors="ignore"))
+                text = extract_html_text(decode_html_bytes(content, content_type))
             text = clean_text(text)[:30_000]
             if len(text) < 40:
                 raise ProviderError("公告正文没有可用文本层")
@@ -559,6 +559,42 @@ def clean_text(value: str) -> str:
 
 def extract_html_text(value: str) -> str:
     return clean_text(value)
+
+
+_TEXT_ENCODING_ALIASES = {
+    "gbk": "gb18030",
+    "gb2312": "gb18030",
+    "gb_2312": "gb18030",
+    "gb_2312-80": "gb18030",
+    "x-gbk": "gb18030",
+    "utf8": "utf-8",
+}
+
+
+def charset_from_content_type(content_type: str | None) -> str | None:
+    """从 Content-Type 中解析字符集，未声明时返回 None。"""
+    if not content_type:
+        return None
+    match = re.search(r"charset\s*=\s*\"?([\w-]+)", content_type, re.IGNORECASE)
+    if not match:
+        return None
+    label = match.group(1).strip().lower()
+    return _TEXT_ENCODING_ALIASES.get(label, label)
+
+
+def decode_html_bytes(content: bytes, content_type: str | None = None) -> str:
+    """按响应声明的字符集解码文本，缺省依次尝试 UTF-8 与 GB18030；无法解码时替换而非静默丢字。"""
+    candidates: list[str] = []
+    declared = charset_from_content_type(content_type)
+    if declared:
+        candidates.append(declared)
+    candidates.extend(("utf-8", "gb18030"))
+    for encoding in candidates:
+        try:
+            return content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return content.decode("utf-8", errors="replace")
 
 
 def extract_pdf_text(content: bytes) -> str:

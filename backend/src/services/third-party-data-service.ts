@@ -1,4 +1,5 @@
 import { IronManDatabase } from "../db/database";
+import { decodeTextBytes } from "../charset";
 import { AkShareTechnicalProvider, type AkShareTechnicalKind, type TechnicalRankingProvider } from "../market/akshare-technical-provider";
 import type { AssetType, Exchange, Instrument, PriceBar } from "../market/types";
 import { MarketService } from "./market-service";
@@ -217,7 +218,8 @@ export class ThirdPartyDataService {
       signal: AbortSignal.timeout(10_000)
     });
     if (!response.ok) throw new Error(`同花顺榜单请求失败：${response.status}`);
-    const parsed = parseThsRankingTable(await response.text());
+    const payload = new Uint8Array(await response.arrayBuffer());
+    const parsed = parseThsRankingTable(decodeTextBytes(payload, response.headers.get("content-type")));
     let rows = parsed.rows;
     if (query.kind === "uptrend") rows = filterRankingRows(rows, "连涨天数", normalizeDays(query.days));
     if (query.kind === "high_volume") rows = filterRankingRows(rows, "放量天数", normalizeDays(query.days));

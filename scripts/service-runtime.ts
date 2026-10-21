@@ -50,7 +50,7 @@ export function readManifest(): ServiceManifest | null {
 
 export function writeManifest(processes: ServiceProcess[]): void {
   prepareRuntimeDirectory();
-  writeFileSync(manifestPath, `${JSON.stringify({ processes, startedAt: new Date().toISOString() }, null, 2)}\n`);
+  writeFileSync(manifestPath, `${JSON.stringify({ processes, startedAt: new Date().toISOString() }, null, 2)}\n`, "utf8");
 }
 
 export function removeManifest(): void {

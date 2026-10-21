@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { decodeTextBytes } from "../charset";
 import type { Instrument } from "../market/types";
 import type {
   HoldingDiagnosisSourceAdapter,
@@ -237,14 +238,21 @@ export const holdingDiagnosisSources = createHoldingDiagnosisSources();
 
 const readableSourceHosts = new Set(["cninfo.com.cn", "eastmoney.com"]);
 
+export type DiagnosisSourceFetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+
+export interface HoldingDiagnosisReadOptions {
+  fetcher?: DiagnosisSourceFetcher;
+}
+
 export async function readHoldingDiagnosisSource(
   source: HoldingDiagnosisSourceRecord,
+  options: HoldingDiagnosisReadOptions = {}
 ): Promise<Partial<HoldingDiagnosisSourceRecord>> {
   const url = new URL(source.url);
   if (![...readableSourceHosts].some((host) => url.hostname === host || url.hostname.endsWith(`.${host}`))) {
     throw new Error("来源域名不在允许读取的白名单中");
   }
-  const response = await fetch(url, {
+  const response = await (options.fetcher ?? fetch)(url, {
     headers: {
       accept: "text/html,application/xhtml+xml,application/json",
       "user-agent": "IronMan/0.1 source-metadata",
@@ -288,7 +296,7 @@ async function readSourceText(response: Response, limit: number): Promise<string
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  return decodeTextBytes(merged, response.headers.get("content-type"));
 }
 
 function htmlMetaContent(html: string, name: string): string | null {

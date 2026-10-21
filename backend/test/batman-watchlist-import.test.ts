@@ -96,4 +96,35 @@ describe("Batman watchlist import", () => {
     expect(targetDatabase.get<{ count: number }>("SELECT COUNT(*) AS count FROM instruments")?.count).toBe(0);
     expect(targetDatabase.get<{ count: number }>("SELECT COUNT(*) AS count FROM watchlist_entries")?.count).toBe(0);
   });
+
+  test("rejects a source database whose text encoding is not UTF-8", () => {
+    const utf16Path = join(tempDirectory, "batman-utf16.sqlite");
+    const source = new Database(utf16Path, { create: true });
+    try {
+      source.exec("PRAGMA encoding = 'UTF-16le'");
+      source.exec(`
+        CREATE TABLE user_customized_record (
+          id INTEGER PRIMARY KEY,
+          uid INTEGER NOT NULL,
+          type INTEGER NOT NULL,
+          code TEXT NOT NULL,
+          target REAL,
+          "order" INTEGER NOT NULL,
+          comment TEXT
+        );
+        CREATE TABLE item_info_table (
+          type INTEGER NOT NULL,
+          code TEXT NOT NULL,
+          name TEXT NOT NULL,
+          market INTEGER,
+          PRIMARY KEY (type, code)
+        );
+      `);
+    } finally {
+      source.close();
+    }
+
+    expect(() => importBatmanWatchlist({ sourceDatabasePath: utf16Path, targetDatabase, targetEmail: "batman@stark.com" })).toThrow("源数据库编码");
+    expect(targetDatabase.get<{ count: number }>("SELECT COUNT(*) AS count FROM instruments")?.count).toBe(0);
+  });
 });

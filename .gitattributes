@@ -1,0 +1,16 @@
+# 仓库文本统一以 UTF-8 存储、以 LF 换行提交，避免跨平台差异与中文乱码
+* text=auto eol=lf
+
+# 二进制与数据文件不做换行/编码转换
+*.sqlite binary
+*.sqlite3 binary
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+bun.lockb binary

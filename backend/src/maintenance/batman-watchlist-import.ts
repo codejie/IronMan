@@ -44,9 +44,22 @@ interface MappedInstrument {
   sortOrder: number;
 }
 
+/**
+ * 校验外部源库编码：只接受 UTF-8。
+ * 其他编码（GBK/UTF-16 等）会在导入后表现为中文乱码或字段错位，必须先转换再导入。
+ */
+export function assertSourceEncoding(database: Database): void {
+  const row = database.query("PRAGMA encoding").get() as { encoding?: string } | null;
+  const encoding = row?.encoding?.trim().toUpperCase() ?? "UTF-8";
+  if (encoding !== "UTF-8") {
+    throw new Error(`源数据库编码为 ${encoding}，请先转换为 UTF-8 再导入（例如 sqlite3 源库 .dump | sqlite3 目标库）`);
+  }
+}
+
 export function importBatmanWatchlist(input: BatmanWatchlistImportInput): BatmanWatchlistImportSummary {
   const source = new Database(input.sourceDatabasePath, { readonly: true, strict: true });
   try {
+    assertSourceEncoding(source);
     const sourceRows = source
       .query(
         `SELECT customized.type, customized.code, info.name, customized.target, customized."order" AS "order", customized.comment
