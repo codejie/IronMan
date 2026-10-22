@@ -1,10 +1,22 @@
 import { errors } from "../errors";
 import { listedFundExchange } from "./listed-fund";
-import type { Instrument, MarketDataProvider, PriceBar, Timeframe } from "./types";
+import type { Fetcher, Instrument, MarketDataProvider, PriceBar, Timeframe } from "./types";
 
 interface TencentKlinePayload {
   data?: Record<string, { qfqday?: string[][]; day?: string[][]; qfqweek?: string[][]; week?: string[][]; qfqmonth?: string[][]; month?: string[][] }>;
 }
+
+interface TencentEndpoint {
+  baseUrl: string;
+  path: string;
+}
+
+const THIRTY_SECONDS = 10_000;
+
+const endpoints: TencentEndpoint[] = [
+  { baseUrl: "https://web.ifzq.gtimg.cn", path: "/appstock/app/fqkline/get" },
+  { baseUrl: "https://proxy.finance.qq.com", path: "/ifzqgtimg/appstock/app/newfqkline/get" },
+];
 
 export function tencentSymbol(instrument: Instrument): string {
   const listedExchange = listedFundExchange(instrument);
@@ -20,44 +32,75 @@ function seriesFor(payload: TencentKlinePayload, symbol: string, timeframe: Time
   return item.qfqday ?? item.day ?? [];
 }
 
+function isWafBlocked(response: Response): boolean {
+  return response.status === 501 || response.headers.get("content-type")?.includes("text/html") === true;
+}
+
+export interface TencentMarketProviderOptions {
+  fetcher?: Fetcher;
+}
+
 export class TencentMarketProvider implements MarketDataProvider {
   readonly source = "tencent" as const;
+  private readonly request: Fetcher;
+
+  constructor(options: TencentMarketProviderOptions = {}) {
+    this.request = options.fetcher ?? fetch;
+  }
 
   async history(instrument: Instrument, timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]> {
     const symbol = tencentSymbol(instrument);
     const end = endDate ?? "";
-    const response = await fetch(
-      `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${encodeURIComponent(`${symbol},${timeframe},,${end},${limit},qfq`)}`,
-      { headers: { "user-agent": "IronMan/0.1 market-data" }, signal: AbortSignal.timeout(10_000) }
-    );
-    if (!response.ok) {
-      throw errors.external("Tencent 行情服务暂不可用");
+    const param = `${symbol},${timeframe},,${end},${limit},qfq`;
+    const requestUrl = `${endpoints[0]!.baseUrl}${endpoints[0]!.path}?param=${encodeURIComponent(param)}`;
+    const backupUrl = `${endpoints[1]!.baseUrl}${endpoints[1]!.path}?param=${encodeURIComponent(param)}`;
+
+    for (let attempt = 0; attempt < endpoints.length; attempt += 1) {
+      const target = attempt === 0 ? requestUrl : backupUrl;
+      let response: Response;
+      try {
+        response = await this.request(target, {
+          headers: { "user-agent": "IronMan/0.1 market-data" },
+          signal: AbortSignal.timeout(THIRTY_SECONDS),
+        });
+      } catch {
+        continue;
+      }
+      if (!response.ok || isWafBlocked(response)) {
+        continue;
+      }
+      let payload: TencentKlinePayload;
+      try {
+        payload = (await response.json()) as TencentKlinePayload;
+      } catch {
+        continue;
+      }
+      const bars = seriesFor(payload, symbol, timeframe)
+        .map((row) => ({
+          date: row[0] ?? "",
+          open: Number(row[1]),
+          close: Number(row[2]),
+          high: Number(row[3]),
+          low: Number(row[4]),
+          volume: Number(row[5]),
+          amount: Number(row[6]),
+          turnoverRate: Number(row[7])
+        }))
+        .filter((row) => row.date.length > 0 && [row.open, row.close, row.high, row.low, row.volume].every(Number.isFinite));
+      if (bars.length === 0) {
+        throw errors.external("Tencent 未返回可用的历史行情");
+      }
+      return bars.map((bar) => ({
+        date: bar.date,
+        open: bar.open,
+        close: bar.close,
+        high: bar.high,
+        low: bar.low,
+        volume: bar.volume,
+        ...(Number.isFinite(bar.amount) ? { amount: bar.amount } : {}),
+        ...(Number.isFinite(bar.turnoverRate) ? { turnoverRate: bar.turnoverRate } : {}),
+      }));
     }
-    const data = (await response.json()) as TencentKlinePayload;
-    const bars = seriesFor(data, symbol, timeframe)
-      .map((row) => ({
-        date: row[0] ?? "",
-        open: Number(row[1]),
-        close: Number(row[2]),
-        high: Number(row[3]),
-        low: Number(row[4]),
-        volume: Number(row[5]),
-        amount: Number(row[6]),
-        turnoverRate: Number(row[7])
-      }))
-      .filter((row) => row.date.length > 0 && [row.open, row.close, row.high, row.low, row.volume].every(Number.isFinite));
-    if (bars.length === 0) {
-      throw errors.external("Tencent 未返回可用的历史行情");
-    }
-    return bars.map((bar) => ({
-      date: bar.date,
-      open: bar.open,
-      close: bar.close,
-      high: bar.high,
-      low: bar.low,
-      volume: bar.volume,
-      ...(Number.isFinite(bar.amount) ? { amount: bar.amount } : {}),
-      ...(Number.isFinite(bar.turnoverRate) ? { turnoverRate: bar.turnoverRate } : {}),
-    }));
+    throw errors.external("Tencent 行情服务暂不可用");
   }
 }

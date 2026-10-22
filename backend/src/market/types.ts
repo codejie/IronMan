@@ -2,6 +2,7 @@ export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
 export type MarketSource = "tencent" | "eastmoney" | "akshare";
 export type Timeframe = "day" | "week" | "month";
+export type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
 export interface Instrument {
   id: string;
