@@ -128,6 +128,112 @@ describe("third-party market data adapters", () => {
     }
   });
 
+  test("opens a breaker for the Tonghuashun ranking after repeated failures instead of timing out every request", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-breaker-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      let thsRequests = 0;
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async () => {
+          thsRequests += 1;
+          throw new Error("THS page unavailable");
+        },
+        unavailableAkShare,
+        { thsTripThreshold: 3, thsCooldownMs: 600_000 }
+      );
+
+      for (let i = 0; i < 4; i += 1) {
+        const table = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+        expect(table.source).toBe("local");
+      }
+
+      expect(thsRequests).toBe(3);
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  test("closes the breaker again after the cooldown window and after a success", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-reopen-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      let thsRequests = 0;
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async () => {
+          thsRequests += 1;
+          if (thsRequests <= 3) throw new Error("THS page unavailable");
+          return new Response(gbkBytes(thsCharsetMetaMarkup), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=gbk" }
+          });
+        },
+        unavailableAkShare,
+        { thsTripThreshold: 3, thsCooldownMs: 60 }
+      );
+
+      for (let i = 0; i < 3; i += 1) await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      expect(thsRequests).toBe(3);
+
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      const reopened = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      expect(reopened.source).toBe("tonghuashun");
+      expect(thsRequests).toBe(4);
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
+  test("resets the failure counter as soon as a ranking request succeeds", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-reset-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      let thsRequests = 0;
+      let fail = true;
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async () => {
+          thsRequests += 1;
+          if (fail) throw new Error("THS page unavailable");
+          return new Response(gbkBytes(thsCharsetMetaMarkup), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=gbk" }
+          });
+        },
+        unavailableAkShare,
+        { thsTripThreshold: 3, thsCooldownMs: 600_000 }
+      );
+
+      await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      fail = false;
+      const recovered = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      expect(recovered.source).toBe("tonghuashun");
+      expect(thsRequests).toBe(3);
+
+      fail = true;
+      await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      expect(thsRequests).toBe(5);
+      const fourth = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+      expect(thsRequests).toBe(6);
+      expect(fourth.source).toBe("local");
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   test("falls back to only the current user's cached instruments when an upstream ranking is unavailable", async () => {
     const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-"));
     const database = new IronManDatabase(join(directory, "ironman.sqlite"));

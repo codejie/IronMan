@@ -154,13 +154,33 @@ export function buildLimitUpPoolTable(payload: EastmoneyLimitUpPayload): { colum
   return { columns, rows };
 }
 
+export interface ThirdPartyRankingBreakerOptions {
+  /** 连续失败多少次后熔断同花顺榜单请求。 */
+  thsTripThreshold?: number;
+  /** 熔断后的冷却时长（毫秒），冷却内直接走向后本地计算。 */
+  thsCooldownMs?: number;
+}
+
+const DEFAULT_THS_TRIP_THRESHOLD = 3;
+const DEFAULT_THS_COOLDOWN_MS = 10 * 60 * 1000;
+
 export class ThirdPartyDataService {
+  private thsConsecutiveFailures = 0;
+  private thsRetryAllowedAt = 0;
+
   constructor(
     private readonly database: IronManDatabase,
     private readonly market: MarketService,
     private readonly request: ThirdPartyFetcher = (input, init) => fetch(input, init),
-    private readonly akshare: TechnicalRankingProvider = new AkShareTechnicalProvider()
-  ) {}
+    private readonly akshare: TechnicalRankingProvider = new AkShareTechnicalProvider(),
+    breakerOptions: ThirdPartyRankingBreakerOptions = {}
+  ) {
+    this.thsTripThreshold = breakerOptions.thsTripThreshold ?? DEFAULT_THS_TRIP_THRESHOLD;
+    this.thsCooldownMs = breakerOptions.thsCooldownMs ?? DEFAULT_THS_COOLDOWN_MS;
+  }
+
+  private readonly thsTripThreshold: number;
+  private readonly thsCooldownMs: number;
 
   async technical(userId: string, query: ThirdPartyTechnicalQuery): Promise<ThirdPartyTechnicalTable> {
     if (!technicalKinds.has(query.kind)) throw new Error("不支持的技术数据类型");
@@ -176,7 +196,7 @@ export class ThirdPartyDataService {
       };
     } catch {
       try {
-        const remote = query.kind === "limit_up_pool" ? await this.fetchLimitUpPool(query.date) : await this.fetchThsRanking(query);
+        const remote = query.kind === "limit_up_pool" ? await this.fetchLimitUpPool(query.date) : await this.fetchThsRankingWithBreaker(query);
         if (remote.rows.length === 0) throw new Error("上游未返回可用榜单数据");
         return {
           columns: remote.columns,
@@ -204,6 +224,25 @@ export class ThirdPartyDataService {
 
   marketCloud(): { title: string; url: string; openUrl: string } {
     return { title: "52ETF 大盘云图", url: "https://52etf.site", openUrl: "https://52etf.site" };
+  }
+
+  private async fetchThsRankingWithBreaker(query: ThirdPartyTechnicalQuery): Promise<{ columns: string[]; rows: Array<Record<string, TableValue>> }> {
+    if (Date.now() < this.thsRetryAllowedAt) {
+      throw new Error("同花顺榜单处于熔断冷却期，暂不请求上游");
+    }
+    try {
+      const result = await this.fetchThsRanking(query);
+      this.thsConsecutiveFailures = 0;
+      this.thsRetryAllowedAt = 0;
+      return result;
+    } catch (error) {
+      this.thsConsecutiveFailures += 1;
+      if (this.thsConsecutiveFailures >= this.thsTripThreshold) {
+        this.thsRetryAllowedAt = Date.now() + this.thsCooldownMs;
+        this.thsConsecutiveFailures = 0;
+      }
+      throw error;
+    }
   }
 
   private async fetchThsRanking(query: ThirdPartyTechnicalQuery): Promise<{ columns: string[]; rows: Array<Record<string, TableValue>> }> {
