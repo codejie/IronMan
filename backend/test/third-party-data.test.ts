@@ -45,22 +45,72 @@ describe("third-party market data adapters", () => {
       data: {
         pool: [
           {
-            f2: 10.52,
-            f3: 10.01,
-            f6: 123_000_000,
-            f8: 4.21,
-            f12: "600000",
-            f14: "浦发银行",
-            f20: 280_000_000_000,
-            f21: 190_000_000_000,
-            f62: 21_000_000
+            c: "600000",
+            n: "浦发银行",
+            m: 1,
+            p: 10_520,
+            zdp: 10.01,
+            amount: 123_000_000,
+            hs: 4.21,
+            ltsz: 190_000_000_000,
+            tshare: 280_000_000_000,
+            fund: 21_000_000
           }
         ]
       }
     });
 
     expect(table.columns).toContain("代码");
-    expect(table.rows[0]).toMatchObject({ 代码: "600000", 名称: "浦发银行", 最新价: 10.52, 涨跌幅: 10.01 });
+    expect(table.rows[0]).toMatchObject({
+      代码: "600000",
+      名称: "浦发银行",
+      最新价: 10.52,
+      涨跌幅: 10.01,
+      换手率: 4.21
+    });
+  });
+
+  test("requests the Eastmoney limit-up pool with the akshare-compatible parameter set", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-zt-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      const requestedUrls: string[] = [];
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async (input: string) => {
+          requestedUrls.push(String(input));
+          return new Response(
+            JSON.stringify({
+              rc: 0,
+              data: {
+                tc: 1,
+                pool: [
+                  { c: "600000", n: "浦发银行", m: 1, p: 10_520, zdp: 10.01, amount: 123_000_000, hs: 4.21, ltsz: 190_000_000_000, tshare: 280_000_000_000, fund: 21_000_000 }
+                ]
+              }
+            }),
+            { status: 200, headers: { "content-type": "application/json" } }
+          );
+        },
+        unavailableAkShare
+      );
+
+      const table = await service.technical(crypto.randomUUID(), { kind: "limit_up_pool", category: 0, date: "2026-10-22" });
+
+      expect(table.source).toBe("eastmoney");
+      expect(table.rows[0]?.values).toMatchObject({ 代码: "600000", 最新价: 10.52 });
+      const url = requestedUrls[0] ?? "";
+      const query = new URL(url).search;
+      expect(query).toContain("dpt=wz.ztzt");
+      expect(query).toContain("date=20261022");
+      expect(query).toContain("sort=fbt%3Aasc");
+      expect(url + query).not.toContain("d=");
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
   });
 
   test("keeps Batman's information-link groups while adding code-aware destinations", () => {

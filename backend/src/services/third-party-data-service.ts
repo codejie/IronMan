@@ -59,7 +59,7 @@ interface BarRow {
 }
 
 interface EastmoneyLimitUpPayload {
-  data?: { pool?: Array<Record<string, unknown>> | null } | null;
+  data?: { tc?: number | null; pool?: Array<Record<string, unknown>> | null } | null;
 }
 
 type ThirdPartyFetcher = (input: string, init?: RequestInit) => Promise<Response>;
@@ -139,18 +139,22 @@ export function filterRankingRows(rows: Array<Record<string, string>>, column: s
 }
 
 export function buildLimitUpPoolTable(payload: EastmoneyLimitUpPayload): { columns: string[]; rows: Array<Record<string, TableValue>> } {
-  const columns = ["代码", "名称", "最新价", "涨跌幅", "成交额", "流通市值", "总市值", "换手率", "封板资金"];
-  const rows = (payload.data?.pool ?? []).map((item) => ({
-    "代码": textValue(item.f12),
-    "名称": textValue(item.f14),
-    "最新价": finiteValue(item.f2),
-    "涨跌幅": finiteValue(item.f3),
-    "成交额": finiteValue(item.f6),
-    "流通市值": finiteValue(item.f21),
-    "总市值": finiteValue(item.f20),
-    "换手率": finiteValue(item.f8),
-    "封板资金": finiteValue(item.f62)
-  }));
+  const columns = ["代码", "名称", "最新价", "涨跌幅", "成交额", "流通市值", "总市值", "换手率", "连板数", "封板资金"];
+  const rows = (payload.data?.pool ?? []).map((item) => {
+    const price = finiteValue(item.p);
+    return {
+      "代码": textValue(item.c),
+      "名称": textValue(item.n),
+      "最新价": price === null ? null : price / 1000,
+      "涨跌幅": finiteValue(item.zdp),
+      "成交额": finiteValue(item.amount),
+      "流通市值": finiteValue(item.ltsz),
+      "总市值": finiteValue(item.tshare),
+      "换手率": finiteValue(item.hs),
+      "连板数": finiteValue(item.lbc),
+      "封板资金": finiteValue(item.fund)
+    };
+  });
   return { columns, rows };
 }
 
@@ -273,14 +277,30 @@ export class ThirdPartyDataService {
 
   private async fetchLimitUpPool(date?: string): Promise<{ columns: string[]; rows: Array<Record<string, TableValue>> }> {
     const normalizedDate = normalizeMarketDate(date);
-    const fields = "f1,f2,f3,f4,f5,f6,f7,f8,f10,f12,f13,f14,f15,f16,f17,f18,f20,f21,f22,f23,f24,f25,f26,f27,f28,f29,f30,f31,f32,f33,f34,f35,f36,f37,f38,f39,f40,f41,f42,f43,f44,f45,f46,f47,f48,f49,f50,f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62";
-    const params = new URLSearchParams({ ut: "7eea3edcaed734bea9cbfc24409ed989", d: normalizedDate, tt: "1", uv: "1", np: "1", fltt: "2", invt: "2", fields });
-    const response = await this.request(`https://push2ex.eastmoney.com/getTopicZTPool?${params.toString()}`, {
-      headers: { "user-agent": "Mozilla/5.0 (compatible; IronMan/1.0)", referer: "https://quote.eastmoney.com/" },
-      signal: AbortSignal.timeout(10_000)
-    });
-    if (!response.ok) throw new Error(`东方财富涨停股池请求失败：${response.status}`);
-    const table = buildLimitUpPoolTable((await response.json()) as EastmoneyLimitUpPayload);
+    const pageSize = 500;
+    const pool: Array<Record<string, unknown>> = [];
+    let totalCount = 0;
+    for (let page = 0; page <= 4; page += 1) {
+      const params = new URLSearchParams({
+        ut: "7eea3edcaed734bea9cbfc24409ed989",
+        date: normalizedDate,
+        dpt: "wz.ztzt",
+        Pageindex: String(page),
+        PageSize: String(pageSize),
+        sort: "fbt:asc"
+      });
+      const response = await this.request(`https://push2ex.eastmoney.com/getTopicZTPool?${params.toString()}`, {
+        headers: { "user-agent": "Mozilla/5.0 (compatible; IronMan/1.0)", referer: "https://quote.eastmoney.com/" },
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (!response.ok) throw new Error(`东方财富涨停股池请求失败：${response.status}`);
+      const payload = (await response.json()) as EastmoneyLimitUpPayload;
+      const rows = payload.data?.pool ?? [];
+      totalCount = typeof payload.data?.tc === "number" && Number.isFinite(payload.data.tc) ? payload.data.tc : pool.length + rows.length;
+      pool.push(...rows);
+      if (pool.length >= totalCount || rows.length < pageSize) break;
+    }
+    const table = buildLimitUpPoolTable({ data: { tc: totalCount, pool } });
     if (table.rows.length === 0) throw new Error("东方财富未返回涨停股池数据");
     return table;
   }
