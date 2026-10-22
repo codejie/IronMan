@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
 import { IronManDatabase } from "../src/db/database";
-import type { MarketDataProvider } from "../src/market/types";
+import type { IntradayMinuteProvider, IntradayMinuteResult } from "../src/market/tencent-provider";
+import type { Instrument, MarketDataProvider, MarketSource, PriceBar, Timeframe } from "../src/market/types";
 import { MarketService } from "../src/services/market-service";
 import { SettingsService } from "../src/services/settings-service";
 import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
@@ -613,5 +614,100 @@ describe("market data and asset workspace", () => {
     expect(((await signals.json()) as ApiResponse<{ items: unknown[] }>).result.items.length).toBeGreaterThanOrEqual(0);
     const links = await post("/api/market/info-links", {}, user.token);
     expect(((await links.json()) as ApiResponse<{ groups: unknown[] }>).result.groups.length).toBeGreaterThan(0);
+  });
+
+  test("serves the intraday minute line from the configured data source with fallback", async () => {
+    const minuteResult: IntradayMinuteResult = {
+      date: "2026-10-22",
+      points: [
+        { time: "09:30", price: 9.66, volume: 1037, cumulativeAmount: 1_001_742 },
+        { time: "09:31", price: 9.67, volume: 2211, cumulativeAmount: 1_024_330 }
+      ]
+    };
+    class MinuteFixtureProvider implements MarketDataProvider, IntradayMinuteProvider {
+      readonly source: MarketSource;
+      constructor(
+        source: MarketSource,
+        private readonly minute: IntradayMinuteResult | null
+      ) {
+        this.source = source;
+      }
+      async history(): Promise<PriceBar[]> {
+        return [];
+      }
+      async intradayMinute(): Promise<IntradayMinuteResult> {
+        if (this.minute === null) throw new Error("分钟数据不可用");
+        return this.minute;
+      }
+    }
+    let databaseIndex = 0;
+    const withRuntime = async (
+      providers: MarketDataProvider[],
+      run: (app: IronManRuntime, token: string, instrumentId: string) => Promise<void>
+    ): Promise<void> => {
+      const app = createApp({
+        databasePath: join(tempDirectory, `ironman-minute-${databaseIndex}.sqlite`),
+        jwtSecret: "test-secret-that-is-long-enough",
+        tokenTtlSeconds: 60 * 60,
+        marketProviders: providers
+      });
+      databaseIndex += 1;
+      try {
+        const registerResponse = await app.app.request("/api/auth/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: `minute-${databaseIndex}@example.com`, password: "a-strong-test-password", displayName: "minute-user" })
+        });
+        const user = ((await registerResponse.json()) as ApiResponse<Session>).result;
+        const upsertResponse = await app.app.request("/api/market/instruments/upsert", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${user.token}` },
+          body: JSON.stringify({ code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" })
+        });
+        const instrument = ((await upsertResponse.json()) as ApiResponse<{ id: string }>).result;
+        await run(app, user.token, instrument.id);
+      } finally {
+        app.close();
+      }
+    };
+
+    await withRuntime(
+      [new MinuteFixtureProvider("eastmoney", minuteResult), new MinuteFixtureProvider("tencent", minuteResult)],
+      async (app, token, instrumentId) => {
+        const minute = await app.app.request("/api/market/minute", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ instrumentId })
+        });
+        const minuteBody = (await minute.json()) as ApiResponse<{ source: string; date: string; points: Array<{ time: string }> }>;
+        expect(minute.status).toBe(200);
+        expect(minuteBody.result.source).toBe("eastmoney");
+        expect(minuteBody.result.date).toBe("2026-10-22");
+        expect(minuteBody.result.points).toHaveLength(2);
+      }
+    );
+
+    await withRuntime(
+      [new FixtureMarketProvider("eastmoney"), new MinuteFixtureProvider("tencent", minuteResult)],
+      async (app, token, instrumentId) => {
+        const fallback = await app.app.request("/api/market/minute", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ instrumentId })
+        });
+        const fallbackBody = (await fallback.json()) as ApiResponse<{ source: string; points: Array<{ time: string }> }>;
+        expect(fallbackBody.result.source).toBe("tencent");
+        expect(fallbackBody.result.points).toHaveLength(2);
+      }
+    );
+
+    await withRuntime([new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")], async (app, token, instrumentId) => {
+      const unavailable = await app.app.request("/api/market/minute", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ instrumentId })
+      });
+      expect(((await unavailable.json()) as ApiResponse<unknown>).code).not.toBe(0);
+    });
   });
 });

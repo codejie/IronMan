@@ -2,7 +2,7 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { EastmoneyMarketProvider } from "../market/eastmoney-provider";
 import { AkShareMarketProvider } from "../market/akshare-provider";
-import { TencentMarketProvider } from "../market/tencent-provider";
+import { TencentMarketProvider, type IntradayMinuteProvider, type IntradayMinuteResult } from "../market/tencent-provider";
 import type {
   AssetType,
   DataSourceConfig,
@@ -165,6 +165,27 @@ export class MarketService {
       }
       throw error;
     }
+  }
+
+  /**
+   * 当天分时（可选近 N 个交易日，视上游支持）。分时数据实时性强，不做本地缓存。
+   */
+  async getIntradayMinute(userId: string, instrumentId: string, date?: string): Promise<IntradayMinuteResult & { source: MarketSource }> {
+    const instrument = this.getInstrument(instrumentId);
+    const config = this.getDataSourceConfig(userId);
+    const candidates = [...new Set([config.primary, config.fallback])];
+    let lastError: unknown = undefined;
+    for (const source of candidates) {
+      const provider = this.providers.get(source);
+      if (provider === undefined || !("intradayMinute" in provider)) continue;
+      try {
+        const result = await (provider as MarketDataProvider & IntradayMinuteProvider).intradayMinute(instrument, date);
+        return { source, date: result.date, points: result.points };
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw errors.external("分时数据源暂不可用");
   }
 
   async getHistoryRange(

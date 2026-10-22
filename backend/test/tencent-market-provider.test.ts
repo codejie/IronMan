@@ -132,4 +132,95 @@ describe("Tencent market provider", () => {
     }
     expect(caught).toBeInstanceOf(Error);
   });
+
+  test("fetches the current day's minute line from minute/query", async () => {
+    const requestedUrls: string[] = [];
+    const provider = new TencentMarketProvider({
+      fetcher: async (input) => {
+        requestedUrls.push(String(input));
+        return Response.json({
+          code: 0,
+          data: {
+            sh600000: {
+              data: {
+                data: ["0930 9.66 1037 1001742.00", "0931 9.67 2211 1024330.00"],
+              },
+            },
+          },
+        });
+      },
+    });
+
+    const result = await provider.intradayMinute(instrument());
+
+    expect(requestedUrls[0]).toContain("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sh600000");
+    expect(result.points).toHaveLength(2);
+    expect(result.points[0]).toEqual({ time: "09:30", price: 9.66, volume: 1037, cumulativeAmount: 1001742 });
+    expect(result.points[1]?.time).toBe("09:31");
+  });
+
+  test("falls back to the backup domain when the primary minute query is WAF-blocked", async () => {
+    const requestedUrls: string[] = [];
+    const provider = new TencentMarketProvider({
+      fetcher: async (input) => {
+        requestedUrls.push(String(input));
+        return requestedUrls.length === 1 ? wafResponse() : Response.json({
+          code: 0,
+          data: { sh600000: { data: { data: ["0930 9.66 1037 1001742.00"] } } },
+        });
+      },
+    });
+
+    const result = await provider.intradayMinute(instrument());
+
+    expect(requestedUrls).toHaveLength(2);
+    expect(requestedUrls[1]).toContain("https://proxy.finance.qq.com/ifzqgtimg/appstock/app/minute/query?code=sh600000");
+    expect(result.points).toHaveLength(1);
+  });
+
+  test("reads a past trading day from day/query when a date is requested", async () => {
+    const requestedUrls: string[] = [];
+    const provider = new TencentMarketProvider({
+      fetcher: async (input) => {
+        requestedUrls.push(String(input));
+        return Response.json({
+          code: 0,
+          data: {
+            sh600000: {
+              data: [
+                { date: "20261016", data: ["0930 9.60 2070 1987200.20"], prec: ["9.60"] },
+                { date: "20261021", data: ["0930 9.72 2681 2605932.00", "0931 9.73 1100 11000.00"], prec: ["9.72"] },
+                { date: "20261022", data: ["0930 9.66 1037 1001742.00"], prec: ["9.66"] },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    const result = await provider.intradayMinute(instrument(), "2026-10-21");
+
+    expect(requestedUrls[0]).toContain("https://web.ifzq.gtimg.cn/appstock/app/day/query?code=sh600000");
+    expect(result.date).toBe("2026-10-21");
+    expect(result.points).toHaveLength(2);
+    expect(result.points[0]).toEqual({ time: "09:30", price: 9.72, volume: 2681, cumulativeAmount: 2605932 });
+  });
+
+  test("rejects a requested trading day that the upstream does not cover", async () => {
+    const provider = new TencentMarketProvider({
+      fetcher: async () =>
+        Response.json({
+          code: 0,
+          data: { sh600000: { data: [{ date: "20261022", data: ["0930 9.66 1037 1001742.00"], prec: ["9.66"] }] } },
+        }),
+    });
+
+    let caught: unknown;
+    try {
+      await provider.intradayMinute(instrument(), "2026-10-15");
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+  });
 });

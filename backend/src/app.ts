@@ -1608,6 +1608,56 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/market/minute",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            instrumentId: z.string().uuid(),
+            date: z
+              .string()
+              .regex(/^\d{4}([-/]?\d{2}){2}$/)
+              .optional(),
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Intraday minute line",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({
+                  source: sourceSchema,
+                  date: z.string(),
+                  points: z.array(
+                    z.object({
+                      time: z.string(),
+                      price: z.number(),
+                      volume: z.number(),
+                      cumulativeAmount: z.number(),
+                    }),
+                  ),
+                }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    async (context) => {
+      const input = context.req.valid("json");
+      return context.json(
+        success(
+          await market.getIntradayMinute(context.get("currentUser").id, input.instrumentId, input.date),
+        ),
+        200,
+      );
+    },
+  );
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/market/history",
       middleware: [authenticated(auth)],
       request: {
