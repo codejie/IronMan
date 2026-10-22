@@ -32,8 +32,9 @@ function seriesFor(payload: TencentKlinePayload, symbol: string, timeframe: Time
   return item.qfqday ?? item.day ?? [];
 }
 
-function isWafBlocked(response: Response): boolean {
-  return response.status === 501 || response.headers.get("content-type")?.includes("text/html") === true;
+function isWafBlocked(response: Response, body: string): boolean {
+  if (response.status === 501) return true;
+  return body.includes("waf.tencent.com") || (body.trimStart().startsWith("<!DOCTYPE") && !body.includes("qfq"));
 }
 
 export interface TencentMarketProviderOptions {
@@ -58,20 +59,22 @@ export class TencentMarketProvider implements MarketDataProvider {
     for (let attempt = 0; attempt < endpoints.length; attempt += 1) {
       const target = attempt === 0 ? requestUrl : backupUrl;
       let response: Response;
+      let body: string;
       try {
         response = await this.request(target, {
           headers: { "user-agent": "IronMan/0.1 market-data" },
           signal: AbortSignal.timeout(THIRTY_SECONDS),
         });
+        body = await response.text();
       } catch {
         continue;
       }
-      if (!response.ok || isWafBlocked(response)) {
+      if (!response.ok || isWafBlocked(response, body)) {
         continue;
       }
       let payload: TencentKlinePayload;
       try {
-        payload = (await response.json()) as TencentKlinePayload;
+        payload = JSON.parse(body) as TencentKlinePayload;
       } catch {
         continue;
       }

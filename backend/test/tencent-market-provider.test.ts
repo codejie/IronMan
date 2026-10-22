@@ -68,6 +68,24 @@ describe("Tencent market provider", () => {
     expect(bars.map((bar) => bar.close)).toEqual([9.66, 9.67]);
   });
 
+  test("accepts the JSON payload even when Tencent serves it with a text/html content type", async () => {
+    const requestedUrls: string[] = [];
+    const provider = new TencentMarketProvider({
+      fetcher: async (input: RequestInfo | URL) => {
+        requestedUrls.push(String(input));
+        return new Response(
+          JSON.stringify({ code: 0, data: { sh600000: { qfqday: SAMPLERows } } }),
+          { status: 200, headers: { "content-type": "text/html; charset=UTF-8" } },
+        );
+      },
+    });
+
+    const bars = await provider.history(instrument(), "day", 2);
+
+    expect(requestedUrls).toHaveLength(1);
+    expect(bars.map((bar) => bar.close)).toEqual([9.66, 9.67]);
+  });
+
   test("retries the backup domain when the primary returns a non-JSON WAF page", async () => {
     const requestedUrls: string[] = [];
     const provider = new TencentMarketProvider({
