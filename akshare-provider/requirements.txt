@@ -1,4 +1,4 @@
-akshare==1.18.64
+akshare==1.19.1
 fastapi==0.115.12
 uvicorn[standard]==0.34.3
 httpx==0.28.1

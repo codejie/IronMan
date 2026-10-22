@@ -17,6 +17,7 @@
 | 8 | 腾讯 `qt.gtimg.cn/q=` | 实时报价 | ✅ 200 | 0.17s | **GBK** | 一次可批量；`v_sh600000="1~浦发银行~600000~..."` 行情串 |
 | 9 | 同花顺 `data.10jqka.com.cn` 排行页 | 榜单 | ❌/⚠️ | — | GBK | 真实页面 200（GBK），ajax 端点 WAF 401/403；外部资料证实 2026 年初同花顺侧反爬升级（akshare 的 `_ths` 接口同源受影响） |
 | 10 | 本机 AKShare Provider（FastAPI，未运行） | 技术榜单/新闻/公告 | ⚠️ 未运行 | — | — | `AKSHARE_PROVIDER_AUTOSTART=false`，导致技术榜单降级到"同花顺直连（被拦）→ 本地持仓计算" |
+| 11 | 同花顺 `data.10jqka.com.cn` ajax 端点（akshare 内部路径） | 榜单 | ✅ 200 | 快 | GBK | **akshare 能通过的原因**：请求前用 JS 片段计算 `hexin-v`（`Cookie: v=...`），即同花顺 WAF 通行令牌；akshare 1.19.1 四类 `_ths` 榜单实测全部返回全量数据（cxg 135 / lxsz 513 / cxfl 127 / ljqs 1081 行） |
 
 ## 二、候选源全景（2026 环境）
 
@@ -48,3 +49,4 @@
 4. **批次3（2026-10-22 实施）**：同花顺榜单直连从被拦的 ajax 端点改为**服务端渲染普通页**（`data.10jqka.com.cn/rank/{cxg|lxsz|cxfl|ljqs}/`，实测 200/GBK、表结构与既有解析器一致），四类榜单恢复全市场真实数据。该路径依赖同花顺 WAF"情绪"，定位为"不稳定但可用"的桥接。
 5. **批次4（2026-10-22 实施）**：为同花顺榜单请求加**失败计数熔断**（内存态：连续 3 次失败触发、冷却 10 分钟），熔断期间直接走本地持仓计算，避免每次请求都白等 10s 超时；冷却结束后自动恢复尝试，任一次成功即复位计数。
 6. **无需** 引入 Tushare/Baostock/adata（东财直连已覆盖行情三粒度；Baostock 仅在需要复权因子与基本面补充时再评估）。
+7. **批次5（2026-10-22 实施）**：AKShare Provider 检查结论——当前 1.18.64 的四类 `_ths` 接口**并未被 WAF 全面拦死**（akshare 以 `hexin-v` Cookie 通过同花顺反爬）；已将 `akshare-provider/requirements.txt` 升级到 1.19.1 并实测：四类榜单正常（全量行数）、Provider pytest 17/17 通过。Provider 行情接口当次实测失败属本机东财连通性波动（非版本回归），且后端行情链路另有 eastmoney/tencent 双降级覆盖。`AKSHARE_PROVIDER_AUTOSTART=false` 维持不变（榜单已有 THS 普通页+熔断的稳定链路）。
