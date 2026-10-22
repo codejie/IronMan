@@ -208,12 +208,11 @@ export class ThirdPartyDataService {
 
   private async fetchThsRanking(query: ThirdPartyTechnicalQuery): Promise<{ columns: string[]; rows: Array<Record<string, TableValue>> }> {
     const path = thsPaths[query.kind as Exclude<ThirdPartyTechnicalKind, "limit_up_pool">];
-    const response = await this.request(`https://data.10jqka.com.cn/rank/${path}/field/2/order/desc/page/1/ajax/1/free/1/`, {
+    const response = await this.request(`https://data.10jqka.com.cn/rank/${path}/`, {
       headers: {
         accept: "text/html, */*; q=0.01",
         referer: `https://data.10jqka.com.cn/rank/${path}/`,
-        "user-agent": "Mozilla/5.0 (compatible; IronMan/1.0)",
-        "x-requested-with": "XMLHttpRequest"
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36"
       },
       signal: AbortSignal.timeout(10_000)
     });

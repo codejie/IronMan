@@ -97,6 +97,37 @@ describe("third-party market data adapters", () => {
     }
   });
 
+  test("requests the plain THS ranking page instead of the blocked ajax endpoint", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-page-"));
+    const database = new IronManDatabase(join(directory, "ironman.sqlite"));
+    try {
+      const requestedUrls: string[] = [];
+      const market = new MarketService(database, new SettingsService(database));
+      const service = new ThirdPartyDataService(
+        database,
+        market,
+        async (input: string) => {
+          requestedUrls.push(String(input));
+          return new Response(gbkBytes(thsCharsetMetaMarkup), {
+            status: 200,
+            headers: { "content-type": "text/html; charset=gbk" }
+          });
+        },
+        unavailableAkShare
+      );
+
+      const table = await service.technical(crypto.randomUUID(), { kind: "uptrend", days: 3 });
+
+      expect(table.source).toBe("tonghuashun");
+      expect(requestedUrls).toEqual([expect.stringMatching(/^https:\/\/data\.10jqka\.com\.cn\/rank\/lxsz\/$/)]);
+      expect(requestedUrls[0]).not.toContain("/ajax/");
+      expect(table.columns).toEqual(["序号", "股票代码", "股票简称", "连涨天数"]);
+    } finally {
+      database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
+
   test("falls back to only the current user's cached instruments when an upstream ranking is unavailable", async () => {
     const directory = mkdtempSync(join(tmpdir(), "ironman-third-party-"));
     const database = new IronManDatabase(join(directory, "ironman.sqlite"));
@@ -118,7 +149,7 @@ describe("third-party market data adapters", () => {
       for (const [date, close] of [["2026-07-20", 10], ["2026-07-21", 10.5], ["2026-07-22", 11]] as const) {
         database.run(
           `INSERT INTO market_bars (id, instrument_id, timeframe, source, trade_date, open, close, high, low, volume, created_at)
-           VALUES ($id, $instrumentId, 'day', 'mock', $date, $open, $close, $high, $low, $volume, $createdAt)`,
+           VALUES ($id, $instrumentId, 'day', 'tencent', $date, $open, $close, $high, $low, $volume, $createdAt)`,
           { id: crypto.randomUUID(), instrumentId: instrument.id, date, open: close, close, high: close, low: close, volume: 1000, createdAt: now }
         );
       }
