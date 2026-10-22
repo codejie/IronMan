@@ -48,7 +48,7 @@ export interface SystemStatus {
 
 export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
-export type MarketSource = "mock" | "tencent" | "eastmoney" | "akshare";
+export type MarketSource = "tencent" | "eastmoney" | "akshare";
 
 export interface Instrument {
   id: string;
@@ -463,7 +463,7 @@ export interface HoldingDiagnosisItem {
   recommendation: HoldingDiagnosisRecommendation;
   chart: {
     bars: PriceBar[];
-    source: MarketSource;
+    source: MarketSource | null;
     indicators: TrendIndicatorRunResult[];
     turningPoints: HoldingDiagnosisTurningPoint[];
   };

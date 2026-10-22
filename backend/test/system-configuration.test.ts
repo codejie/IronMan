@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> {
   code: number;
@@ -24,6 +25,7 @@ beforeEach(() => {
     databasePath: join(tempDirectory, "ironman.sqlite"),
     jwtSecret: "test-secret-that-is-long-enough",
     tokenTtlSeconds: 60 * 60,
+    marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")],
   });
 });
 
@@ -255,7 +257,7 @@ describe("system configuration", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "tencent" },
+      { primary: "eastmoney", fallback: "tencent" },
       alice.token,
     );
     await post(
@@ -291,6 +293,24 @@ describe("system configuration", () => {
       failed: number;
     }>;
     expect(bobBody.result).toEqual({ requested: 0, refreshed: 0, failed: 0 });
+  });
+
+  test("rejects the removed local mock data source", async () => {
+    const user = await register("mock-source@example.com");
+
+    const update = await post(
+      "/api/settings/data-sources/update",
+      { primary: "mock", fallback: "tencent" },
+      user.token,
+    );
+    expect(update.status).toBe(400);
+
+    const restore = await post(
+      "/api/settings/data-sources/update",
+      { primary: "eastmoney", fallback: "tencent" },
+      user.token,
+    );
+    expect(restore.status).toBe(200);
   });
 
   test("allows the local AKShare provider as a user-selected data source", async () => {
@@ -368,7 +388,7 @@ describe("system configuration", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "tencent" },
+      { primary: "eastmoney", fallback: "tencent" },
       user.token,
     );
     await post(

@@ -1,17 +1,22 @@
-import type { Instrument, MarketDataProvider, PriceBar, Timeframe } from "./types";
+import type { Instrument, MarketDataProvider, MarketSource, PriceBar, Timeframe } from "../../src/market/types";
 
 function seedFor(instrument: Instrument): number {
   return [...`${instrument.exchange}${instrument.code}`].reduce((total, char) => total + char.charCodeAt(0), 0);
 }
 
 function dateAt(offset: number, endDate?: string): string {
-  const end = endDate === undefined ? new Date(Date.UTC(2026, 6, 20)) : new Date(`${endDate}T00:00:00.000Z`);
+  const end = endDate === undefined ? new Date() : new Date(`${endDate}T00:00:00.000Z`);
   const day = new Date(end.getTime() - offset * 24 * 60 * 60 * 1000);
   return day.toISOString().slice(0, 10);
 }
 
-export class MockMarketProvider implements MarketDataProvider {
-  readonly source = "mock" as const;
+/** Deterministic offline provider for tests; replaces the removed runtime mock provider. */
+export class FixtureMarketProvider implements MarketDataProvider {
+  readonly source: MarketSource;
+
+  constructor(source: MarketSource = "eastmoney") {
+    this.source = source;
+  }
 
   async history(instrument: Instrument, _timeframe: Timeframe, limit: number, endDate?: string): Promise<PriceBar[]> {
     const seed = seedFor(instrument);

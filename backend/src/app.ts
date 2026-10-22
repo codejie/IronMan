@@ -15,8 +15,8 @@ import {
 import { AkShareMarketProvider } from "./market/akshare-provider";
 import { AkShareTechnicalProvider } from "./market/akshare-technical-provider";
 import { EastmoneyMarketProvider } from "./market/eastmoney-provider";
-import { MockMarketProvider } from "./market/mock-provider";
 import { TencentMarketProvider } from "./market/tencent-provider";
+import type { MarketDataProvider } from "./market/types";
 import { AnalysisTaskService } from "./services/analysis-task-service";
 import {
   AutomationScheduler,
@@ -83,7 +83,7 @@ const sessionSchema = z.object({
 const emptyBodySchema = z.object({}).openapi("EmptyBody");
 const assetTypeSchema = z.enum(["stock", "index", "fund"]);
 const exchangeSchema = z.enum(["sh", "sz", "bj", "fund"]);
-const sourceSchema = z.enum(["mock", "tencent", "eastmoney", "akshare"]);
+const sourceSchema = z.enum(["tencent", "eastmoney", "akshare"]);
 const timeframeSchema = z.enum(["day", "week", "month"]);
 const historyLimitSchema = z.number().int().min(1).max(640).default(180);
 const indicatorTypeSchema = z.enum(["MA", "MACD", "RSI", "BOLL"]);
@@ -293,13 +293,14 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const settings = new SettingsService(database);
   const tradingCalendar = new TradingCalendarService(settings);
   const market = new MarketService(database, settings, [
-    new AkShareMarketProvider({
-      baseUrl: config.akshareProviderUrl,
-      timeoutMs: config.akshareProviderTimeoutMs,
-    }),
-    new TencentMarketProvider(),
-    new EastmoneyMarketProvider(),
-    new MockMarketProvider(),
+    ...(config.marketProviders ?? [
+      new AkShareMarketProvider({
+        baseUrl: config.akshareProviderUrl,
+        timeoutMs: config.akshareProviderTimeoutMs,
+      }),
+      new TencentMarketProvider(),
+      new EastmoneyMarketProvider(),
+    ]),
   ]);
   const thirdParty = new ThirdPartyDataService(
     database,
@@ -468,7 +469,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     recommendation: holdingDiagnosisRecommendationSchema,
     chart: z.object({
       bars: z.array(priceBarSchema),
-      source: sourceSchema,
+      source: sourceSchema.nullable(),
       indicators: z.array(
         z.object({
           indicatorId: z.string(),

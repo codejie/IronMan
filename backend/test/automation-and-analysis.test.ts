@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> { code: number; result: T; message?: string }
 interface Session { token: string }
@@ -12,7 +13,7 @@ let runtime: IronManRuntime;
 
 beforeEach(() => {
   tempDirectory = mkdtempSync(join(tmpdir(), "ironman-automation-"));
-  runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600 });
+  runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600, marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")] });
 });
 
 afterEach(() => { runtime.close(); rmSync(tempDirectory, { force: true, recursive: true }); });
@@ -43,7 +44,7 @@ describe("strategy analysis and automation", () => {
     const bob = await register("bob@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "000300", exchange: "sh", name: "沪深300", assetType: "index" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
 
     const strategyResponse = await post(
       "/api/analysis/strategies/create",
@@ -79,7 +80,7 @@ describe("strategy analysis and automation", () => {
     const bob = await register("bob@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "159919", exchange: "sz", name: "沪深300ETF", assetType: "fund" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
 
     const schedule = await post("/api/automation/schedules/create", { name: "每日策略", kind: "analysis", intervalMinutes: 30, strategyId: null }, alice.token);
     expect(schedule.status).toBe(201);
@@ -111,7 +112,7 @@ describe("strategy analysis and automation", () => {
     const bob = await register("bob-rules@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "510300", exchange: "sh", name: "沪深300ETF", assetType: "fund" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
 
     const settings = await post("/api/automation/alerts/settings/get", {}, alice.token);
     expect(settings.status).toBe(200);

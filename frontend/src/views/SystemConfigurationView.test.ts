@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   fundHistoryStatus: vi.fn(),
   recalculateFundHistory: vi.fn(),
   updateHoldingDiagnosisSettings: vi.fn(),
+  updateDataSourceConfig: vi.fn(),
   confirm: vi.fn(),
 }));
 
@@ -43,6 +44,7 @@ vi.mock("@/api/client", () => ({
     fundHistoryStatus: mocks.fundHistoryStatus,
     recalculateFundHistory: mocks.recalculateFundHistory,
     updateHoldingDiagnosisSettings: mocks.updateHoldingDiagnosisSettings,
+    updateDataSourceConfig: mocks.updateDataSourceConfig,
   },
 }));
 
@@ -77,8 +79,10 @@ describe("SystemConfigurationView", () => {
     mocks.fundHistoryStatus.mockReset();
     mocks.recalculateFundHistory.mockReset();
     mocks.updateHoldingDiagnosisSettings.mockReset();
+    mocks.updateDataSourceConfig.mockReset();
     mocks.confirm.mockReset();
-    mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "mock" });
+    mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "eastmoney" });
+    mocks.updateDataSourceConfig.mockImplementation((_token: string, config: { primary: string; fallback: string }) => Promise.resolve(config));
     mocks.marketOverview.mockResolvedValue({ instrumentCount: 0, cachedBarCount: 0, latestCacheAt: null });
     mocks.getMarketSnapshotSettings.mockResolvedValue({
       enabled: false,
@@ -199,6 +203,44 @@ describe("SystemConfigurationView", () => {
       maxExternalSourcesPerHolding: 5,
     });
     mocks.confirm.mockResolvedValue(true);
+  });
+
+  test("stops offering the retired local mock data source and saves only real sources", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const marketNav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("行情与日历"));
+    if (marketNav === undefined) throw new Error("market section was not rendered");
+    await marketNav.trigger("click");
+
+    const sourceRow = wrapper
+      .findAll(".system-configuration-row")
+      .find((row) => row.text().includes("行情源"));
+    if (sourceRow === undefined) throw new Error("market source row was not rendered");
+    await sourceRow.get("button").trigger("click");
+    await flushPromises();
+
+    expect(mocks.getDataSourceConfig).toHaveBeenCalledWith("test-token");
+    const dialog = wrapper.get("form.system-dialog-form");
+    const optionLabels = dialog.findAll("option").map((option) => option.text().trim());
+    expect(optionLabels).not.toContain("本地模拟");
+    expect(optionLabels).toEqual(
+      expect.arrayContaining(["AkShare 本地服务", "腾讯财经", "东方财富"]),
+    );
+
+    const selects = dialog.findAll("select");
+    await selects[0]!.setValue("eastmoney");
+    await selects[1]!.setValue("tencent");
+    await dialog.trigger("submit");
+    await flushPromises();
+
+    expect(mocks.updateDataSourceConfig).toHaveBeenCalledWith("test-token", {
+      primary: "eastmoney",
+      fallback: "tencent",
+    });
+    expect(wrapper.text()).toContain("行情源配置已保存");
   });
 
   test("saves automatic rule scanning settings from the rules section", async () => {

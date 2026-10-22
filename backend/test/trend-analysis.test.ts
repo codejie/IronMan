@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 import { IronManDatabase, LATEST_SCHEMA_VERSION } from "../src/db/database";
 
 interface ApiResponse<T> { code: number; result: T; message?: string }
@@ -14,7 +15,7 @@ let runtime: IronManRuntime;
 
 beforeEach(() => {
   tempDirectory = mkdtempSync(join(tmpdir(), "ironman-trend-"));
-  runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600 });
+  runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600, marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")] });
 });
 afterEach(() => { runtime.close(); rmSync(tempDirectory, { force: true, recursive: true }); });
 
@@ -42,7 +43,7 @@ describe("trend analysis", () => {
     const bob = await register("bob@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "000300", exchange: "sh", name: "沪深300", assetType: "index" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
 
     const created = await post("/api/analysis/trend/strategies/create", {
       name: "趋势观察",
@@ -138,7 +139,7 @@ describe("trend analysis", () => {
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "510300", exchange: "sh", name: "沪深300ETF", assetType: "fund" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
     expect(instrument.result.id).toBeDefined();
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     const created = await post("/api/analysis/trend/strategies/create", { name: "全市场", targetScope: "all", dataRange: { preset: "3m" }, reportWindow: "all", indicators: [{ indicatorId: "BOLL" }] }, alice.token);
     const strategy = (await created.json()) as ApiResponse<{ id: string }>;
     const blocked = await post("/api/analysis/trend/runs/start", { strategyId: strategy.result.id }, alice.token);
@@ -156,7 +157,7 @@ describe("trend analysis", () => {
     const alice = await register("alice-stream@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "000001", exchange: "sz", name: "平安银行", assetType: "stock" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     const created = await post("/api/analysis/trend/strategies/create", {
       name: "SSE 完成回放",
       targetScope: "custom",

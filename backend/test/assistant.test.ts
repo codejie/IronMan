@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> {
   code: number;
@@ -19,6 +20,7 @@ beforeEach(() => {
     databasePath: join(tempDirectory, "ironman.sqlite"),
     jwtSecret: "test-secret-that-is-long-enough",
     tokenTtlSeconds: 3600,
+    marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")],
   });
 });
 afterEach(() => {
@@ -313,7 +315,7 @@ describe("AI consultation", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "mock" },
+      { primary: "eastmoney", fallback: "tencent" },
       alice.token,
     );
 
@@ -356,7 +358,7 @@ describe("AI consultation", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "mock" },
+      { primary: "eastmoney", fallback: "tencent" },
       alice.token,
     );
 
@@ -413,7 +415,7 @@ describe("AI consultation", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "mock" },
+      { primary: "eastmoney", fallback: "tencent" },
       alice.token,
     );
     await post(
@@ -598,7 +600,7 @@ describe("AI consultation", () => {
     }>;
     await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "mock" },
+      { primary: "eastmoney", fallback: "tencent" },
       alice.token,
     );
 

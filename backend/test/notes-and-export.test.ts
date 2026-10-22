@@ -3,13 +3,14 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> { code: number; result: T }
 interface Session { token: string }
 
 let tempDirectory = "";
 let runtime: IronManRuntime;
-beforeEach(() => { tempDirectory = mkdtempSync(join(tmpdir(), "ironman-notes-")); runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600 }); });
+beforeEach(() => { tempDirectory = mkdtempSync(join(tmpdir(), "ironman-notes-")); runtime = createApp({ databasePath: join(tempDirectory, "ironman.sqlite"), jwtSecret: "test-secret-that-is-long-enough", tokenTtlSeconds: 3600, marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")] }); });
 afterEach(() => { runtime.close(); rmSync(tempDirectory, { force: true, recursive: true }); });
 
 async function post(path: string, body: unknown, token?: string): Promise<Response> { return runtime.app.request(path, { method: "POST", headers: { "content-type": "application/json", ...(token === undefined ? {} : { authorization: `Bearer ${token}` }) }, body: JSON.stringify(body) }); }

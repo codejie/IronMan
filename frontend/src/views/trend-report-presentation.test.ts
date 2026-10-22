@@ -53,7 +53,7 @@ const report: TrendRunReport = {
       name: "卫星ETF富国",
       assetType: "fund",
     },
-    source: "mock",
+    source: "eastmoney",
     bars: [
       {
         date: "2026-07-21",

@@ -411,7 +411,7 @@ export class AiCandidateService {
           })();
       if (signalDate === null) continue;
       const instrument = this.market.getInstrument(item.instrument_id);
-      const history = await this.market.getHistory(userId, instrument.id, "day", false, 180).catch(() => ({ source: "mock" as const, bars: [] }));
+      const history = await this.market.getHistory(userId, instrument.id, "day", false, 180).catch(() => ({ source: "eastmoney" as const, bars: [] }));
       const bars = history.bars;
       const start = bars.findIndex((bar) => bar.date > signalDate);
       if (start < 0 || bars.length < start + evaluation.horizon) continue;

@@ -94,8 +94,8 @@ const marketOverview = ref<{
 const importedData = ref<unknown>(null);
 const importFileName = ref("");
 const sourceDraft = ref<DataSourceConfig>({
-  primary: "tencent",
-  fallback: "mock",
+  primary: "eastmoney",
+  fallback: "tencent",
 });
 const snapshotDraft = ref<MarketSnapshotSettings>({
   enabled: false,
@@ -183,7 +183,6 @@ const sourceOptions: Array<{
     label: "东方财富",
     description: "覆盖范围较广的备用行情源",
   },
-  { value: "mock", label: "本地模拟", description: "离线演示与稳定回退数据" },
 ];
 const providerOptions: Array<{ value: AiProvider; label: string }> = [
   { value: "local", label: "本地工作台助手" },

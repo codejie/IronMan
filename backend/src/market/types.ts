@@ -1,6 +1,6 @@
 export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
-export type MarketSource = "mock" | "tencent" | "eastmoney" | "akshare";
+export type MarketSource = "tencent" | "eastmoney" | "akshare";
 export type Timeframe = "day" | "week" | "month";
 
 export interface Instrument {

@@ -69,7 +69,7 @@ export interface HoldingDiagnosisTurningPoint {
 
 export interface HoldingDiagnosisChart {
   bars: PriceBar[];
-  source: MarketSource;
+  source: MarketSource | null;
   indicators: TrendIndicatorResult[];
   turningPoints: HoldingDiagnosisTurningPoint[];
 }
@@ -914,7 +914,7 @@ export class HoldingDiagnosisService {
         : output?.body?.trim() || generated?.body.trim() || localBody([inputItem], modelError);
       const chart: HoldingDiagnosisChart = {
         bars: inputItem.bars,
-        source: inputItem.source ?? "mock",
+        source: inputItem.source ?? null,
         indicators: output?.chart?.indicators ?? [],
         turningPoints: output?.chart?.turningPoints ?? output?.turningPoints ?? [],
       };
@@ -977,7 +977,7 @@ function marketSourceRecord(
   source: MarketSource | null,
   bars: PriceBar[],
 ): HoldingDiagnosisSourceRecord | undefined {
-  if (source === null || source === "mock") return undefined;
+  if (source === null) return undefined;
   const symbol = `${holding.exchange === "sh" ? "sh" : "sz"}${holding.code}`;
   const url = source === "tencent"
     ? `https://gu.qq.com/${symbol}`

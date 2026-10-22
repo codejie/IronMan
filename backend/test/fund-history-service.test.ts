@@ -248,7 +248,7 @@ function bar(date: string, close: number): PriceBar {
 function marketWithBars(items: Record<string, PriceBar[]>): FundHistoryMarket {
   return {
     getHistoryRange: async (_userId, targetInstrumentId, _timeframe, startDate, endDate) => ({
-      source: "mock",
+      source: "tencent",
       bars: (items[targetInstrumentId] ?? []).filter((item) => item.date >= startDate && item.date <= endDate),
     }),
   };

@@ -2,8 +2,6 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { EastmoneyMarketProvider } from "../market/eastmoney-provider";
 import { AkShareMarketProvider } from "../market/akshare-provider";
-import { listedFundExchange } from "../market/listed-fund";
-import { MockMarketProvider } from "../market/mock-provider";
 import { TencentMarketProvider } from "../market/tencent-provider";
 import type {
   AssetType,
@@ -39,8 +37,8 @@ interface BarRow {
   turnover_rate: number | null;
 }
 
-const defaultConfig: DataSourceConfig = { primary: "tencent", fallback: "mock" };
-const sourceNames = new Set<MarketSource>(["mock", "tencent", "eastmoney", "akshare"]);
+const defaultConfig: DataSourceConfig = { primary: "eastmoney", fallback: "tencent" };
+const sourceNames = new Set<MarketSource>(["tencent", "eastmoney", "akshare"]);
 
 export class MarketService {
   private readonly providers: Map<MarketSource, MarketDataProvider>;
@@ -49,7 +47,7 @@ export class MarketService {
   constructor(
     private readonly database: IronManDatabase,
     private readonly settings: SettingsService,
-    providers: MarketDataProvider[] = [new AkShareMarketProvider(), new TencentMarketProvider(), new EastmoneyMarketProvider(), new MockMarketProvider()]
+    providers: MarketDataProvider[] = [new AkShareMarketProvider(), new TencentMarketProvider(), new EastmoneyMarketProvider()]
   ) {
     this.providers = new Map(providers.map((provider) => [provider.source, provider]));
     this.catalogProvider = providers.find(isInstrumentCatalogProvider);
@@ -136,10 +134,7 @@ export class MarketService {
 
   getDataSourceConfig(userId: string): DataSourceConfig {
     const stored = this.settings.get(userId, "market.data-source")?.value;
-    if (!isDataSourceConfig(stored)) {
-      return defaultConfig;
-    }
-    return stored;
+    return sanitizeDataSourceConfig(stored);
   }
 
   setDataSourceConfig(userId: string, config: DataSourceConfig): DataSourceConfig {
@@ -156,7 +151,7 @@ export class MarketService {
     const candidates = [...new Set([config.primary, config.fallback])];
     const cached = candidates
       .map((source) => ({ source, bars: this.getCachedBars(instrument.id, timeframe, source) }))
-      .find((entry) => entry.bars.length > 0 && !this.shouldRefreshListedFundMock(instrument, entry.source, config.primary));
+      .find((entry) => entry.bars.length > 0);
     if (!refresh && cached !== undefined && cached.bars.length >= limit) {
       return { source: cached.source, bars: this.takeRecentBars(cached.bars, limit) };
     }
@@ -189,7 +184,7 @@ export class MarketService {
     const candidates = [...new Set([config.primary, config.fallback])];
     const cached = candidates
       .map((source) => ({ source, bars: this.getCachedBars(instrument.id, timeframe, source) }))
-      .find((entry) => entry.bars.length > 0 && !this.shouldRefreshListedFundMock(instrument, entry.source, config.primary));
+      .find((entry) => entry.bars.length > 0);
     const cachedRange = cached === undefined ? [] : barsInRange(cached.bars, startDate, endDate);
     if (!refresh && isCompleteRange(cachedRange, startDate, endDate)) {
       return { source: cached!.source, bars: cachedRange };
@@ -343,10 +338,6 @@ export class MarketService {
     return bars.length <= limit ? bars : bars.slice(-limit);
   }
 
-  private shouldRefreshListedFundMock(instrument: Instrument, source: MarketSource, primary: MarketSource): boolean {
-    return source === "mock" && primary !== "mock" && listedFundExchange(instrument) !== undefined;
-  }
-
   private cacheBars(instrumentId: string, timeframe: Timeframe, source: MarketSource, bars: PriceBar[]): void {
     const now = new Date().toISOString();
     for (const bar of bars) {
@@ -407,6 +398,18 @@ function isDataSourceConfig(value: unknown): value is DataSourceConfig {
   if (typeof value !== "object" || value === null) return false;
   const config = value as Partial<DataSourceConfig>;
   return sourceNames.has(config.primary as MarketSource) && sourceNames.has(config.fallback as MarketSource);
+}
+
+/** Rebuilds a persisted configuration against the currently supported sources so that
+ * removed sources (for example the retired local mock) fall back to the slot defaults. */
+function sanitizeDataSourceConfig(value: unknown): DataSourceConfig {
+  if (!isDataSourceConfig(value)) {
+    const candidate = typeof value === "object" && value !== null ? (value as Partial<DataSourceConfig>) : {};
+    const primary = sourceNames.has(candidate.primary as MarketSource) ? (candidate.primary as MarketSource) : defaultConfig.primary;
+    const fallback = sourceNames.has(candidate.fallback as MarketSource) ? (candidate.fallback as MarketSource) : defaultConfig.fallback;
+    return { primary, fallback };
+  }
+  return value;
 }
 
 function isInstrumentCatalogProvider(provider: MarketDataProvider): provider is MarketDataProvider & InstrumentCatalogProvider {

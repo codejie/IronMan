@@ -34,7 +34,7 @@ beforeEach(() => {
   database = new IronManDatabase(join(directory, "ironman.sqlite"));
   settings = new SettingsService(database);
   const provider: MarketDataProvider = {
-    source: "mock",
+    source: "eastmoney",
     history: async (_instrument: Instrument) => {
       providerCalls += 1;
       return [
@@ -66,7 +66,7 @@ function createUser(email: string): string {
      VALUES ($id, $email, 'not-used', $displayName, 'user', 'active', $createdAt, $updatedAt)`,
     { id, email, displayName: email.split("@")[0]!, createdAt: now, updatedAt: now },
   );
-  market.setDataSourceConfig(id, { primary: "mock", fallback: "mock" });
+  market.setDataSourceConfig(id, { primary: "eastmoney", fallback: "eastmoney" });
   return id;
 }
 
@@ -140,8 +140,8 @@ describe("market intraday snapshots", () => {
       retentionDays: 5,
     });
 
-    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "mock", latestBar, tradingMorning)).toBe(true);
-    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "mock", latestBar, new Date("2026-08-01T02:00:00.000Z"))).toBe(false);
+    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "eastmoney", latestBar, tradingMorning)).toBe(true);
+    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "eastmoney", latestBar, new Date("2026-08-01T02:00:00.000Z"))).toBe(false);
 
     const items = snapshots.listSeries(userId, instrumentId, "2026-07-31T00:00:00.000Z", "2026-08-01T00:00:00.000Z");
     expect(items).toHaveLength(1);
@@ -184,7 +184,7 @@ describe("market intraday snapshots", () => {
     const userId = createUser("trading-day-auto@example.com");
     const instrumentId = addHolding(userId);
     const mondayMarket = new MarketService(database, settings, [{
-      source: "mock",
+      source: "eastmoney",
       history: async () => [mondayBar],
     }]);
     const mondaySnapshots = new MarketSnapshotService(
@@ -233,7 +233,7 @@ describe("market intraday snapshots", () => {
       insertSnapshot(userId, instrumentId, tradeDate);
     }
 
-    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "mock", mondayBar, mondayTradingMorning)).toBe(true);
+    expect(snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "eastmoney", mondayBar, mondayTradingMorning)).toBe(true);
     expect(snapshots.listSeries(userId, instrumentId, "2026-07-01T00:00:00.000Z", "2026-08-04T00:00:00.000Z").map((item) => item.tradeDate)).toEqual([
       "2026-07-28",
       "2026-07-29",
@@ -264,7 +264,7 @@ describe("market intraday snapshots", () => {
         scope: "holdings",
         retentionDays: 5,
       });
-      snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "mock", latestBar, tradingMorning);
+      snapshots.captureFromManualRefresh(userId, "holdings", instrumentId, "eastmoney", latestBar, tradingMorning);
     }
 
     expect(snapshots.deleteSnapshots(alice)).toEqual({ deleted: 1 });

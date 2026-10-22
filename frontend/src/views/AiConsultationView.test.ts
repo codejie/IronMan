@@ -69,7 +69,7 @@ describe("AiConsultationView", () => {
       content: "## 趋势结论\n\n- **关注** 均线与 MACD\n\n| 指标 | 数值 |\n| --- | --- |\n| MA20 | 10.20 |",
       fallbackReason: undefined,
       tools: [{ id: "tool-1", name: "build_chart", status: "completed", summary: "已生成 K 线与指标图表" }],
-      charts: [{ id: "chart-1", title: "浦发银行 600000 · 日线", instrument: { id: "instrument-1", code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" }, source: "mock", bars: [], indicators: [] }],
+      charts: [{ id: "chart-1", title: "浦发银行 600000 · 日线", instrument: { id: "instrument-1", code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" }, source: "eastmoney", bars: [], indicators: [] }],
       conversation: { id: "conversation-1", title: "展示 600000 的 K线", lastMessagePreview: "第二轮", createdAt: "2026-07-27T00:00:00.000Z", updatedAt: "2026-07-27T00:01:00.000Z" },
       userMessage: { id: "user-1", role: "user", content: "展示 600000 的 K线", createdAt: "2026-07-27T00:00:00.000Z" },
       assistantMessage: {
@@ -82,7 +82,7 @@ describe("AiConsultationView", () => {
           modelName: "本地工作台助手",
           fallbackReason: undefined,
           tools: [{ id: "tool-1", name: "build_chart", status: "completed", summary: "已生成 K 线与指标图表" }],
-          charts: [{ id: "chart-1", title: "浦发银行 600000 · 日线", instrument: { id: "instrument-1", code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" }, source: "mock", bars: [], indicators: [] }]
+          charts: [{ id: "chart-1", title: "浦发银行 600000 · 日线", instrument: { id: "instrument-1", code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" }, source: "eastmoney", bars: [], indicators: [] }]
         },
         createdAt: "2026-07-27T00:01:00.000Z"
       }

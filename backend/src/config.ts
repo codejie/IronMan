@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import type { MarketDataProvider } from "./market/types";
 
 export interface RuntimeConfig {
   databasePath: string;
@@ -7,6 +8,8 @@ export interface RuntimeConfig {
   tokenTtlSeconds: number;
   akshareProviderUrl?: string;
   akshareProviderTimeoutMs?: number;
+  /** Overrides the real market providers (tests inject offline fixtures here; production must not use mocks). */
+  marketProviders?: MarketDataProvider[];
 }
 
 export interface ServerConfig {

@@ -7,7 +7,7 @@ const chart: AssistantChart = {
   id: "trend-chart-1",
   title: "趋势与拐点",
   instrument: { id: "instrument-1", code: "600000", exchange: "sh", name: "浦发银行", assetType: "stock" },
-  source: "mock",
+  source: "eastmoney",
   bars: [
     { date: "2026-07-20", open: 10, close: 10.2, low: 9.9, high: 10.3, volume: 1200 },
     { date: "2026-07-21", open: 10.2, close: 10.4, low: 10.1, high: 10.5, volume: 1400 }

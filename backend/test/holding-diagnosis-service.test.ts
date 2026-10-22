@@ -27,7 +27,7 @@ beforeEach(() => {
   database = new IronManDatabase(join(directory, "ironman.sqlite"));
   const settings = new SettingsService(database);
   const provider: MarketDataProvider = {
-    source: "mock",
+    source: "eastmoney",
     history: async (_instrument: Instrument) => [
       { date: "2026-07-28", open: 9.5, close: 9.8, high: 10, low: 9.4, volume: 1200 },
       { date: "2026-07-29", open: 9.8, close: 10.2, high: 10.4, low: 9.7, volume: 1800 },
@@ -119,7 +119,7 @@ function createUser(email: string): string {
      VALUES ($id, $email, 'not-used', $displayName, 'user', 'active', $createdAt, $updatedAt)`,
     { id, email, displayName: email.split("@")[0]!, createdAt: timestamp, updatedAt: timestamp },
   );
-  market.setDataSourceConfig(id, { primary: "mock", fallback: "mock" });
+  market.setDataSourceConfig(id, { primary: "eastmoney", fallback: "eastmoney" });
   return id;
 }
 
@@ -183,7 +183,8 @@ describe("holding diagnosis reports", () => {
 
     database.run("UPDATE holding_diagnosis_sources SET metadata_json = '{}' WHERE report_id = $reportId", { reportId: run.reportId! });
     const compatibleReport = diagnosis.getReport(userId, run.reportId!);
-    expect(compatibleReport.sources[0]).toEqual(expect.objectContaining({
+    const compatibleSource = compatibleReport.sources.find((source) => source.sourceId === "cninfo");
+    expect(compatibleSource).toEqual(expect.objectContaining({
       summary: expect.stringContaining("本次未读取站外正文"),
       highlights: expect.arrayContaining(["状态：仅提供跳转入口，需自行核验"]),
     }));
@@ -277,7 +278,7 @@ describe("holding diagnosis reports", () => {
       summary: expect.stringContaining("拟回购股份"),
       sourceInsight: expect.objectContaining({ marketImpact: "positive", confidence: "high" }),
     }));
-    expect(database.get<{ source_insight_json: string; metadata_json: string }>("SELECT source_insight_json, metadata_json FROM holding_diagnosis_sources LIMIT 1")).toEqual(
+    expect(database.get<{ source_insight_json: string; metadata_json: string }>("SELECT source_insight_json, metadata_json FROM holding_diagnosis_sources WHERE source_id = 'cninfo' LIMIT 1")).toEqual(
       expect.objectContaining({
         source_insight_json: expect.stringContaining("拟回购股份"),
       }),

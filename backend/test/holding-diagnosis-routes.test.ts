@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp, type IronManRuntime } from "../src/app";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> {
   code: number;
@@ -24,6 +25,7 @@ beforeEach(() => {
     databasePath: join(directory, "ironman.sqlite"),
     jwtSecret: "test-secret-that-is-long-enough",
     tokenTtlSeconds: 60 * 60,
+    marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")],
   });
 });
 
@@ -122,7 +124,7 @@ describe("holding diagnosis routes", () => {
       admin.token,
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "mock" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     const adjusted = await post(
       "/api/assets/cash/adjust",
       { amount: 2_000, note: "diagnosis route test" },
@@ -237,7 +239,7 @@ describe("holding diagnosis routes", () => {
       admin.token,
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "mock" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     const adjusted = await post(
       "/api/assets/cash/adjust",
       { amount: 2_000, note: "diagnosis tools test" },

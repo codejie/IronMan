@@ -7,6 +7,7 @@ import { IronManDatabase } from "../src/db/database";
 import type { MarketDataProvider } from "../src/market/types";
 import { MarketService } from "../src/services/market-service";
 import { SettingsService } from "../src/services/settings-service";
+import { FixtureMarketProvider } from "./helpers/fixture-market-provider";
 
 interface ApiResponse<T> {
   code: number;
@@ -27,7 +28,8 @@ beforeEach(() => {
   runtime = createApp({
     databasePath: join(tempDirectory, "ironman.sqlite"),
     jwtSecret: "test-secret-that-is-long-enough",
-    tokenTtlSeconds: 60 * 60
+    tokenTtlSeconds: 60 * 60,
+    marketProviders: [new FixtureMarketProvider("eastmoney"), new FixtureMarketProvider("tencent")]
   });
 });
 
@@ -111,7 +113,7 @@ describe("market data and asset workspace", () => {
     expect(foreignHolding.status).toBe(404);
   });
 
-  test("switches a user's market data source and falls back to deterministic local data", async () => {
+  test("switches a user's market data source and serves deterministic provider history", async () => {
     const admin = await register("admin@example.com");
     const user = await register("user@example.com");
     const instrumentResponse = await post(
@@ -123,7 +125,7 @@ describe("market data and asset workspace", () => {
 
     const config = await post(
       "/api/settings/data-sources/update",
-      { primary: "mock", fallback: "tencent" },
+      { primary: "eastmoney", fallback: "tencent" },
       user.token
     );
     expect(config.status).toBe(200);
@@ -135,7 +137,7 @@ describe("market data and asset workspace", () => {
     );
     const historyBody = (await history.json()) as ApiResponse<{ source: string; bars: Array<{ close: number }> }>;
     expect(history.status).toBe(200);
-    expect(historyBody.result.source).toBe("mock");
+    expect(historyBody.result.source).toBe("eastmoney");
     expect(historyBody.result.bars).toHaveLength(180);
     expect(historyBody.result.bars[0]?.close).toBeGreaterThan(0);
   });
@@ -149,7 +151,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, user.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, user.token);
 
     const history = await post(
       "/api/market/history",
@@ -181,6 +183,34 @@ describe("market data and asset workspace", () => {
     expect(invalid.status).toBe(400);
   });
 
+  test("sanitizes a stored data source configuration that references the removed mock source", async () => {
+    const database = new IronManDatabase(join(tempDirectory, "data-source-sanitize.sqlite"));
+    try {
+      const userId = crypto.randomUUID();
+      const now = new Date().toISOString();
+      database.run(
+        "INSERT INTO users (id, email, password_hash, display_name, role, status, created_at, updated_at) VALUES ($id, $email, $passwordHash, $displayName, 'user', 'active', $createdAt, $updatedAt)",
+        { id: userId, email: "sanitize@example.com", passwordHash: "not-used", displayName: "sanitize", createdAt: now, updatedAt: now }
+      );
+      const settings = new SettingsService(database);
+      const market = new MarketService(database, settings, [new FixtureMarketProvider("tencent")]);
+
+      settings.upsert(userId, "market.data-source", { primary: "tencent", fallback: "mock" });
+      expect(market.getDataSourceConfig(userId)).toEqual({ primary: "tencent", fallback: "tencent" });
+
+      settings.upsert(userId, "market.data-source", { primary: "mock", fallback: "eastmoney" });
+      expect(market.getDataSourceConfig(userId)).toEqual({ primary: "eastmoney", fallback: "eastmoney" });
+
+      settings.upsert(userId, "market.data-source", { primary: "mock", fallback: "mock" });
+      expect(market.getDataSourceConfig(userId)).toEqual({ primary: "eastmoney", fallback: "tencent" });
+
+      settings.upsert(userId, "market.data-source", { primary: "unknown", fallback: "tencent" });
+      expect(market.getDataSourceConfig(userId)).toEqual({ primary: "eastmoney", fallback: "tencent" });
+    } finally {
+      database.close();
+    }
+  });
+
   test("reuses a fallback-source cache before trying an unavailable primary source", async () => {
     const database = new IronManDatabase(join(tempDirectory, "market-cache.sqlite"));
     try {
@@ -193,7 +223,7 @@ describe("market data and asset workspace", () => {
       const unavailablePrimary: MarketDataProvider = { source: "tencent", history: async () => { throw new Error("unavailable"); } };
       let fallbackCalls = 0;
       const fallback: MarketDataProvider = {
-        source: "mock",
+        source: "eastmoney",
         history: async () => {
           fallbackCalls += 1;
           return [
@@ -205,12 +235,12 @@ describe("market data and asset workspace", () => {
       const settings = new SettingsService(database);
       const market = new MarketService(database, settings, [unavailablePrimary, fallback]);
       const instrument = market.upsertInstrument({ code: "600001", exchange: "sh", name: "缓存测试", assetType: "stock" });
-      market.setDataSourceConfig(userId, { primary: "tencent", fallback: "mock" });
+      market.setDataSourceConfig(userId, { primary: "tencent", fallback: "eastmoney" });
 
       const refreshed = await market.getHistory(userId, instrument.id, "day", true, 2);
       const cached = await market.getHistory(userId, instrument.id, "day", false, 2);
-      expect(refreshed.source).toBe("mock");
-      expect(cached.source).toBe("mock");
+      expect(refreshed.source).toBe("eastmoney");
+      expect(cached.source).toBe("eastmoney");
       expect(cached.bars).toHaveLength(2);
       expect(fallbackCalls).toBe(1);
     } finally {
@@ -228,7 +258,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
 
     const createResponse = await post(
@@ -314,7 +344,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
     const created = await post(
       "/api/assets/holdings/create",
@@ -368,7 +398,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
     const created = await post(
       "/api/assets/holdings/create",
@@ -424,7 +454,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     const create = await post(
       "/api/assets/watchlist/create",
       { instrumentId: instrument.result.id, note: "等待回调", targetPrice: 42 },
@@ -498,7 +528,7 @@ describe("market data and asset workspace", () => {
     );
     const firstInstrument = (await firstInstrumentResponse.json()) as ApiResponse<{ id: string }>;
     const secondInstrument = (await secondInstrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, alice.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
     await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
     await post("/api/assets/holdings/create", { instrumentId: firstInstrument.result.id, quantity: 100, price: 10, fee: 0, occurredAt: "2026-01-01T00:00:00.000Z" }, alice.token);
     await post("/api/assets/holdings/create", { instrumentId: secondInstrument.result.id, quantity: 200, price: 5, fee: 0, occurredAt: "2026-01-01T00:00:00.000Z" }, alice.token);
@@ -542,7 +572,7 @@ describe("market data and asset workspace", () => {
       admin.token
     );
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, user.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, user.token);
 
     const calculation = await post(
       "/api/analysis/indicators/calculate",
@@ -555,7 +585,7 @@ describe("market data and asset workspace", () => {
     }>;
 
     expect(calculation.status).toBe(200);
-    expect(body.result.source).toBe("mock");
+    expect(body.result.source).toBe("eastmoney");
     expect(body.result.results).toHaveLength(4);
     const ma = body.result.results.find((item) => item.type === "MA");
     const macd = body.result.results.find((item) => item.type === "MACD");
@@ -573,7 +603,7 @@ describe("market data and asset workspace", () => {
     const user = await register("user@example.com");
     const instrumentResponse = await post("/api/market/instruments/upsert", { code: "510500", exchange: "sh", name: "中证500ETF", assetType: "fund" }, admin.token);
     const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
-    await post("/api/settings/data-sources/update", { primary: "mock", fallback: "tencent" }, user.token);
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, user.token);
     await post("/api/assets/watchlist/create", { instrumentId: instrument.result.id, note: "信号" }, user.token);
 
     const overview = await post("/api/market/overview", {}, user.token);
