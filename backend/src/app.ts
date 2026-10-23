@@ -1468,6 +1468,65 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/settings/intraday-source/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "User intraday display source preference",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({ source: z.enum(["snapshot", "realtime"]) }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success({ source: market.getIntradayDisplaySource(context.get("currentUser").id) }),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/intraday-source/update",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({ source: z.enum(["snapshot", "realtime"]) }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Updated intraday display source preference",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({ source: z.enum(["snapshot", "realtime"]) }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(market.setIntradayDisplaySource(
+          context.get("currentUser").id,
+          context.req.valid("json").source,
+        )),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/settings/market/refresh",
       middleware: [authenticated(auth)],
       request: { body: jsonBody(emptyBodySchema) },

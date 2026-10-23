@@ -1,6 +1,9 @@
 export type AssetType = "stock" | "index" | "fund";
 export type Exchange = "sh" | "sz" | "bj" | "fund";
 export type MarketSource = "tencent" | "eastmoney" | "akshare";
+
+/** 分时数据来源偏好（仅标明来源，不改变读取/存储/展示行为）。 */
+export type IntradayDisplaySource = "snapshot" | "realtime";
 export type Timeframe = "day" | "week" | "month";
 export type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 

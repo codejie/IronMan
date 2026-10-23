@@ -11,6 +11,7 @@ import type {
   InstrumentCatalogProvider,
   MarketDataProvider,
   MarketSource,
+  IntradayDisplaySource,
   PriceBar,
   Timeframe
 } from "../market/types";
@@ -143,6 +144,19 @@ export class MarketService {
     }
     this.settings.upsert(userId, "market.data-source", config);
     return config;
+  }
+
+  getIntradayDisplaySource(userId: string): IntradayDisplaySource {
+    const stored = this.settings.get(userId, "market.intraday-source")?.value;
+    return typeof stored === "string" && stored === "realtime" ? "realtime" : "snapshot";
+  }
+
+  setIntradayDisplaySource(userId: string, source: IntradayDisplaySource): { source: IntradayDisplaySource } {
+    if (source !== "snapshot" && source !== "realtime") {
+      throw errors.validation("不支持的分时数据源");
+    }
+    this.settings.upsert(userId, "market.intraday-source", source);
+    return { source };
   }
 
   async getHistory(userId: string, instrumentId: string, timeframe: Timeframe, refresh: boolean, limit = 180): Promise<{ source: MarketSource; bars: PriceBar[] }> {

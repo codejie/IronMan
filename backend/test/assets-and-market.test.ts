@@ -143,6 +143,22 @@ describe("market data and asset workspace", () => {
     expect(historyBody.result.bars[0]?.close).toBeGreaterThan(0);
   });
 
+  test("keeps the intraday display source preference with snapshot as the default", async () => {
+    const user = await register("intraday-source-user@example.com");
+
+    const initial = await post("/api/settings/intraday-source/get", {}, user.token);
+    expect(((await initial.json()) as ApiResponse<{ source: string }>).result.source).toBe("snapshot");
+
+    const updated = await post("/api/settings/intraday-source/update", { source: "realtime" }, user.token);
+    expect(((await updated.json()) as ApiResponse<{ source: string }>).result.source).toBe("realtime");
+
+    const persisted = await post("/api/settings/intraday-source/get", {}, user.token);
+    expect(((await persisted.json()) as ApiResponse<{ source: string }>).result.source).toBe("realtime");
+
+    const invalid = await post("/api/settings/intraday-source/update", { source: "minute-feed" }, user.token);
+    expect(((await invalid.json()) as ApiResponse<unknown>).code).not.toBe(0);
+  });
+
   test("returns the requested chart range and rejects limits beyond the supported maximum", async () => {
     const admin = await register("chart-admin@example.com");
     const user = await register("chart-user@example.com");

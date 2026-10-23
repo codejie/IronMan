@@ -352,6 +352,9 @@ export interface DataSourceConfig {
   fallback: MarketSource;
 }
 
+/** 分时数据来源偏好（仅标明来源，不改变读取/存储/展示行为）。 */
+export type IntradayDisplaySource = "snapshot" | "realtime";
+
 export type MarketSnapshotMode = "auto" | "manual";
 export type MarketSnapshotScope = "holdings" | "watchlist" | "holdings_watchlist";
 
@@ -1076,6 +1079,10 @@ export const api = {
     post<DataSourceConfig>("/settings/data-sources/get", {}, token),
   updateDataSourceConfig: (token: string, config: DataSourceConfig) =>
     post<DataSourceConfig>("/settings/data-sources/update", config, token),
+  getIntradaySource: (token: string) =>
+    post<{ source: IntradayDisplaySource }>("/settings/intraday-source/get", {}, token),
+  updateIntradaySource: (token: string, source: IntradayDisplaySource) =>
+    post<{ source: IntradayDisplaySource }>("/settings/intraday-source/update", { source }, token),
   getTradingCalendar: (token: string, year: number) =>
     post<TradingCalendar>("/settings/trading-calendar/get", { year }, token),
   updateTradingCalendar: (

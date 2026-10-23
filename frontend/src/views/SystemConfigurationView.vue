@@ -14,6 +14,7 @@ import {
   Download,
   Eraser,
   FileUp,
+  LineChart,
   RefreshCw,
   RotateCcw,
   ScanSearch,
@@ -39,6 +40,7 @@ import {
   type FundHistoryState,
   type HoldingDiagnosisSettings,
   type HoldingDiagnosisSourceCatalogItem,
+  type IntradayDisplaySource,
   type MarketSnapshotSettings,
   type MarketSnapshotStatus,
   type MarketSource,
@@ -107,6 +109,8 @@ const snapshotDraft = ref<MarketSnapshotSettings>({
   retentionDays: 5,
 });
 const snapshotStatus = ref<MarketSnapshotStatus | null>(null);
+const intradaySourceDraft = ref<IntradayDisplaySource>("snapshot");
+const intradaySourceSaving = ref(false);
 const calendarYear = ref(new Date().getFullYear());
 const tradeDaySet = ref(new Set<string>());
 const calendarLoading = ref(false);
@@ -268,16 +272,34 @@ async function recalculateFundHistory(): Promise<void> {
 
 async function loadMarketConfig(): Promise<void> {
   if (token.value === null) return;
-  const [config, overview, settings, status] = await Promise.all([
+  const [config, overview, settings, status, intradaySource] = await Promise.all([
     api.getDataSourceConfig(token.value),
     api.marketOverview(token.value),
     api.getMarketSnapshotSettings(token.value),
     api.marketSnapshotStatus(token.value),
+    api.getIntradaySource(token.value),
   ]);
   sourceDraft.value = { ...config };
   marketOverview.value = overview;
   snapshotDraft.value = { ...settings };
   snapshotStatus.value = status;
+  intradaySourceDraft.value = intradaySource.source;
+}
+
+async function saveIntradaySource(source: IntradayDisplaySource): Promise<void> {
+  const accessToken = token.value;
+  if (accessToken === null || intradaySourceSaving.value) return;
+  intradaySourceSaving.value = true;
+  try {
+    const saved = await api.updateIntradaySource(accessToken, source);
+    intradaySourceDraft.value = saved.source;
+    notify("success", "分时数据源已保存");
+  } catch (error) {
+    notify("error", message(error, "分时数据源保存失败"));
+    intradaySourceDraft.value = "snapshot";
+  } finally {
+    intradaySourceSaving.value = false;
+  }
 }
 
 function applyRuleSettings(settings: AlertSettings): void {
@@ -1050,6 +1072,25 @@ function buildCalendarMonths(
                   <Settings2 :size="15" />配置
                 </button>
               </div>
+            </section>
+            <section class="system-configuration-row">
+              <div class="setting-row-icon"><LineChart :size="18" /></div>
+              <div>
+                <h2>分时数据源</h2>
+                <p>
+                  仅标明分时数据的展示来源偏好；目前不影响分时数据的读取、存储与展示逻辑。
+                </p>
+              </div>
+              <select
+                aria-label="分时数据源"
+                class="batman-select"
+                :disabled="isBusy || intradaySourceSaving"
+                :value="intradaySourceDraft"
+                @change="saveIntradaySource(($event.target as HTMLSelectElement).value as IntradayDisplaySource)"
+              >
+                <option value="snapshot">历史数据快照</option>
+                <option value="realtime">实时分时数据</option>
+              </select>
             </section>
             <section class="system-configuration-row">
               <div class="setting-row-icon"><RefreshCw :size="18" /></div>

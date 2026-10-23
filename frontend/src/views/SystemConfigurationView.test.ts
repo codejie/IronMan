@@ -21,6 +21,8 @@ const mocks = vi.hoisted(() => ({
   recalculateFundHistory: vi.fn(),
   updateHoldingDiagnosisSettings: vi.fn(),
   updateDataSourceConfig: vi.fn(),
+  getIntradaySource: vi.fn(),
+  updateIntradaySource: vi.fn(),
   confirm: vi.fn(),
 }));
 
@@ -45,6 +47,8 @@ vi.mock("@/api/client", () => ({
     recalculateFundHistory: mocks.recalculateFundHistory,
     updateHoldingDiagnosisSettings: mocks.updateHoldingDiagnosisSettings,
     updateDataSourceConfig: mocks.updateDataSourceConfig,
+    getIntradaySource: mocks.getIntradaySource,
+    updateIntradaySource: mocks.updateIntradaySource,
   },
 }));
 
@@ -80,9 +84,13 @@ describe("SystemConfigurationView", () => {
     mocks.recalculateFundHistory.mockReset();
     mocks.updateHoldingDiagnosisSettings.mockReset();
     mocks.updateDataSourceConfig.mockReset();
+    mocks.getIntradaySource.mockReset();
+    mocks.updateIntradaySource.mockReset();
     mocks.confirm.mockReset();
     mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "eastmoney" });
     mocks.updateDataSourceConfig.mockImplementation((_token: string, config: { primary: string; fallback: string }) => Promise.resolve(config));
+    mocks.getIntradaySource.mockResolvedValue({ source: "snapshot" });
+    mocks.updateIntradaySource.mockImplementation((_token: string, source: string) => Promise.resolve({ source }));
     mocks.marketOverview.mockResolvedValue({ instrumentCount: 0, cachedBarCount: 0, latestCacheAt: null });
     mocks.getMarketSnapshotSettings.mockResolvedValue({
       enabled: false,
@@ -203,6 +211,34 @@ describe("SystemConfigurationView", () => {
       maxExternalSourcesPerHolding: 5,
     });
     mocks.confirm.mockResolvedValue(true);
+  });
+
+  test("shows the intraday data source preference and persists the selection", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const marketNav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("行情与日历"));
+    if (marketNav === undefined) throw new Error("market section was not rendered");
+    await marketNav.trigger("click");
+
+    const sourceRow = wrapper
+      .findAll(".system-configuration-row")
+      .find((row) => row.text().includes("分时数据源"));
+    if (sourceRow === undefined) throw new Error("intraday source row was not rendered");
+
+    const select = sourceRow.get("select");
+    expect(mocks.getIntradaySource).toHaveBeenCalledWith("test-token");
+    expect((select.element as HTMLSelectElement).value).toBe("snapshot");
+    const optionLabels = select.findAll("option").map((option) => option.text().trim());
+    expect(optionLabels).toEqual(["历史数据快照", "实时分时数据"]);
+
+    await select.setValue("realtime");
+    await flushPromises();
+
+    expect(mocks.updateIntradaySource).toHaveBeenCalledWith("test-token", "realtime");
+    expect(wrapper.text()).toContain("分时数据源已保存");
   });
 
   test("stops offering the retired local mock data source and saves only real sources", async () => {
