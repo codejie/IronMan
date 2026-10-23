@@ -1083,7 +1083,7 @@ function buildCalendarMonths(
               </div>
               <select
                 aria-label="分时数据源"
-                class="batman-select"
+                class="system-row-select"
                 :disabled="isBusy || intradaySourceSaving"
                 :value="intradaySourceDraft"
                 @change="saveIntradaySource(($event.target as HTMLSelectElement).value as IntradayDisplaySource)"
@@ -1879,6 +1879,36 @@ function buildCalendarMonths(
   align-items: center;
   display: flex;
   gap: 8px;
+}
+.system-row-select {
+  appearance: none;
+  background-color: #1a2638;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2370d7cf' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-position: right 10px center;
+  background-repeat: no-repeat;
+  border: 1px solid #3b526d;
+  border-radius: 5px;
+  color: #d8e5f1;
+  font-size: 13px;
+  min-height: 32px;
+  padding: 0 30px 0 11px;
+  padding-right: 30px;
+}
+.system-row-select:hover {
+  background-color: #23334a;
+  border-color: #4d6988;
+}
+.system-row-select:focus {
+  border-color: #65d7ca;
+  outline: 1px solid #65d7ca;
+}
+.system-row-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.system-row-select option {
+  background-color: #1d293b;
+  color: #eaf3fb;
 }
 .system-dialog-form {
   display: grid;
