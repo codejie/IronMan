@@ -46,6 +46,8 @@ let intradayRequestVersion = 0;
 const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const intradayChartType = ref<"kline" | "line">("line");
 const intradayRange = ref<1 | 2 | 5 | "all">(2);
+const intradayOrigin = ref<"snapshot" | "minute">("snapshot");
+const intradayRealtimeLookbackDays = 5;
 
 // Cache to track which instruments have intraday data (instrumentId -> boolean)
 // null = not checked yet, true = has data, false = no data
@@ -74,15 +76,56 @@ const intradaySummary = computed(() => {
   if (data.length === 0) return "";
   const first = data[0]!;
   const last = data.at(-1)!;
-  return `${data.length} 个快照 · ${formatDate(first.capturedAt)} - ${formatDate(last.capturedAt)}`;
+  const noun = intradayOrigin.value === "minute" ? "个分钟点" : "个快照";
+  return `${data.length} ${noun} · ${formatDate(first.capturedAt)} - ${formatDate(last.capturedAt)}`;
 });
 
 function filterIntradayData(data: MarketSnapshotPoint[]): MarketSnapshotPoint[] {
   if (intradayRange.value === "all") return data;
-  const now = new Date();
-  const cutoffDate = new Date(now.getTime() - intradayRange.value * 24 * 60 * 60 * 1000);
-  const cutoffStr = cutoffDate.toISOString();
-  return data.filter((item) => item.capturedAt >= cutoffStr);
+  const cutoffTime = Date.now() - intradayRange.value * 24 * 60 * 60 * 1000;
+  return data.filter((item) => {
+    const captured = new Date(item.capturedAt).getTime();
+    return Number.isNaN(captured) || captured >= cutoffTime;
+  });
+}
+
+/** 近 N 个日历日的北京时间日期（用于逐个交易日拉取分时，节假日由上游返回空点）。 */
+function recentTradingDateCandidates(days: number): string[] {
+  const dates: string[] = [];
+  for (let offset = 0; offset < days; offset += 1) {
+    const day = new Date(Date.now() - offset * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000);
+    dates.push(day.toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+/** 拉取近端分钟线并映射为与快照一致的点位结构，供现有图表复用。 */
+async function loadRealtimeMinutePoints(accessToken: string, instrumentId: string): Promise<MarketSnapshotPoint[]> {
+  const responses = await Promise.all(
+    recentTradingDateCandidates(intradayRealtimeLookbackDays).map((date) =>
+      api.marketMinute(accessToken, instrumentId, date).catch(() => null),
+    ),
+  );
+  const points = new Map<string, MarketSnapshotPoint>();
+  for (const response of responses) {
+    if (response === null) continue;
+    for (const point of response.points) {
+      const capturedAt = `${response.date}T${point.time}:00+08:00`;
+      if (points.has(capturedAt)) continue;
+      points.set(capturedAt, {
+        capturedAt,
+        tradeDate: response.date,
+        source: response.source,
+        captureMode: "auto",
+        open: point.price,
+        close: point.price,
+        high: point.price,
+        low: point.price,
+        volume: point.volume,
+      });
+    }
+  }
+  return [...points.values()].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
 }
 
 function formatIntradayLabel(value: string): string {
@@ -252,6 +295,7 @@ function closeIntradayDialog(): void {
   intradayData.value = null;
   intradayHolding.value = null;
   intradayError.value = "";
+  intradayOrigin.value = "snapshot";
   intradayChartType.value = "line";
 }
 
@@ -260,6 +304,24 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
   intradayLoading.value = true;
   intradayError.value = "";
   try {
+    try {
+      const preference = await api.getIntradaySource(accessToken);
+      if (version !== intradayRequestVersion) return;
+      if (preference.source === "realtime") {
+        const realtimePoints = await loadRealtimeMinutePoints(accessToken, instrumentId);
+        if (version !== intradayRequestVersion) return;
+        if (realtimePoints.length > 0) {
+          intradayOrigin.value = "minute";
+          intradayFullDataCache.value.set(instrumentId, realtimePoints);
+          intradayData.value = filterIntradayData(realtimePoints);
+          intradayDataCache.value.set(instrumentId, true);
+          return;
+        }
+      }
+    } catch {
+      // 分时来源不可用或实时分时为空：退回历史数据快照序列
+    }
+    intradayOrigin.value = "snapshot";
     const now = new Date();
     const endAt = now.toISOString();
     // The backend limits storage to at most 15 trading days; this covers holidays and weekends.

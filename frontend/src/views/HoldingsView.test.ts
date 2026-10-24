@@ -8,7 +8,9 @@ import HoldingsView from "./HoldingsView.vue";
 
 const mocks = vi.hoisted(() => ({
   batmanHoldingWorkspace: vi.fn(),
-  marketSnapshotSeries: vi.fn()
+  marketSnapshotSeries: vi.fn(),
+  getIntradaySource: vi.fn(),
+  marketMinute: vi.fn()
 }));
 
 vi.mock("@/api/client", () => ({
@@ -20,7 +22,9 @@ vi.mock("@/api/client", () => ({
   },
   api: {
     batmanHoldingWorkspace: mocks.batmanHoldingWorkspace,
-    marketSnapshotSeries: mocks.marketSnapshotSeries
+    marketSnapshotSeries: mocks.marketSnapshotSeries,
+    getIntradaySource: mocks.getIntradaySource,
+    marketMinute: mocks.marketMinute
   }
 }));
 
@@ -32,6 +36,11 @@ describe("HoldingsView", () => {
   beforeEach(() => {
     mocks.batmanHoldingWorkspace.mockReset();
     mocks.marketSnapshotSeries.mockReset();
+    mocks.getIntradaySource.mockReset();
+    mocks.marketMinute.mockReset();
+    // 分时数据源默认“历史数据快照”：保持原有快照加载行为。
+    mocks.getIntradaySource.mockResolvedValue({ source: "snapshot" });
+    mocks.marketMinute.mockRejectedValue(new Error("realtime minute feed should not be called by default"));
     globalThis.ResizeObserver = class ResizeObserverMock implements ResizeObserver {
       constructor(_callback: ResizeObserverCallback) {}
       observe(): void {}
@@ -215,6 +224,156 @@ describe("HoldingsView", () => {
     expect(chart.props("xAxisLabels")).toHaveLength(1);
     expect(mocks.marketSnapshotSeries).toHaveBeenCalledOnce();
     expect(wrapper.find(".intraday-table").exists()).toBe(false);
+  });
+
+  test("loads realtime minute points when the intraday source preference is realtime", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    mocks.getIntradaySource.mockResolvedValue({ source: "realtime" });
+    const tradeDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    mocks.marketMinute.mockResolvedValue({
+      source: "tencent",
+      date: tradeDate,
+      points: [
+        { time: "09:30", price: 10, volume: 1_200, cumulativeAmount: 12_000 },
+        { time: "09:31", price: 10.1, volume: 800, cumulativeAmount: 20_000 }
+      ]
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    expect(mocks.marketMinute).toHaveBeenCalled();
+    const requestedDates = mocks.marketMinute.mock.calls.map((call) => call[2] as string);
+    expect(new Set(requestedDates).size).toBe(requestedDates.length);
+    for (const date of requestedDates) {
+      expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+    expect(mocks.marketSnapshotSeries).not.toHaveBeenCalled();
+
+    const chart = wrapper.getComponent({ name: "KLineChart" });
+    expect(chart.props("bars")).toEqual([
+      {
+        date: `${tradeDate}T09:30:00+08:00`,
+        open: 10,
+        close: 10,
+        high: 10,
+        low: 10,
+        volume: 1_200
+      },
+      {
+        date: `${tradeDate}T09:31:00+08:00`,
+        open: 10.1,
+        close: 10.1,
+        high: 10.1,
+        low: 10.1,
+        volume: 800
+      }
+    ]);
+    expect(chart.props("xAxisLabels")).toHaveLength(2);
+  });
+
+  test("falls back to snapshot series when the realtime feed has no minute points", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    mocks.getIntradaySource.mockResolvedValue({ source: "realtime" });
+    mocks.marketMinute.mockResolvedValue({ source: "tencent", date: "2026-10-23", points: [] });
+    const recentCapturedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const recentTradeDate = recentCapturedAt.slice(0, 10);
+    mocks.marketSnapshotSeries.mockResolvedValue({
+      items: [{
+        capturedAt: recentCapturedAt,
+        tradeDate: recentTradeDate,
+        source: "tencent",
+        captureMode: "auto",
+        open: 10,
+        close: 10.2,
+        high: 10.3,
+        low: 9.9,
+        volume: 123_456
+      }]
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    expect(mocks.marketSnapshotSeries).toHaveBeenCalledOnce();
+    const vm = wrapper.vm as any;
+    expect(vm.intradayOrigin).toBe("snapshot");
+    expect(vm.intradayData).toEqual([{
+      capturedAt: recentCapturedAt,
+      tradeDate: recentTradeDate,
+      source: "tencent",
+      captureMode: "auto",
+      open: 10,
+      close: 10.2,
+      high: 10.3,
+      low: 9.9,
+      volume: 123_456
+    }]);
   });
 
   test("requests enough history to render the maximum fifteen-trading-day retention", async () => {

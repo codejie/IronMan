@@ -1208,6 +1208,16 @@ export const api = {
       { instrumentId, startAt, endAt },
       token,
     ),
+  marketMinute: (
+    token: string,
+    instrumentId: string,
+    date?: string,
+  ) =>
+    post<{
+      source: MarketSource;
+      date: string;
+      points: Array<{ time: string; price: number; volume: number; cumulativeAmount: number }>;
+    }>("/market/minute", { instrumentId, date }, token),
   history: (
     token: string,
     instrumentId: string,
