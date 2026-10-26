@@ -262,6 +262,42 @@ export function movingAverage(values: number[], period: number): Array<number | 
   return result;
 }
 
+function exponentialMovingAverage(values: Array<number | null>, period: number): Array<number | null> {
+  const result: Array<number | null> = Array.from({ length: values.length }, () => null);
+  const multiplier = 2 / (period + 1);
+  let window: number[] = [];
+  let previous: number | null = null;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === null || value === undefined) continue;
+    if (previous === null) {
+      window.push(value);
+      if (window.length < period) continue;
+      previous = window.reduce((total, entry) => total + entry, 0) / period;
+      result[index] = Number(previous.toFixed(6));
+      window = [];
+      continue;
+    }
+    previous = (value - previous) * multiplier + previous;
+    result[index] = Number(previous.toFixed(6));
+  }
+  return result;
+}
+
+/** MACD(12, 26, 9)，与后端指标服务保持同一算法。 */
+export function macd(values: number[]): Record<"dif" | "dea" | "hist", Array<number | null>> {
+  const fast = exponentialMovingAverage(values, 12);
+  const slow = exponentialMovingAverage(values, 26);
+  const dif = values.map((_, index) =>
+    fast[index] === null || slow[index] === null ? null : Number(((fast[index] as number) - (slow[index] as number)).toFixed(6))
+  );
+  const dea = exponentialMovingAverage(dif, 9);
+  const hist = dif.map((value, index) =>
+    value === null || dea[index] === null ? null : Number((2 * (value - (dea[index] as number))).toFixed(6))
+  );
+  return { dif, dea, hist };
+}
+
 export function lineVisualStyle(color: string, width: number): { itemStyle: { color: string }; lineStyle: { color: string; width: number } } {
   return { itemStyle: { color }, lineStyle: { color, width } };
 }

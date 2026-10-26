@@ -6,6 +6,7 @@ import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
 import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
 import KLineChart from "@/components/KLineChart.vue";
 import QuickAlertDialog from "@/components/QuickAlertDialog.vue";
+import { macd } from "@/components/kline-analysis";
 import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint, type PriceBar } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "./instrument-kline-presentation";
@@ -48,6 +49,15 @@ const intradayChartType = ref<"kline" | "line">("line");
 const intradayRange = ref<1 | 2 | 5 | "all">(2);
 const intradayOrigin = ref<"snapshot" | "minute">("snapshot");
 const intradayRealtimeLookbackDays = 5;
+const intradayShowIndex = ref(false);
+const intradayIndexLoading = ref(false);
+const intradayIndexError = ref("");
+const intradayIndexSeries = ref<Map<string, IntradayIndexSeries>>(new Map());
+
+interface IntradayIndexSeries {
+  name: string;
+  points: Array<{ time: string; price: number }>;
+}
 
 // Cache to track which instruments have intraday data (instrumentId -> boolean)
 // null = not checked yet, true = has data, false = no data
@@ -71,14 +81,64 @@ const intradayLabels = computed(() => {
   const data = filterIntradayData(intradayData.value ?? []);
   return data.map((item) => formatIntradayLabel(item.capturedAt));
 });
+const intradaySubchart = computed<"macd" | "volume">(() => intradayChartType.value === "line" ? "macd" : "volume");
+const intradayMacdLines = computed(() => macd(intradayBars.value.map((bar) => bar.close)));
 const intradaySummary = computed(() => {
   const data = filterIntradayData(intradayData.value ?? []);
   if (data.length === 0) return "";
   const first = data[0]!;
   const last = data.at(-1)!;
   const noun = intradayOrigin.value === "minute" ? "个分钟点" : "个快照";
-  return `${data.length} ${noun} · ${formatDate(first.capturedAt)} - ${formatDate(last.capturedAt)}`;
+  const base = `${data.length} ${noun} · ${formatDate(first.capturedAt)} - ${formatDate(last.capturedAt)}`;
+  if (!intradayShowIndex.value) return base;
+  const indexName = [...intradayIndexSeries.value.values()][0]?.name;
+  if (indexName !== undefined) return `${base} · 对比 ${indexName}`;
+  if (intradayIndexLoading.value) return `${base} · 指数加载中`;
+  return intradayIndexError.value === "" ? base : `${base} · ${intradayIndexError.value}`;
 });
+
+/** 指数对比线：按同一分钟对齐到标的分时点，并转换为区间首点以来的涨跌幅。 */
+const intradayIndexComparison = computed<{ name: string; values: Array<number | null> } | null>(() => {
+  if (!intradayShowIndex.value) return null;
+  const data = filterIntradayData(intradayData.value ?? []);
+  if (data.length === 0 || intradayIndexSeries.value.size === 0) return null;
+  const lookup = new Map<string, Map<number, number>>();
+  let name = "";
+  for (const [date, series] of intradayIndexSeries.value) {
+    if (name === "") name = series.name;
+    const minutes = new Map<number, number>();
+    for (const point of series.points) minutes.set(parseClockMinutes(point.time), point.price);
+    lookup.set(date, minutes);
+  }
+  const prices = data.map((point) => {
+    const minutes = lookup.get(point.tradeDate);
+    if (minutes === undefined) return null;
+    const minute = beijingMinuteOfDay(point.capturedAt);
+    if (Number.isNaN(minute)) return null;
+    for (let offset = 0; offset <= 10; offset += 1) {
+      const price = minutes.get(minute - offset);
+      if (price !== undefined) return price;
+    }
+    return null;
+  });
+  const base = prices.find((price) => price !== null);
+  if (base === undefined || base === null || base === 0) return null;
+  return {
+    name: name === "" ? "市场指数" : name,
+    values: prices.map((price) => price === null ? null : Number(((price - base) / base * 100).toFixed(2)))
+  };
+});
+
+function parseClockMinutes(value: string): number {
+  const [hours, minutes] = value.split(":").map((part) => Number(part));
+  return (hours ?? 0) * 60 + (minutes ?? 0);
+}
+
+function beijingMinuteOfDay(value: string): number {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return Number.NaN;
+  return ((date.getUTCHours() + 8) % 24) * 60 + date.getUTCMinutes();
+}
 
 function filterIntradayData(data: MarketSnapshotPoint[]): MarketSnapshotPoint[] {
   if (intradayRange.value === "all") return data;
@@ -100,15 +160,22 @@ function recentTradingDateCandidates(days: number): string[] {
 }
 
 /** 拉取近端分钟线并映射为与快照一致的点位结构，供现有图表复用。 */
-async function loadRealtimeMinutePoints(accessToken: string, instrumentId: string): Promise<MarketSnapshotPoint[]> {
+async function loadRealtimeMinutePoints(
+  accessToken: string,
+  instrumentId: string
+): Promise<{ points: MarketSnapshotPoint[]; indexes: Map<string, IntradayIndexSeries> }> {
   const responses = await Promise.all(
     recentTradingDateCandidates(intradayRealtimeLookbackDays).map((date) =>
       api.marketMinute(accessToken, instrumentId, date).catch(() => null),
     ),
   );
   const points = new Map<string, MarketSnapshotPoint>();
+  const indexes = new Map<string, IntradayIndexSeries>();
   for (const response of responses) {
     if (response === null) continue;
+    if (response.benchmark !== null && response.benchmark !== undefined) {
+      indexes.set(response.date, { name: response.benchmark.name, points: response.benchmark.points });
+    }
     for (const point of response.points) {
       const capturedAt = `${response.date}T${point.time}:00+08:00`;
       if (points.has(capturedAt)) continue;
@@ -125,7 +192,69 @@ async function loadRealtimeMinutePoints(accessToken: string, instrumentId: strin
       });
     }
   }
-  return [...points.values()].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
+  return {
+    points: [...points.values()].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt)),
+    indexes,
+  };
+}
+
+/** 指数分时按“市场 + 交易日”共享，避免切换标的时重复请求。 */
+const intradayIndexMinuteCache = new Map<string, IntradayIndexSeries>();
+
+function intradayIndexCacheKey(exchange: string, date: string): string {
+  return `${exchange}|${date}`;
+}
+
+/** 快照来源下按需补齐指数分钟线，最多取最近十五个交易日（与快照保留期一致）的分时。 */
+async function ensureIntradayIndexSeries(): Promise<void> {
+  const accessToken = token.value;
+  const holding = intradayHolding.value;
+  if (accessToken === null || holding === null) return;
+  const dates = [...new Set(filterIntradayData(intradayData.value ?? []).map((point) => point.tradeDate))]
+    .sort()
+    .slice(-15);
+  const exchange = holding.instrument.exchange;
+  const missing = dates.filter((date) => !intradayIndexSeries.value.has(date));
+  if (missing.length === 0) return;
+  intradayIndexLoading.value = true;
+  intradayIndexError.value = "";
+  try {
+    const responses = await Promise.all(
+      missing.map((date) => {
+        const key = intradayIndexCacheKey(exchange, date);
+        const cached = intradayIndexMinuteCache.get(key);
+        if (cached !== undefined) return Promise.resolve({ date, series: cached });
+        return api.marketMinute(accessToken, holding.instrument.id, date)
+          .then((response) => {
+            if (response.benchmark === null || response.benchmark === undefined) return null;
+            const series = { name: response.benchmark.name, points: response.benchmark.points };
+            intradayIndexMinuteCache.set(key, series);
+            intradayIndexMinuteCache.set(intradayIndexCacheKey(exchange, response.date), series);
+            return { date: response.date, series };
+          })
+          .catch(() => null);
+      }),
+    );
+    const next = new Map(intradayIndexSeries.value);
+    for (const response of responses) {
+      if (response === null) continue;
+      next.set(response.date, response.series);
+    }
+    intradayIndexSeries.value = next;
+    if (next.size === 0) intradayIndexError.value = "指数分时数据暂不可用";
+  } finally {
+    intradayIndexLoading.value = false;
+  }
+}
+
+async function toggleIntradayIndex(): Promise<void> {
+  if (intradayShowIndex.value) {
+    intradayShowIndex.value = false;
+    return;
+  }
+  intradayShowIndex.value = true;
+  if (intradayIndexSeries.value.size > 0) return;
+  await ensureIntradayIndexSeries();
 }
 
 function formatIntradayLabel(value: string): string {
@@ -282,7 +411,11 @@ async function openIntraday(holding: BatmanHoldingWorkspaceRecord): Promise<void
   
   // Reset to default range (2 days) when opening new holding
   intradayRange.value = 2;
-  
+  intradayShowIndex.value = false;
+  intradayIndexLoading.value = false;
+  intradayIndexError.value = "";
+  intradayIndexSeries.value = new Map();
+
   intradayDialogOpen.value = true;
   intradayHolding.value = holding;
   intradayError.value = "";
@@ -297,6 +430,10 @@ function closeIntradayDialog(): void {
   intradayError.value = "";
   intradayOrigin.value = "snapshot";
   intradayChartType.value = "line";
+  intradayShowIndex.value = false;
+  intradayIndexLoading.value = false;
+  intradayIndexError.value = "";
+  intradayIndexSeries.value = new Map();
 }
 
 async function loadIntradayData(accessToken: string, instrumentId: string): Promise<void> {
@@ -308,12 +445,13 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
       const preference = await api.getIntradaySource(accessToken);
       if (version !== intradayRequestVersion) return;
       if (preference.source === "realtime") {
-        const realtimePoints = await loadRealtimeMinutePoints(accessToken, instrumentId);
+        const realtime = await loadRealtimeMinutePoints(accessToken, instrumentId);
         if (version !== intradayRequestVersion) return;
-        if (realtimePoints.length > 0) {
+        if (realtime.points.length > 0) {
           intradayOrigin.value = "minute";
-          intradayFullDataCache.value.set(instrumentId, realtimePoints);
-          intradayData.value = filterIntradayData(realtimePoints);
+          intradayIndexSeries.value = new Map(realtime.indexes);
+          intradayFullDataCache.value.set(instrumentId, realtime.points);
+          intradayData.value = filterIntradayData(realtime.points);
           intradayDataCache.value.set(instrumentId, true);
           return;
         }
@@ -495,76 +633,94 @@ onMounted(load);
           <div v-else class="intraday-chart-frame">
             <div class="intraday-chart-header">
               <p class="intraday-chart-summary">{{ intradaySummary }}</p>
-              <div class="intraday-range-toggle" v-if="intradayHolding" role="group" aria-label="时间范围">
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayRange === 1 }"
-                  @click="intradayRange = 1"
-                  type="button"
-                  title="最近一天"
-                  :disabled="intradayLoading"
-                >
-                  一天
-                </button>
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayRange === 2 }"
-                  @click="intradayRange = 2"
-                  type="button"
-                  title="最近两天"
-                  :disabled="intradayLoading"
-                >
-                  两天
-                </button>
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayRange === 5 }"
-                  @click="intradayRange = 5"
-                  type="button"
-                  title="最近五天"
-                  :disabled="intradayLoading"
-                >
-                  五天
-                </button>
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayRange === 'all' }"
-                  @click="intradayRange = 'all'"
-                  type="button"
-                  title="全部"
-                  :disabled="intradayLoading"
-                >
-                  全部
-                </button>
-              </div>
-              <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayChartType === 'kline' }"
-                  @click="intradayChartType = 'kline'"
-                  type="button"
-                  title="K线"
-                  :disabled="intradayLoading"
-                >
-                  K线
-                </button>
-                <button
-                  class="intraday-toggle-button"
-                  :class="{ active: intradayChartType === 'line' }"
-                  @click="intradayChartType = 'line'"
-                  type="button"
-                  title="分时"
-                  :disabled="intradayLoading"
-                >
-                  分时
-                </button>
+              <div class="intraday-header-controls">
+                <div class="intraday-range-toggle" v-if="intradayHolding" role="group" aria-label="时间范围">
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayRange === 1 }"
+                    @click="intradayRange = 1"
+                    type="button"
+                    title="最近一天"
+                    :disabled="intradayLoading"
+                  >
+                    一天
+                  </button>
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayRange === 2 }"
+                    @click="intradayRange = 2"
+                    type="button"
+                    title="最近两天"
+                    :disabled="intradayLoading"
+                  >
+                    两天
+                  </button>
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayRange === 5 }"
+                    @click="intradayRange = 5"
+                    type="button"
+                    title="最近五天"
+                    :disabled="intradayLoading"
+                  >
+                    五天
+                  </button>
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayRange === 'all' }"
+                    @click="intradayRange = 'all'"
+                    type="button"
+                    title="全部"
+                    :disabled="intradayLoading"
+                  >
+                    全部
+                  </button>
+                </div>
+                <div class="intraday-index-toggle" v-if="intradayHolding">
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayShowIndex }"
+                    :aria-pressed="intradayShowIndex"
+                    :disabled="intradayLoading || intradayIndexLoading"
+                    :title="intradayShowIndex ? '隐藏市场指数' : '叠加市场指数分时对比'"
+                    aria-label="叠加市场指数"
+                    type="button"
+                    @click="toggleIntradayIndex"
+                  >
+                    指数
+                  </button>
+                </div>
+                <div class="intraday-chart-toggle" v-if="intradayHolding" role="group" aria-label="图表类型">
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayChartType === 'kline' }"
+                    @click="intradayChartType = 'kline'"
+                    type="button"
+                    title="K线"
+                    :disabled="intradayLoading"
+                  >
+                    K线
+                  </button>
+                  <button
+                    class="intraday-toggle-button"
+                    :class="{ active: intradayChartType === 'line' }"
+                    @click="intradayChartType = 'line'"
+                    type="button"
+                    title="分时"
+                    :disabled="intradayLoading"
+                  >
+                    分时
+                  </button>
+                </div>
               </div>
             </div>
             <KLineChart
               :bars="intradayBars"
               height="min(58vh, 440px)"
               :ma-periods="[]"
-              subchart="volume"
+              :subchart="intradaySubchart"
+              :macd-lines="intradayMacdLines"
+              :comparison="intradayIndexComparison"
               :x-axis-labels="intradayLabels"
               intraday-mode
               :average-price="intradayHolding?.averageCost ?? null"
@@ -589,7 +745,8 @@ onMounted(load);
 .batman-holdings :deep(.batman-table th) { font-size: 13px; }
 .intraday-dialog-content { padding: 4px 0 0; }
 .intraday-chart-frame { min-width: 0; }
-.intraday-chart-header { align-items: center; display: flex; justify-content: space-between; margin: 0 0 6px; }
+.intraday-chart-header { align-items: center; display: flex; gap: 12px; justify-content: space-between; margin: 0 0 6px; }
+.intraday-header-controls { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 .intraday-chart-summary { color: #96abc2; font-size: 12px; margin: 0; }
 
 .intraday-title {
@@ -612,6 +769,19 @@ onMounted(load);
 
 .intraday-chart-toggle {
   display: inline-flex;
+}
+
+.intraday-index-toggle {
+  display: inline-flex;
+}
+
+.intraday-index-toggle .intraday-toggle-button {
+  border-radius: 5px;
+}
+
+.intraday-index-toggle .intraday-toggle-button.active {
+  background: #6c4bc0;
+  border-color: #9a7ae6;
 }
 
 .intraday-toggle-button {

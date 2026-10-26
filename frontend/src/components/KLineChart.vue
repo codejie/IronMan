@@ -35,8 +35,9 @@ const props = withDefaults(
     chartType?: "kline" | "line";
     showPriceDiff?: boolean;
     priceDiffColor?: string;
+    comparison?: { name: string; values: Array<number | null> } | null;
   }>(),
-  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, averagePrice: null, chartType: "line", showPriceDiff: false, priceDiffColor: "#f0c878" }
+  { maPeriods: () => [], subchart: "volume", macdLines: null, overlays: () => [], annotations: () => [], title: "", height: "520px", intradayMode: false, averagePrice: null, chartType: "line", showPriceDiff: false, priceDiffColor: "#f0c878", comparison: null }
 );
 
 defineEmits<{
@@ -267,6 +268,24 @@ function render(): void {
   let mainSeries: any[] = [];
   let legendData: string[] = [];
   let priceDiffSeries: any[] = [];
+  const comparison = props.comparison;
+  const comparisonSeries: any[] = comparison === null
+    ? []
+    : [{
+        type: "line" as const,
+        name: comparison.name,
+        data: comparison.values,
+        yAxisIndex: 2,
+        showSymbol: false,
+        smooth: false,
+        connectNulls: true,
+        lineStyle: { color: "#b58cf0", width: 1.4 },
+        itemStyle: { color: "#b58cf0" },
+        label: { show: false },
+        tooltip: { valueFormatter: (value: unknown) => typeof value === "number" ? `${value}%` : String(value ?? "-") }
+      }];
+  const showPercentAxis = comparisonSeries.length > 0
+    || (isIntraday && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined);
 
   if (isIntraday) {
     if (chartType === "line") {
@@ -385,7 +404,7 @@ function render(): void {
     animation: false,
     backgroundColor: "transparent",
     title: props.title === "" ? undefined : { text: props.title, left: 0, textStyle: { color: "#edf7ff", fontSize: 15, fontWeight: 650 } },
-    legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { color: "#aabbd0", fontSize: 11 }, data: [...legendData, ...mainOverlaySeries.map((series) => series.name), ...secondarySeries.map((series) => series.name)] },
+    legend: { bottom: 0, itemWidth: 12, itemHeight: 8, textStyle: { color: "#aabbd0", fontSize: 11 }, data: [...legendData, ...mainOverlaySeries.map((series) => series.name), ...secondarySeries.map((series) => series.name), ...comparisonSeries.map((series) => series.name)] },
     tooltip: {
       trigger: "axis",
       confine: true,
@@ -403,7 +422,7 @@ function render(): void {
     },
     axisPointer: { link: [{ xAxisIndex: "all" }], lineStyle: { color: "#65d7ca" } },
     grid: [
-      { left: 48, right: props.intradayMode && props.showPriceDiff && props.averagePrice ? 56 : 18, top: props.title === "" ? 18 : 44, height: "52%" },
+      { left: 48, right: showPercentAxis ? 56 : 18, top: props.title === "" ? 18 : 44, height: "52%" },
       { left: 48, right: 18, top: "70%", height: "17%" }
     ],
     xAxis: [
@@ -413,7 +432,7 @@ function render(): void {
     yAxis: [
       { scale: true, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
       { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
-      ...(props.intradayMode && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined
+      ...(showPercentAxis
         ? [{
             scale: true,
             position: "right",
@@ -428,7 +447,8 @@ function render(): void {
       ...mainOverlaySeries,
       ...secondarySeries,
       ...turningPointSeries,
-      ...priceDiffSeries
+      ...priceDiffSeries,
+      ...comparisonSeries
     ]
   }, { notMerge: true });
   updateAnnotationPositions();
@@ -447,7 +467,7 @@ onMounted(() => {
   chart?.on("globalout", clearActiveAnnotations);
 });
 
-watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.averagePrice, props.chartType, props.showPriceDiff, props.priceDiffColor], render, { deep: true });
+watch(() => [props.bars, props.maPeriods, props.subchart, props.macdLines, props.overlays, props.annotations, props.title, props.xAxisLabels, props.intradayMode, props.averagePrice, props.chartType, props.showPriceDiff, props.priceDiffColor, props.comparison], render, { deep: true });
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   chart?.off("mouseover", handleChartMouseOver);

@@ -38,6 +38,36 @@ interface BarRow {
   turnover_rate: number | null;
 }
 
+/** 持仓分时对比用的市场指数，按交易市场取上证指数、深证成指或北证50。 */
+const benchmarkIndexes: Partial<Record<Exchange, { code: string; name: string }>> = {
+  sh: { code: "000001", name: "上证指数" },
+  sz: { code: "399001", name: "深证成指" },
+  bj: { code: "899050", name: "北证50" }
+};
+
+export interface IntradayBenchmark {
+  code: string;
+  name: string;
+  points: IntradayMinuteResult["points"];
+}
+
+function benchmarkInstrument(instrument: Instrument): Instrument | null {
+  const exchange = instrument.assetType === "fund"
+    ? instrument.code.startsWith("5") || instrument.code.startsWith("6") ? "sh" : "sz"
+    : instrument.exchange;
+  const index = benchmarkIndexes[exchange];
+  if (index === undefined) return null;
+  return {
+    id: `benchmark-${exchange}-${index.code}`,
+    code: index.code,
+    exchange,
+    name: index.name,
+    assetType: "index",
+    createdAt: instrument.createdAt,
+    updatedAt: instrument.updatedAt
+  };
+}
+
 const defaultConfig: DataSourceConfig = { primary: "eastmoney", fallback: "tencent" };
 const sourceNames = new Set<MarketSource>(["tencent", "eastmoney", "akshare"]);
 
@@ -183,8 +213,13 @@ export class MarketService {
 
   /**
    * 当天分时（可选近 N 个交易日，视上游支持）。分时数据实时性强，不做本地缓存。
+   * 同时附带标的所在市场的指数分时，供前端叠加对比。
    */
-  async getIntradayMinute(userId: string, instrumentId: string, date?: string): Promise<IntradayMinuteResult & { source: MarketSource }> {
+  async getIntradayMinute(
+    userId: string,
+    instrumentId: string,
+    date?: string
+  ): Promise<IntradayMinuteResult & { source: MarketSource; benchmark: IntradayBenchmark | null }> {
     const instrument = this.getInstrument(instrumentId);
     const config = this.getDataSourceConfig(userId);
     const candidates = [...new Set([config.primary, config.fallback])];
@@ -192,14 +227,35 @@ export class MarketService {
     for (const source of candidates) {
       const provider = this.providers.get(source);
       if (provider === undefined || !("intradayMinute" in provider)) continue;
+      const minuteProvider = provider as MarketDataProvider & IntradayMinuteProvider;
       try {
-        const result = await (provider as MarketDataProvider & IntradayMinuteProvider).intradayMinute(instrument, date);
-        return { source, date: result.date, points: result.points };
+        const result = await minuteProvider.intradayMinute(instrument, date);
+        return {
+          source,
+          date: result.date,
+          points: result.points,
+          benchmark: await this.getIntradayBenchmark(minuteProvider, instrument, result.date)
+        };
       } catch (error) {
         lastError = error;
       }
     }
     throw errors.external("分时数据源暂不可用");
+  }
+
+  private async getIntradayBenchmark(
+    provider: MarketDataProvider & IntradayMinuteProvider,
+    instrument: Instrument,
+    date: string
+  ): Promise<IntradayBenchmark | null> {
+    const benchmark = benchmarkInstrument(instrument);
+    if (benchmark === null) return null;
+    try {
+      const result = await provider.intradayMinute(benchmark, date);
+      return { code: benchmark.code, name: benchmark.name, points: result.points };
+    } catch {
+      return null;
+    }
   }
 
   async getHistoryRange(

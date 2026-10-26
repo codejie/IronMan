@@ -695,11 +695,18 @@ describe("market data and asset workspace", () => {
           headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
           body: JSON.stringify({ instrumentId })
         });
-        const minuteBody = (await minute.json()) as ApiResponse<{ source: string; date: string; points: Array<{ time: string }> }>;
+        const minuteBody = (await minute.json()) as ApiResponse<{
+          source: string;
+          date: string;
+          points: Array<{ time: string }>;
+          benchmark: { code: string; name: string; points: Array<{ time: string }> } | null;
+        }>;
         expect(minute.status).toBe(200);
         expect(minuteBody.result.source).toBe("eastmoney");
         expect(minuteBody.result.date).toBe("2026-10-22");
         expect(minuteBody.result.points).toHaveLength(2);
+        expect(minuteBody.result.benchmark).toMatchObject({ code: "000001", name: "上证指数" });
+        expect(minuteBody.result.benchmark?.points).toHaveLength(2);
       }
     );
 

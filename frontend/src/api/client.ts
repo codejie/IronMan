@@ -1217,6 +1217,11 @@ export const api = {
       source: MarketSource;
       date: string;
       points: Array<{ time: string; price: number; volume: number; cumulativeAmount: number }>;
+      benchmark: {
+        code: string;
+        name: string;
+        points: Array<{ time: string; price: number; volume: number; cumulativeAmount: number }>;
+      } | null;
     }>("/market/minute", { instrumentId, date }, token),
   history: (
     token: string,

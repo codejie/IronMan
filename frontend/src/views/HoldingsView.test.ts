@@ -485,6 +485,185 @@ describe("HoldingsView", () => {
     expect(router.currentRoute.value.path).toBe("/holding/detail");
     expect(router.currentRoute.value.query).toEqual({ id: "holding-1", ids: "holding-1,holding-2" });
   });
+
+  test("shows MACD under the 分时 mode and volume under the K线 mode", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    const capturedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    mocks.marketSnapshotSeries.mockResolvedValue({
+      items: [
+        {
+          capturedAt,
+          tradeDate: capturedAt.slice(0, 10),
+          source: "tencent",
+          captureMode: "auto",
+          open: 10,
+          close: 10.2,
+          high: 10.3,
+          low: 9.9,
+          volume: 123_456
+        },
+        {
+          capturedAt: new Date(new Date(capturedAt).getTime() + 60_000).toISOString(),
+          tradeDate: capturedAt.slice(0, 10),
+          source: "tencent",
+          captureMode: "auto",
+          open: 10.2,
+          close: 10.4,
+          high: 10.5,
+          low: 10.1,
+          volume: 98_765
+        }
+      ]
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels", "subchart", "macdLines", "comparison"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    const chart = wrapper.getComponent({ name: "KLineChart" });
+    expect(chart.props("subchart")).toBe("macd");
+    expect((chart.props("macdLines") as { hist: unknown[] }).hist).toHaveLength(2);
+
+    await wrapper.get(".intraday-chart-toggle button[title='K线']").trigger("click");
+    await flushPromises();
+
+    expect(chart.props("subchart")).toBe("volume");
+
+    await wrapper.get(".intraday-chart-toggle button[title='分时']").trigger("click");
+    await flushPromises();
+
+    expect(chart.props("subchart")).toBe("macd");
+  });
+
+  test("overlays the market index minute line when the 指数 toggle is enabled", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    const tradeDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    mocks.marketSnapshotSeries.mockResolvedValue({
+      items: [
+        {
+          capturedAt: `${tradeDate}T01:30:00.000Z`,
+          tradeDate,
+          source: "tencent",
+          captureMode: "auto",
+          open: 10,
+          close: 10,
+          high: 10,
+          low: 10,
+          volume: 1_000
+        },
+        {
+          capturedAt: `${tradeDate}T01:31:00.000Z`,
+          tradeDate,
+          source: "tencent",
+          captureMode: "auto",
+          open: 10.2,
+          close: 10.2,
+          high: 10.2,
+          low: 10.2,
+          volume: 1_200
+        }
+      ]
+    });
+    mocks.marketMinute.mockResolvedValue({
+      source: "tencent",
+      date: tradeDate,
+      points: [],
+      benchmark: {
+        code: "000001",
+        name: "上证指数",
+        points: [
+          { time: "09:30", price: 3600, volume: 0, cumulativeAmount: 0 },
+          { time: "09:31", price: 3636, volume: 0, cumulativeAmount: 0 }
+        ]
+      }
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels", "subchart", "macdLines", "comparison"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    const vm = wrapper.vm as any;
+    vm.intradayRange = "all";
+    await wrapper.vm.$nextTick();
+
+    const labels = wrapper.findAll(".intraday-chart-header .intraday-toggle-button").map((button) => button.text());
+    expect(labels.slice(-3)).toEqual(["指数", "K线", "分时"]);
+    expect(mocks.marketMinute).not.toHaveBeenCalled();
+
+    await wrapper.get("button[aria-label='叠加市场指数']").trigger("click");
+    await flushPromises();
+    await wrapper.vm.$nextTick();
+
+    const chart = wrapper.getComponent({ name: "KLineChart" });
+    expect(chart.props("comparison")).toEqual({ name: "上证指数", values: [0, 1] });
+    expect(wrapper.get(".intraday-chart-summary").text()).toContain("对比 上证指数");
+
+    await wrapper.get("button[aria-label='叠加市场指数']").trigger("click");
+    await flushPromises();
+    expect(chart.props("comparison")).toBeNull();
+  });
 });
 
 function holding(overrides: Partial<BatmanHoldingWorkspaceRecord>): BatmanHoldingWorkspaceRecord {

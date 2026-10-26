@@ -9,6 +9,7 @@ import {
   KLINE_RANGES,
   lineVisualStyle,
   layoutKlineAnnotationLabels,
+  macd,
   movingAverage,
   parseKlinePreferences
 } from "./kline-analysis";
@@ -23,6 +24,24 @@ describe("K-line analysis controls", () => {
 
   test("keeps MA values empty until the selected period has enough bars", () => {
     expect(movingAverage([1, 2, 3, 4, 5, 6], 3)).toEqual([null, null, 2, 3, 4, 5]);
+  });
+
+  test("computes MACD(12, 26, 9) with the same warm-up as the indicator service", () => {
+    const flat = macd(Array.from({ length: 40 }, () => 10));
+    expect(flat.dif).toHaveLength(40);
+    expect(flat.dif.slice(0, 25).every((value) => value === null)).toBe(true);
+    expect(flat.dif[25]).toBe(0);
+    expect(flat.dea.slice(0, 33).every((value) => value === null)).toBe(true);
+    expect(flat.dea[33]).toBe(0);
+    expect(flat.hist.slice(0, 33).every((value) => value === null)).toBe(true);
+    expect(flat.hist[33]).toBe(0);
+
+    const rising = macd(Array.from({ length: 40 }, (_, index) => index + 1));
+    expect(rising.dif[39]).toBeCloseTo(7, 6);
+    expect(rising.dea[39]).toBeCloseTo(7, 6);
+
+    const breakout = macd(Array.from({ length: 41 }, (_, index) => index < 40 ? index + 1 : 100));
+    expect(breakout.hist[40]).toBeGreaterThan(0);
   });
 
   test("uses the same color for a line and its tooltip marker", () => {

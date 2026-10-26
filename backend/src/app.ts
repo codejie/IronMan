@@ -84,6 +84,12 @@ const emptyBodySchema = z.object({}).openapi("EmptyBody");
 const assetTypeSchema = z.enum(["stock", "index", "fund"]);
 const exchangeSchema = z.enum(["sh", "sz", "bj", "fund"]);
 const sourceSchema = z.enum(["tencent", "eastmoney", "akshare"]);
+const minutePointSchema = z.object({
+  time: z.string(),
+  price: z.number(),
+  volume: z.number(),
+  cumulativeAmount: z.number(),
+});
 const timeframeSchema = z.enum(["day", "week", "month"]);
 const historyLimitSchema = z.number().int().min(1).max(640).default(180);
 const indicatorTypeSchema = z.enum(["MA", "MACD", "RSI", "BOLL"]);
@@ -1689,14 +1695,14 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
                 z.object({
                   source: sourceSchema,
                   date: z.string(),
-                  points: z.array(
-                    z.object({
-                      time: z.string(),
-                      price: z.number(),
-                      volume: z.number(),
-                      cumulativeAmount: z.number(),
-                    }),
-                  ),
+                  points: z.array(minutePointSchema),
+                  benchmark: z
+                    .object({
+                      code: z.string(),
+                      name: z.string(),
+                      points: z.array(minutePointSchema),
+                    })
+                    .nullable(),
                 }),
               ),
             },
