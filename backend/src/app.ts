@@ -298,16 +298,21 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const auth = new AuthService(database, config);
   const settings = new SettingsService(database);
   const tradingCalendar = new TradingCalendarService(settings);
-  const market = new MarketService(database, settings, [
-    ...(config.marketProviders ?? [
-      new AkShareMarketProvider({
-        baseUrl: config.akshareProviderUrl,
-        timeoutMs: config.akshareProviderTimeoutMs,
-      }),
-      new TencentMarketProvider(),
-      new EastmoneyMarketProvider(),
-    ]),
-  ]);
+  const market = new MarketService(
+    database,
+    settings,
+    [
+      ...(config.marketProviders ?? [
+        new AkShareMarketProvider({
+          baseUrl: config.akshareProviderUrl,
+          timeoutMs: config.akshareProviderTimeoutMs,
+        }),
+        new TencentMarketProvider(),
+        new EastmoneyMarketProvider(),
+      ]),
+    ],
+    tradingCalendar,
+  );
   const thirdParty = new ThirdPartyDataService(
     database,
     market,
@@ -1683,6 +1688,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
               .string()
               .regex(/^\d{4}([-/]?\d{2}){2}$/)
               .optional(),
+            recentDays: z.number().int().min(1).max(20).optional(),
           }),
         ),
       },
@@ -1714,7 +1720,12 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       const input = context.req.valid("json");
       return context.json(
         success(
-          await market.getIntradayMinute(context.get("currentUser").id, input.instrumentId, input.date),
+          await market.getIntradayMinute(
+            context.get("currentUser").id,
+            input.instrumentId,
+            input.date,
+            input.recentDays ?? 1,
+          ),
         ),
         200,
       );

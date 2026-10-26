@@ -305,7 +305,7 @@ describe("HoldingsView", () => {
     expect(chart.props("xAxisLabels")).toHaveLength(2);
   });
 
-  test("disables the 全部 range under realtime source with a hint", async () => {
+  test("keeps 全部 range enabled under realtime source with a hint about lookback", async () => {
     mocks.batmanHoldingWorkspace.mockResolvedValue({
       summary: {
         cashAvailable: 0,
@@ -354,7 +354,7 @@ describe("HoldingsView", () => {
 
     const rangeButtons = () => wrapper.findAll(".intraday-range-toggle .intraday-toggle-button");
     const allRealtime = rangeButtons().find((b) => b.text() === "全部")!;
-    expect(allRealtime.attributes("disabled")).toBeDefined();
+    expect(allRealtime.attributes("disabled")).toBeUndefined();
     expect(allRealtime.attributes("title") ?? "").toContain("实时分时源");
   });
 

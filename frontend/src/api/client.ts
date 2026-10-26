@@ -1212,6 +1212,7 @@ export const api = {
     token: string,
     instrumentId: string,
     date?: string,
+    recentDays?: number,
   ) =>
     post<{
       source: MarketSource;
@@ -1222,7 +1223,7 @@ export const api = {
         name: string;
         points: Array<{ time: string; price: number; volume: number; cumulativeAmount: number }>;
       } | null;
-    }>("/market/minute", { instrumentId, date }, token),
+    }>("/market/minute", { instrumentId, date, recentDays }, token),
   history: (
     token: string,
     instrumentId: string,

@@ -156,14 +156,15 @@ function recentTradingDateCandidates(days: number): string[] {
   return dates;
 }
 
-/** 拉取近端分钟线并映射为与快照一致的点位结构，供现有图表复用。 */
+/** 拉取近端分钟线并映射为与快照一致的点位结构，供现有图表复用。
+ *  通过 recentDays 参数一次性拉取近 N 个交易日的分钟点，避免前端并发多请求。 */
 async function loadRealtimeMinutePoints(
   accessToken: string,
   instrumentId: string
 ): Promise<{ points: MarketSnapshotPoint[]; indexes: Map<string, IntradayIndexSeries> }> {
   const responses = await Promise.all(
     recentTradingDateCandidates(intradayRealtimeLookbackDays).map((date) =>
-      api.marketMinute(accessToken, instrumentId, date).catch(() => null),
+      api.marketMinute(accessToken, instrumentId, date, intradayRealtimeLookbackDays).catch(() => null),
     ),
   );
   const points = new Map<string, MarketSnapshotPoint>();
@@ -669,8 +670,8 @@ onMounted(load);
                     :class="{ active: intradayRange === 'all' }"
                     @click="intradayRange = 'all'"
                     type="button"
-                    :title="intradayRealtimeOnly ? `实时分时源仅近 ${intradayRealtimeLookbackDays} 个交易日，请切换系统配置「历史数据快照」查看更多` : '全部'"
-                    :disabled="intradayLoading || intradayRealtimeOnly"
+                    :title="intradayRealtimeOnly ? `实时分时源近 ${intradayRealtimeLookbackDays} 个交易日，「全部」即近 ${intradayRealtimeLookbackDays} 个交易日` : '全部'"
+                    :disabled="intradayLoading"
                   >
                     全部
                   </button>

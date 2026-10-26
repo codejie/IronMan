@@ -16,6 +16,7 @@ import type {
   Timeframe
 } from "../market/types";
 import { SettingsService } from "./settings-service";
+import type { TradingCalendarService } from "./trading-calendar-service";
 
 interface InstrumentRow {
   id: string;
@@ -78,7 +79,8 @@ export class MarketService {
   constructor(
     private readonly database: IronManDatabase,
     private readonly settings: SettingsService,
-    providers: MarketDataProvider[] = [new AkShareMarketProvider(), new TencentMarketProvider(), new EastmoneyMarketProvider()]
+    providers: MarketDataProvider[] = [new AkShareMarketProvider(), new TencentMarketProvider(), new EastmoneyMarketProvider()],
+    private readonly tradingCalendar: TradingCalendarService | undefined = undefined
   ) {
     this.providers = new Map(providers.map((provider) => [provider.source, provider]));
     this.catalogProvider = providers.find(isInstrumentCatalogProvider);
@@ -212,35 +214,66 @@ export class MarketService {
   }
 
   /**
-   * 当天分时（可选近 N 个交易日，视上游支持）。分时数据实时性强，不做本地缓存。
+   * 当天分时（可选近 N 个交易日，按交易日回看，节假日跳过）。分时数据实时性强，不做本地缓存。
    * 同时附带标的所在市场的指数分时，供前端叠加对比。
+   *
+   * 行为：
+   * - `date` 给定：只拉这一天
+   * - `date` 缺省 且 `recentDays > 1`：按用户交易日日历回看 `recentDays` 个交易日，取最早一天
+   * - `date` 缺省 且 `recentDays === 1`（默认）：拉当天
    */
   async getIntradayMinute(
     userId: string,
     instrumentId: string,
-    date?: string
+    date?: string,
+    recentDays = 1
   ): Promise<IntradayMinuteResult & { source: MarketSource; benchmark: IntradayBenchmark | null }> {
     const instrument = this.getInstrument(instrumentId);
     const config = this.getDataSourceConfig(userId);
     const candidates = [...new Set([config.primary, config.fallback])];
     let lastError: unknown = undefined;
-    for (const source of candidates) {
-      const provider = this.providers.get(source);
-      if (provider === undefined || !("intradayMinute" in provider)) continue;
-      const minuteProvider = provider as MarketDataProvider & IntradayMinuteProvider;
-      try {
-        const result = await minuteProvider.intradayMinute(instrument, date);
-        return {
-          source,
-          date: result.date,
-          points: result.points,
-          benchmark: await this.getIntradayBenchmark(minuteProvider, instrument, result.date)
-        };
-      } catch (error) {
-        lastError = error;
+    const targetDates: Array<string | undefined> = date !== undefined
+      ? [date]
+      : recentDays > 1
+        ? this.recentTradingDays(userId, recentDays)
+        : [undefined];
+    for (const targetDate of targetDates) {
+      for (const source of candidates) {
+        const provider = this.providers.get(source);
+        if (provider === undefined || !("intradayMinute" in provider)) continue;
+        const minuteProvider = provider as MarketDataProvider & IntradayMinuteProvider;
+        try {
+          const result = await minuteProvider.intradayMinute(instrument, targetDate);
+          return {
+            source,
+            date: result.date,
+            points: result.points,
+            benchmark: await this.getIntradayBenchmark(minuteProvider, instrument, result.date)
+          };
+        } catch (error) {
+          lastError = error;
+        }
       }
     }
-    throw errors.external("分时数据源暂不可用");
+    throw lastError !== undefined ? errors.external("分时数据源暂不可用") : errors.validation("请求日期无交易数据");
+  }
+
+  /** 按用户交易日日历回看最近 N 个交易日（含节假日缓冲），倒序返回。 */
+  private recentTradingDays(userId: string, days: number): string[] {
+    if (days <= 1) return [];
+    const today = new Date();
+    const start = new Date(today.getTime() - (days + 7) * 24 * 60 * 60 * 1000);
+    if (this.tradingCalendar === undefined) {
+      const result: string[] = [];
+      for (let offset = 0; offset < days; offset += 1) {
+        const day = new Date(today.getTime() - offset * 24 * 60 * 60 * 1000);
+        result.push(day.toISOString().slice(0, 10));
+      }
+      return result;
+    }
+    const startAt = start.toISOString().slice(0, 10);
+    const endAt = today.toISOString().slice(0, 10);
+    return this.tradingCalendar.getTradeDays(userId, startAt, endAt).slice(-days);
   }
 
   private async getIntradayBenchmark(
