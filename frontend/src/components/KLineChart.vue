@@ -193,17 +193,27 @@ function render(): void {
   const chartType = props.chartType;
   const closePrices = props.bars.map((bar) => bar.close);
   const volumes = props.bars.map((bar) => bar.volume);
+  const comparison = props.comparison;
+  const showPercentAxis = isIntraday && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined;
+  const hasComparison = comparison !== null;
+  // 指数与标的价格各用独立坐标轴；按产品要求指数在左侧、标的价格在右侧。
+  const priceAxisIndex = hasComparison ? 2 : 0;
+  const comparisonAxisIndex = 0;
+  const percentAxisIndex = hasComparison ? 3 : 2;
+  const rightAxisCount = (showPercentAxis ? 1 : 0) + (hasComparison ? 1 : 0);
+  const gridRight = rightAxisCount === 0 ? 18 : rightAxisCount === 1 ? 62 : 118;
 
   const maSeries = props.maPeriods.map((period, index) => ({
     type: "line" as const,
     name: `MA${period}`,
     data: movingAverage(closePrices, period),
+    yAxisIndex: priceAxisIndex,
     showSymbol: false,
     smooth: true,
     ...lineVisualStyle(maColors[index % maColors.length]!, 1.5)
   }));
   const overlaySeries = (overlay: KlineOverlay) => {
-    const axis = overlay.placement === "main" ? 0 : 1;
+    const axis = overlay.placement === "main" ? priceAxisIndex : 1;
     return overlay.kind === "bar"
       ? { type: "bar" as const, name: overlay.name, xAxisIndex: axis, yAxisIndex: axis, data: overlay.values, itemStyle: { color: overlay.color } }
       : { type: "line" as const, name: overlay.name, xAxisIndex: axis, yAxisIndex: axis, data: overlay.values, showSymbol: false, ...lineVisualStyle(overlay.color, 1.35) };
@@ -248,7 +258,7 @@ function render(): void {
     type: "scatter" as const,
     name: "趋势拐点",
     xAxisIndex: 0,
-    yAxisIndex: 0,
+    yAxisIndex: priceAxisIndex,
     z: 30,
     tooltip: { show: false },
     data: annotationVisuals.map(({ key, marker }) => ({
@@ -268,10 +278,6 @@ function render(): void {
   let mainSeries: any[] = [];
   let legendData: string[] = [];
   let priceDiffSeries: any[] = [];
-  const comparison = props.comparison;
-  const showPercentAxis = isIntraday && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined;
-  // 指数使用独立的右侧坐标轴（指数点位与股价量级不同），价差%轴存在时顺延一位。
-  const comparisonAxisIndex = showPercentAxis ? 3 : 2;
   const comparisonSeries: any[] = comparison === null
     ? []
     : [{
@@ -286,8 +292,6 @@ function render(): void {
         itemStyle: { color: "#b58cf0" },
         label: { show: false }
       }];
-  const rightAxisCount = (showPercentAxis ? 1 : 0) + (comparison === null ? 0 : 1);
-  const gridRight = rightAxisCount === 0 ? 18 : rightAxisCount === 1 ? 62 : 118;
 
   if (isIntraday) {
     if (chartType === "line") {
@@ -297,6 +301,7 @@ function render(): void {
           type: "line" as const,
           name: "收盘价",
           data: closePrices,
+          yAxisIndex: priceAxisIndex,
           showSymbol: true,
           symbol: "circle",
           symbolSize: 5,
@@ -342,6 +347,7 @@ function render(): void {
           type: "candlestick" as const,
           name: "K线",
           data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
+          yAxisIndex: priceAxisIndex,
           itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" },
           ...(props.averagePrice !== null && props.averagePrice !== undefined
             ? {
@@ -378,7 +384,7 @@ function render(): void {
         type: "line" as const,
         name: "价差%",
         data: priceDiffData,
-        yAxisIndex: 2,
+        yAxisIndex: percentAxisIndex,
         showSymbol: false,
         smooth: false,
         lineStyle: { color: props.priceDiffColor, width: 1.5, type: "dashed" as const },
@@ -393,6 +399,7 @@ function render(): void {
         type: "candlestick" as const,
         name: "K线",
         data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]),
+        yAxisIndex: priceAxisIndex,
         itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" }
       }
     ];
@@ -432,31 +439,36 @@ function render(): void {
       { type: "category", gridIndex: 1, data: labels, boundaryGap: false, axisLabel: { show: false }, axisLine: { lineStyle: { color: "#52708e" } } }
     ],
     yAxis: [
-      { scale: true, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
-      { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
-      ...(showPercentAxis
-        ? [{
+      // 0: 左侧主轴。有指数对比时显示指数点位；无对比时显示标的价格。
+      hasComparison
+        ? {
             scale: true,
-            position: "right",
-            offset: 0,
-            axisLabel: { color: props.priceDiffColor, formatter: "{value}%" },
-            splitLine: { show: false }
-          }]
-        : []),
-      ...(comparison === null
-        ? []
-        : [{
-            scale: true,
-            position: "right",
-            offset: showPercentAxis ? 56 : 0,
+            position: "left",
             name: comparison.name,
             nameRotate: 0,
             nameLocation: "end",
             nameGap: 6,
             nameTextStyle: { color: "#b58cf0", fontSize: 10, fontWeight: 600, align: "left" },
             axisLabel: { color: "#b58cf0" },
+            splitLine: { lineStyle: { color: "#24354f" } }
+          }
+        : { scale: true, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
+      // 1: 副图（MACD / 成交量）
+      { scale: true, gridIndex: 1, axisLabel: { color: "#91a4bd" }, splitLine: { lineStyle: { color: "#24354f" } } },
+      // 2: 标的价格（有指数对比时移到右侧）
+      ...(hasComparison
+        ? [{ scale: true, position: "right", offset: 0, axisLabel: { color: "#91a4bd" }, splitLine: { show: false } }]
+        : []),
+      // 3: 价差%（有指数对比时向外再挪一位）
+      ...(showPercentAxis
+        ? [{
+            scale: true,
+            position: "right",
+            offset: hasComparison ? 56 : 0,
+            axisLabel: { color: props.priceDiffColor, formatter: "{value}%" },
             splitLine: { show: false }
-          }])
+          }]
+        : [])
     ],
     series: [
       ...mainSeries,
