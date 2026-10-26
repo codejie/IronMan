@@ -49,6 +49,7 @@ const intradayChartType = ref<"kline" | "line">("line");
 const intradayRange = ref<1 | 2 | 5 | "all">(2);
 const intradayOrigin = ref<"snapshot" | "minute">("snapshot");
 const intradayRealtimeLookbackDays = 5;
+const intradayRealtimeOnly = computed(() => intradayOrigin.value === "minute");
 const intradayShowIndex = ref(false);
 const intradayIndexLoading = ref(false);
 const intradayIndexError = ref("");
@@ -445,6 +446,8 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
         if (version !== intradayRequestVersion) return;
         if (realtime.points.length > 0) {
           intradayOrigin.value = "minute";
+          // 实时源只有近 N 个交易日，"all" 选项在此源下不可用，回到 2 天避免用户误操作
+          if (intradayRange.value === "all") intradayRange.value = 2;
           intradayIndexSeries.value = new Map(realtime.indexes);
           intradayFullDataCache.value.set(instrumentId, realtime.points);
           intradayData.value = filterIntradayData(realtime.points);
@@ -666,8 +669,8 @@ onMounted(load);
                     :class="{ active: intradayRange === 'all' }"
                     @click="intradayRange = 'all'"
                     type="button"
-                    title="全部"
-                    :disabled="intradayLoading"
+                    :title="intradayRealtimeOnly ? `实时分时源仅近 ${intradayRealtimeLookbackDays} 个交易日，请切换系统配置「历史数据快照」查看更多` : '全部'"
+                    :disabled="intradayLoading || intradayRealtimeOnly"
                   >
                     全部
                   </button>

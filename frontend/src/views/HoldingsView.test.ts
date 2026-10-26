@@ -305,6 +305,59 @@ describe("HoldingsView", () => {
     expect(chart.props("xAxisLabels")).toHaveLength(2);
   });
 
+  test("disables the 全部 range under realtime source with a hint", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+    mocks.getIntradaySource.mockResolvedValue({ source: "realtime" });
+    const tradeDate = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    mocks.marketMinute.mockResolvedValue({
+      source: "tencent",
+      date: tradeDate,
+      points: [
+        { time: "09:30", price: 10, volume: 1_200, cumulativeAmount: 12_000 }
+      ]
+    });
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+    });
+    const wrapper = mount(HoldingsView, {
+      global: {
+        plugins: [router],
+        stubs: {
+          InstrumentKLineDialog: true,
+          InstrumentPickerDialog: true,
+          QuickAlertDialog: true,
+          KLineChart: {
+            name: "KLineChart",
+            props: ["bars", "xAxisLabels"],
+            template: "<div class='intraday-kline-stub' />"
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='查看 测试股票 分时数据']").trigger("click");
+    await flushPromises();
+
+    const rangeButtons = () => wrapper.findAll(".intraday-range-toggle .intraday-toggle-button");
+    const allRealtime = rangeButtons().find((b) => b.text() === "全部")!;
+    expect(allRealtime.attributes("disabled")).toBeDefined();
+    expect(allRealtime.attributes("title") ?? "").toContain("实时分时源");
+  });
+
   test("falls back to snapshot series when the realtime feed has no minute points", async () => {
     mocks.batmanHoldingWorkspace.mockResolvedValue({
       summary: {
