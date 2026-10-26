@@ -657,7 +657,7 @@ describe("HoldingsView", () => {
     await wrapper.vm.$nextTick();
 
     const chart = wrapper.getComponent({ name: "KLineChart" });
-    expect(chart.props("comparison")).toEqual({ name: "上证指数", values: [0, 1] });
+    expect(chart.props("comparison")).toEqual({ name: "上证指数", values: [3600, 3636] });
     expect(wrapper.get(".intraday-chart-summary").text()).toContain("对比 上证指数");
 
     await wrapper.get("button[aria-label='叠加市场指数']").trigger("click");

@@ -97,7 +97,7 @@ const intradaySummary = computed(() => {
   return intradayIndexError.value === "" ? base : `${base} · ${intradayIndexError.value}`;
 });
 
-/** 指数对比线：按同一分钟对齐到标的分时点，并转换为区间首点以来的涨跌幅。 */
+/** 指数对比线：按同一分钟对齐到标的分时点，使用指数原始点位并交给独立坐标轴展示。 */
 const intradayIndexComparison = computed<{ name: string; values: Array<number | null> } | null>(() => {
   if (!intradayShowIndex.value) return null;
   const data = filterIntradayData(intradayData.value ?? []);
@@ -121,12 +121,8 @@ const intradayIndexComparison = computed<{ name: string; values: Array<number | 
     }
     return null;
   });
-  const base = prices.find((price) => price !== null);
-  if (base === undefined || base === null || base === 0) return null;
-  return {
-    name: name === "" ? "市场指数" : name,
-    values: prices.map((price) => price === null ? null : Number(((price - base) / base * 100).toFixed(2)))
-  };
+  if (prices.every((price) => price === null)) return null;
+  return { name: name === "" ? "市场指数" : name, values: prices };
 });
 
 function parseClockMinutes(value: string): number {

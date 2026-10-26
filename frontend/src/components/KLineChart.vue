@@ -269,23 +269,25 @@ function render(): void {
   let legendData: string[] = [];
   let priceDiffSeries: any[] = [];
   const comparison = props.comparison;
+  const showPercentAxis = isIntraday && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined;
+  // 指数使用独立的右侧坐标轴（指数点位与股价量级不同），价差%轴存在时顺延一位。
+  const comparisonAxisIndex = showPercentAxis ? 3 : 2;
   const comparisonSeries: any[] = comparison === null
     ? []
     : [{
         type: "line" as const,
         name: comparison.name,
         data: comparison.values,
-        yAxisIndex: 2,
+        yAxisIndex: comparisonAxisIndex,
         showSymbol: false,
         smooth: false,
         connectNulls: true,
         lineStyle: { color: "#b58cf0", width: 1.4 },
         itemStyle: { color: "#b58cf0" },
-        label: { show: false },
-        tooltip: { valueFormatter: (value: unknown) => typeof value === "number" ? `${value}%` : String(value ?? "-") }
+        label: { show: false }
       }];
-  const showPercentAxis = comparisonSeries.length > 0
-    || (isIntraday && props.showPriceDiff && props.averagePrice !== null && props.averagePrice !== undefined);
+  const rightAxisCount = (showPercentAxis ? 1 : 0) + (comparison === null ? 0 : 1);
+  const gridRight = rightAxisCount === 0 ? 18 : rightAxisCount === 1 ? 62 : 118;
 
   if (isIntraday) {
     if (chartType === "line") {
@@ -422,7 +424,7 @@ function render(): void {
     },
     axisPointer: { link: [{ xAxisIndex: "all" }], lineStyle: { color: "#65d7ca" } },
     grid: [
-      { left: 48, right: showPercentAxis ? 56 : 18, top: props.title === "" ? 18 : 44, height: "52%" },
+      { left: 48, right: gridRight, top: props.title === "" ? 18 : 44, height: "52%" },
       { left: 48, right: 18, top: "70%", height: "17%" }
     ],
     xAxis: [
@@ -436,10 +438,25 @@ function render(): void {
         ? [{
             scale: true,
             position: "right",
+            offset: 0,
             axisLabel: { color: props.priceDiffColor, formatter: "{value}%" },
             splitLine: { show: false }
           }]
-        : [])
+        : []),
+      ...(comparison === null
+        ? []
+        : [{
+            scale: true,
+            position: "right",
+            offset: showPercentAxis ? 56 : 0,
+            name: comparison.name,
+            nameRotate: 0,
+            nameLocation: "end",
+            nameGap: 6,
+            nameTextStyle: { color: "#b58cf0", fontSize: 10, fontWeight: 600, align: "left" },
+            axisLabel: { color: "#b58cf0" },
+            splitLine: { show: false }
+          }])
     ],
     series: [
       ...mainSeries,
