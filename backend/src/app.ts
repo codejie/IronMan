@@ -1702,6 +1702,14 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
                   source: sourceSchema,
                   date: z.string(),
                   points: z.array(minutePointSchema),
+                  dayPoints: z
+                    .array(
+                      z.object({
+                        date: z.string(),
+                        points: z.array(minutePointSchema),
+                      })
+                    )
+                    .optional(),
                   benchmark: z
                     .object({
                       code: z.string(),

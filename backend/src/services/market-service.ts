@@ -2,7 +2,7 @@ import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
 import { EastmoneyMarketProvider } from "../market/eastmoney-provider";
 import { AkShareMarketProvider } from "../market/akshare-provider";
-import { TencentMarketProvider, type IntradayMinuteProvider, type IntradayMinuteResult } from "../market/tencent-provider";
+import { TencentMarketProvider, type IntradayMinutePoint, type IntradayMinuteProvider, type IntradayMinuteResult } from "../market/tencent-provider";
 import type {
   AssetType,
   DataSourceConfig,
@@ -219,7 +219,7 @@ export class MarketService {
    *
    * 行为：
    * - `date` 给定：只拉这一天
-   * - `date` 缺省 且 `recentDays > 1`：按用户交易日日历回看 `recentDays` 个交易日，取最早一天
+   * - `date` 缺省 且 `recentDays > 1`：按用户交易日日历回看 N 个交易日，拼接这些交易日的分钟点（按时间升序），benchmark 取最近一天
    * - `date` 缺省 且 `recentDays === 1`（默认）：拉当天
    */
   async getIntradayMinute(
@@ -227,7 +227,7 @@ export class MarketService {
     instrumentId: string,
     date?: string,
     recentDays = 1
-  ): Promise<IntradayMinuteResult & { source: MarketSource; benchmark: IntradayBenchmark | null }> {
+  ): Promise<IntradayMinuteResult & { source: MarketSource; benchmark: IntradayBenchmark | null; dayPoints?: Array<{ date: string; points: IntradayMinutePoint[] }> }> {
     const instrument = this.getInstrument(instrumentId);
     const config = this.getDataSourceConfig(userId);
     const candidates = [...new Set([config.primary, config.fallback])];
@@ -237,6 +237,8 @@ export class MarketService {
       : recentDays > 1
         ? this.recentTradingDays(userId, recentDays)
         : [undefined];
+    const concatenated = await this.fetchMinuteWithConcatenation(candidates, instrument, targetDates, targetDates.length > 1);
+    if (concatenated !== null) return { source: concatenated.source, date: concatenated.date, points: concatenated.points, benchmark: concatenated.benchmark, dayPoints: concatenated.dayPoints };
     for (const targetDate of targetDates) {
       for (const source of candidates) {
         const provider = this.providers.get(source);
@@ -256,6 +258,63 @@ export class MarketService {
       }
     }
     throw lastError !== undefined ? errors.external("分时数据源暂不可用") : errors.validation("请求日期无交易数据");
+  }
+
+  /** 当 targetDates 跨多个交易日时，并发拉取各天分钟点并按时间升序拼接；单天时返回 null 交由调用方处理。 */
+  private async fetchMinuteWithConcatenation(
+    candidates: MarketSource[],
+    instrument: Instrument,
+    targetDates: Array<string | undefined>,
+    enable: boolean
+  ): Promise<{ source: MarketSource; date: string; points: IntradayMinutePoint[]; benchmark: IntradayBenchmark | null; dayPoints?: Array<{ date: string; points: IntradayMinutePoint[] }> } | null> {
+    if (!enable) return null;
+    const providers = candidates
+      .map((source) => this.providers.get(source))
+      .filter((provider) => provider !== undefined && "intradayMinute" in provider) as Array<MarketDataProvider & IntradayMinuteProvider>;
+    if (providers.length === 0) return null;
+    // 每个候选日期取第一个能正常返回的 provider（含降级）；全部日期并发
+    const results = await Promise.all(
+      targetDates.map(async (targetDate) => {
+        let lastError: unknown = undefined;
+        for (const source of candidates) {
+          const provider = this.providers.get(source);
+          if (provider === undefined || !("intradayMinute" in provider)) continue;
+          const minuteProvider = provider as MarketDataProvider & IntradayMinuteProvider;
+          try {
+            const result = await minuteProvider.intradayMinute(instrument, targetDate);
+            return { source, result, minuteProvider };
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        return { source: candidates[0]!, result: null as IntradayMinuteResult | null, minuteProvider: null, lastError };
+      })
+    );
+    const okResults = results.filter((item) => item.result !== null);
+    if (okResults.length === 0) return null;
+    // 逐日分组（升序），再拼成按分钟时间升序的全量点；取最近一天（最大 date）的 benchmark
+    const dayPoints = okResults
+      .map((item) => ({ date: item.result!.date, points: item.result!.points }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    const allPoints: IntradayMinutePoint[] = [];
+    let source = okResults[0]!.source;
+    let latestDate = "";
+    for (const day of dayPoints) {
+      allPoints.push(...day.points);
+    }
+    for (const item of okResults) {
+      if (item.result !== null && item.result.date >= latestDate) {
+        latestDate = item.result.date;
+        source = item.source;
+      }
+    }
+    allPoints.sort((a, b) => a.time.localeCompare(b.time));
+    const latestDay = dayPoints.find((day) => day.date === latestDate) ?? dayPoints[dayPoints.length - 1]!;
+    const benchmarkProvider = okResults.find((item) => item.result !== null && item.result.date === latestDate)?.minuteProvider ?? okResults[0]!.minuteProvider;
+    const benchmark = benchmarkProvider !== null
+      ? await this.getIntradayBenchmark(benchmarkProvider, instrument, latestDay.date)
+      : null;
+    return { source, date: latestDate, points: allPoints, benchmark, dayPoints };
   }
 
   /** 按用户交易日日历回看最近 N 个交易日（含节假日缓冲），倒序返回。 */

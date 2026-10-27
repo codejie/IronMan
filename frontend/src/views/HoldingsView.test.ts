@@ -275,12 +275,11 @@ describe("HoldingsView", () => {
     await flushPromises();
     await wrapper.vm.$nextTick();
 
+    // 实时源现在通过 recentDays 单次请求拉多天分钟点；date 缺省、recentDays 必带
     expect(mocks.marketMinute).toHaveBeenCalled();
-    const requestedDates = mocks.marketMinute.mock.calls.map((call) => call[2] as string);
-    expect(new Set(requestedDates).size).toBe(requestedDates.length);
-    for (const date of requestedDates) {
-      expect(date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    }
+    const firstCall = mocks.marketMinute.mock.calls[0] as unknown[];
+    expect(firstCall[2]).toBeUndefined();
+    expect(typeof firstCall[3]).toBe("number");
     expect(mocks.marketSnapshotSeries).not.toHaveBeenCalled();
 
     const chart = wrapper.getComponent({ name: "KLineChart" });

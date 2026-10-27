@@ -48,7 +48,7 @@ const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const intradayChartType = ref<"kline" | "line">("line");
 const intradayRange = ref<1 | 2 | 5 | "all">(2);
 const intradayOrigin = ref<"snapshot" | "minute">("snapshot");
-const intradayRealtimeLookbackDays = 5;
+const intradayRealtimeLookbackDays = 15;
 const intradayRealtimeOnly = computed(() => intradayOrigin.value === "minute");
 const intradayShowIndex = ref(false);
 const intradayIndexLoading = ref(false);
@@ -139,55 +139,48 @@ function beijingMinuteOfDay(value: string): number {
 
 function filterIntradayData(data: MarketSnapshotPoint[]): MarketSnapshotPoint[] {
   if (intradayRange.value === "all") return data;
-  const cutoffTime = Date.now() - intradayRange.value * 24 * 60 * 60 * 1000;
-  return data.filter((item) => {
-    const captured = new Date(item.capturedAt).getTime();
-    return Number.isNaN(captured) || captured >= cutoffTime;
-  });
-}
-
-/** 近 N 个日历日的北京时间日期（用于逐个交易日拉取分时，节假日由上游返回空点）。 */
-function recentTradingDateCandidates(days: number): string[] {
-  const dates: string[] = [];
-  for (let offset = 0; offset < days; offset += 1) {
-    const day = new Date(Date.now() - offset * 24 * 60 * 60 * 1000 + 8 * 60 * 60 * 1000);
-    dates.push(day.toISOString().slice(0, 10));
-  }
-  return dates;
+  // 按“交易日”计数而非日历时间：保留最近 N 个交易日的所有分钟点，避免跨周末/节假日时被日历 cutoff 误删
+  const distinctDays = [...new Set(data.map((item) => item.tradeDate))].sort();
+  const keepCount = typeof intradayRange.value === "number" ? intradayRange.value : Number.MAX_SAFE_INTEGER;
+  if (distinctDays.length <= keepCount) return data;
+  const keep = new Set(distinctDays.slice(-keepCount));
+  return data.filter((item) => keep.has(item.tradeDate));
 }
 
 /** 拉取近端分钟线并映射为与快照一致的点位结构，供现有图表复用。
- *  通过 recentDays 参数一次性拉取近 N 个交易日的分钟点，避免前端并发多请求。 */
+ *  单次请求带上 recentDays，后端按交易日回看并拼接多日分钟点，避免前端并发多请求。 */
 async function loadRealtimeMinutePoints(
   accessToken: string,
   instrumentId: string
 ): Promise<{ points: MarketSnapshotPoint[]; indexes: Map<string, IntradayIndexSeries> }> {
-  const responses = await Promise.all(
-    recentTradingDateCandidates(intradayRealtimeLookbackDays).map((date) =>
-      api.marketMinute(accessToken, instrumentId, date, intradayRealtimeLookbackDays).catch(() => null),
-    ),
-  );
+  const response = await api.marketMinute(accessToken, instrumentId, undefined, intradayRealtimeLookbackDays).catch(() => null);
   const points = new Map<string, MarketSnapshotPoint>();
   const indexes = new Map<string, IntradayIndexSeries>();
-  for (const response of responses) {
-    if (response === null) continue;
+  if (response !== null) {
     if (response.benchmark !== null && response.benchmark !== undefined) {
       indexes.set(response.date, { name: response.benchmark.name, points: response.benchmark.points });
     }
-    for (const point of response.points) {
-      const capturedAt = `${response.date}T${point.time}:00+08:00`;
-      if (points.has(capturedAt)) continue;
-      points.set(capturedAt, {
-        capturedAt,
-        tradeDate: response.date,
-        source: response.source,
-        captureMode: "auto",
-        open: point.price,
-        close: point.price,
-        high: point.price,
-        low: point.price,
-        volume: point.volume,
-      });
+    // 多日请求后端返回逐日分组（dayPoints），按各自的 tradeDate 归位；单日请求退化为 points+date
+    const days: Array<{ date: string; points: Array<{ time: string; price: number; volume: number; cumulativeAmount: number }> }> =
+      response.dayPoints !== undefined
+        ? response.dayPoints
+        : [{ date: response.date, points: response.points }];
+    for (const day of days) {
+      for (const point of day.points) {
+        const capturedAt = `${day.date}T${point.time}:00+08:00`;
+        if (points.has(capturedAt)) continue;
+        points.set(capturedAt, {
+          capturedAt,
+          tradeDate: day.date,
+          source: response.source,
+          captureMode: "auto",
+          open: point.price,
+          close: point.price,
+          high: point.price,
+          low: point.price,
+          volume: point.volume,
+        });
+      }
     }
   }
   return {
@@ -447,8 +440,6 @@ async function loadIntradayData(accessToken: string, instrumentId: string): Prom
         if (version !== intradayRequestVersion) return;
         if (realtime.points.length > 0) {
           intradayOrigin.value = "minute";
-          // 实时源只有近 N 个交易日，"all" 选项在此源下不可用，回到 2 天避免用户误操作
-          if (intradayRange.value === "all") intradayRange.value = 2;
           intradayIndexSeries.value = new Map(realtime.indexes);
           intradayFullDataCache.value.set(instrumentId, realtime.points);
           intradayData.value = filterIntradayData(realtime.points);
