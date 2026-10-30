@@ -83,6 +83,7 @@ export function operationsToKlineAnnotations(
         price: null,
         direction,
         level,
+        seriesName: "操作",
         title: titles.length > 12 ? `${titles.slice(0, 12)}…` : titles,
         reason: details,
         color: hasSell ? SELL_COLOR : hasBuy ? BUY_COLOR : INTEREST_COLOR,

@@ -18,6 +18,8 @@ export interface KlineOverlay {
 
 export interface KlineAnnotation {
   indicatorId?: string;
+  /** 标注所属分类的展示名（tooltip 分组标题）。缺省时显示「趋势拐点」。 */
+  seriesName?: string;
   date: string;
   price: number | null;
   direction: "bullish" | "bearish";
@@ -61,6 +63,7 @@ export interface KlineAnnotationLabel {
   level: KlineAnnotation["level"];
   reason: string;
   color: string;
+  seriesName?: string;
   axisLabel: string;
   price: number;
   position: number;
@@ -107,6 +110,7 @@ export function buildKlineAnnotationLabels(
       level: annotation.level,
       reason: annotation.reason,
       color: annotation.color,
+      seriesName: annotation.seriesName,
       axisLabel: point.label,
       price: annotation.price ?? point.close,
       position,

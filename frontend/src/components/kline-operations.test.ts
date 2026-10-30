@@ -58,6 +58,11 @@ describe("operationsToKlineAnnotations", () => {
     expect(result[0]!.color).toBe("#ffbd4b");
   });
 
+  test("marks operation annotations with the 操作 series name", () => {
+    const result = operationsToKlineAnnotations([operation({ action: "buy" })], "2026-03-01", "2026-03-31");
+    expect(result[0]!.seriesName).toBe("操作");
+  });
+
   test("merges same-day operations into one annotation with combined title", () => {
     const operations = [
       operation({ id: "op-1", action: "buy", quantity: 100, price: 10, occurredAt: "2026-03-10T09:30:00.000Z" }),

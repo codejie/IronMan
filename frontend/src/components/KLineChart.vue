@@ -19,6 +19,10 @@ import {
   type KlineSubchart
 } from "./kline-analysis";
 
+function annotationKeyOf(annotation: KlineAnnotation, index: number): string {
+  return `${annotation.date}:${annotation.direction}:${annotation.title}:${index}`;
+}
+
 const props = withDefaults(
   defineProps<{
     bars: PriceBar[];
@@ -91,6 +95,22 @@ const activeTurningPointTooltips = computed(() => {
   });
 });
 
+const activeAnnotationGroupNames = computed<Set<string>>(() => {
+  const names = new Set<string>();
+  for (const key of activeAnnotationKeys.value) {
+    const annotation = annotationLabels.value.find((item) => item.key === key);
+    if (annotation === undefined) continue;
+    names.add(annotation.seriesName ?? "趋势拐点");
+  }
+  return names;
+});
+
+const activeAnnotationGroupTitle = computed(() => {
+  const names = [...activeAnnotationGroupNames.value];
+  if (names.length === 1) return names[0]!;
+  return names.length > 1 ? `${names.length} 类标注` : "";
+});
+
 function annotationLabelStyle(annotation: KlineAnnotationLabel): Record<string, string> {
   const position = annotationPositions.value[annotation.key];
   if (position === undefined) return { display: "none" };
@@ -112,6 +132,11 @@ function annotationLabelClass(annotation: KlineAnnotationLabel): Array<string | 
 }
 
 function annotationDirectionLabel(annotation: KlineAnnotationLabel): string {
+  if (annotation.seriesName === "操作") {
+    if (annotation.title.includes("卖出")) return "卖出操作";
+    if (annotation.title.includes("计息")) return "计息操作";
+    return "买入操作";
+  }
   if (annotation.direction === "bullish") return "多头拐点";
   return annotation.level === "risk" || annotation.level === "warning" ? "风险拐点" : "空头拐点";
 }
@@ -151,9 +176,11 @@ function updateAnnotationPositions(): void {
 }
 
 function annotationKeyFromEvent(event: { seriesName?: string; data?: unknown }): string | null {
-  if (event.seriesName !== "趋势拐点" || typeof event.data !== "object" || event.data === null) return null;
+  if (typeof event.data !== "object" || event.data === null || event.data === undefined) return null;
   const key = (event.data as { annotationKey?: unknown }).annotationKey;
-  return typeof key === "string" ? key : null;
+  if (typeof key !== "string") return null;
+  // 数据项带 annotationKey 即视为标注散点（系列名随分组而变，不再写死「趋势拐点」）
+  return key;
 }
 
 function setActiveAnnotationKeys(keys: string[]): void {
@@ -182,6 +209,11 @@ function handleAxisPointer(event: unknown): void {
 
 function clearActiveAnnotations(): void {
   setActiveAnnotationKeys([]);
+}
+
+/** 标注所属系列名：操作记录显示「操作」，趋势拐点保持「趋势拐点」。 */
+function annotationSeriesName(annotation: KlineAnnotation): string {
+  return annotation.seriesName ?? "趋势拐点";
 }
 
 function render(): void {
@@ -254,25 +286,32 @@ function render(): void {
     props.annotations,
     props.bars.map((bar, index) => ({ date: bar.date, label: labels[index]!, close: bar.close }))
   );
-  const turningPointSeries = annotationVisuals.length === 0 ? [] : [{
-    type: "scatter" as const,
-    name: "趋势拐点",
-    xAxisIndex: 0,
-    yAxisIndex: priceAxisIndex,
-    z: 30,
-    tooltip: { show: false },
-    data: annotationVisuals.map(({ key, marker }) => ({
-      name: marker.name,
-      annotationKey: key,
-      value: marker.coord,
-      symbol: marker.symbol,
-      symbolRotate: marker.symbolRotate,
-      symbolSize: marker.symbolSize,
-      symbolOffset: marker.symbolOffset,
-      itemStyle: marker.itemStyle,
-      label: marker.label
-    }))
-  }];
+  const turningPointSeries: Array<{ name: string; data: unknown[] }> =
+    annotationVisuals.length === 0 ? [] : ((): Array<{ name: string; data: unknown[] }> => {
+      const seriesByGroup = new Map<string, unknown[]>();
+      for (const { key, marker } of annotationVisuals) {
+        const annotation = props.annotations.find((item, index) => annotationKeyOf(item, index) === key);
+        const group = annotation?.seriesName ?? "趋势拐点";
+        const bucket = seriesByGroup.get(group);
+        const entry = {
+          name: marker.name,
+          annotationKey: key,
+          value: marker.coord,
+          symbol: marker.symbol,
+          symbolRotate: marker.symbolRotate,
+          symbolSize: marker.symbolSize,
+          symbolOffset: marker.symbolOffset,
+          itemStyle: marker.itemStyle,
+          label: marker.label
+        };
+        if (bucket === undefined) seriesByGroup.set(group, [entry]);
+        else bucket.push(entry);
+      }
+      return [...seriesByGroup.entries()].map(([name, data]) => ({
+        name,
+        data
+      }));
+    })();
 
   // Build main chart series based on mode
   let mainSeries: any[] = [];
@@ -475,7 +514,15 @@ function render(): void {
       ...maSeries,
       ...mainOverlaySeries,
       ...secondarySeries,
-      ...turningPointSeries,
+      ...turningPointSeries.map((series) => ({
+        type: "scatter" as const,
+        name: series.name,
+        xAxisIndex: 0,
+        yAxisIndex: priceAxisIndex,
+        z: 30,
+        tooltip: { show: false },
+        data: series.data
+      })),
       ...priceDiffSeries,
       ...comparisonSeries
     ]
@@ -522,7 +569,7 @@ onBeforeUnmount(() => {
         />
       </svg>
       <aside v-if="activeTurningPointTooltips.length > 0" class="kline-turning-point-tooltip">
-        <strong>趋势拐点</strong>
+        <strong>{{ activeAnnotationGroupTitle || "趋势拐点" }}</strong>
         <div v-for="annotation in activeTurningPointTooltips" :key="annotation.key">
           <i :style="{ backgroundColor: annotation.color }" />
           <b>{{ annotation.title }}</b>
