@@ -473,6 +473,28 @@ export class AssetsService {
     return { summary: workspace.summary, active, closed };
   }
 
+  listHoldingOperationsByInstrument(userId: string, instrumentId: string): Array<HoldingOperation & { holdingId: string }> {
+    const rows = this.database.all<TransactionRow & { holding_id: string }>(
+      `SELECT t.id, t.holding_id AS holding_id, t.action, t.quantity, t.price, t.fee, t.note, t.occurred_at
+          FROM holding_transactions t
+          JOIN holdings h ON h.id = t.holding_id
+         WHERE t.user_id = $userId
+           AND h.instrument_id = $instrumentId
+           AND h.user_id = $userId
+         ORDER BY t.occurred_at ASC, t.created_at ASC`,
+      { userId, instrumentId }
+    );
+    const seen = new Set<string>();
+    const items: Array<HoldingOperation & { holdingId: string }> = [];
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      const holdingId = (row as TransactionRow & { holding_id: string }).holding_id;
+      items.push({ ...this.toHoldingOperation(row), holdingId });
+    }
+    return items;
+  }
+
   getHoldingDetail(userId: string, id: string): { holding: HoldingSummary; transactions: HoldingOperation[] } {
     return {
       holding: this.getHoldingSummary(userId, id),

@@ -529,6 +529,85 @@ describe("market data and asset workspace", () => {
     expect(updateBody.result).toMatchObject({ targetPrice: 45, note: "等待突破" });
   });
 
+  test("lists holding operations for an instrument across active and closed holdings", async () => {
+    const admin = await register("admin@example.com");
+    const alice = await register("alice@example.com");
+    const bob = await register("bob@example.com");
+    const instrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600010", exchange: "sh", name: "包钢股份", assetType: "stock" },
+      admin.token
+    );
+    const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
+    await post("/api/assets/cash/adjust", { amount: 100000, note: "本金" }, alice.token);
+    const holdingResponse = await post(
+      "/api/assets/holdings/create",
+      { instrumentId: instrument.result.id, quantity: 100, price: 10, fee: 1, occurredAt: "2026-01-05T00:00:00.000Z" },
+      alice.token
+    );
+    const holding = (await holdingResponse.json()) as ApiResponse<{ id: string }>;
+    const sell = await post(
+      "/api/assets/holdings/transaction",
+      { holdingId: holding.result.id, action: "sell", quantity: 100, price: 12, fee: 1, occurredAt: "2026-01-20T00:00:00.000Z" },
+      alice.token
+    );
+    expect(sell.status).toBe(201);
+
+    const list = await post("/api/assets/holdings/operations", { instrumentId: instrument.result.id }, alice.token);
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as ApiResponse<{ items: Array<{
+      id: string;
+      action: "buy" | "sell" | "interest";
+      quantity: number;
+      price: number;
+      fee: number;
+      cashImpact: number;
+      occurredAt: string;
+      note: string;
+      holdingId: string;
+    }>}>;
+    expect(body.result.items).toHaveLength(2);
+    const buy = body.result.items.find((item) => item.action === "buy")!;
+    const sold = body.result.items.find((item) => item.action === "sell")!;
+    expect(buy.occurredAt).toBe("2026-01-05T00:00:00.000Z");
+    expect(buy.holdingId).toBe(holding.result.id);
+    expect(sold.occurredAt).toBe("2026-01-20T00:00:00.000Z");
+
+    // 另一用户看不到任何该标的的操作记录（用户隔离）
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, bob.token);
+    const foreignList = await post("/api/assets/holdings/operations", { instrumentId: instrument.result.id }, bob.token);
+    expect(((await foreignList.json()) as ApiResponse<{ items: unknown[] }>).result.items).toHaveLength(0);
+  });
+
+  test("isolates holding operations from other instruments on the same endpoint", async () => {
+    const admin = await register("admin@example.com");
+    const alice = await register("alice@example.com");
+    const firstInstrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600010", exchange: "sh", name: "包钢股份", assetType: "stock" },
+      admin.token
+    );
+    const secondInstrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600011", exchange: "sh", name: "华能国际", assetType: "stock" },
+      admin.token
+    );
+    const firstInstrument = (await firstInstrumentResponse.json()) as ApiResponse<{ id: string }>;
+    const secondInstrument = (await secondInstrumentResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
+    await post("/api/assets/cash/adjust", { amount: 100000, note: "本金" }, alice.token);
+    const holdingResponse = await post(
+      "/api/assets/holdings/create",
+      { instrumentId: secondInstrument.result.id, quantity: 100, price: 8, fee: 0, occurredAt: "2026-02-01T00:00:00.000Z" },
+      alice.token
+    );
+    expect(holdingResponse.status).toBe(201);
+
+    const list = await post("/api/assets/holdings/operations", { instrumentId: firstInstrument.result.id }, alice.token);
+    expect(((await list.json()) as ApiResponse<{ items: unknown[] }>).result.items).toHaveLength(0);
+  });
+
   test("builds a Batman-style holding workspace with display ratios and price deltas", async () => {
     const admin = await register("admin@example.com");
     const alice = await register("alice@example.com");

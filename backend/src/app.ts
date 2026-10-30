@@ -2710,6 +2710,51 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
       ),
   );
 
+   app.openapi(
+     createRoute({
+       method: "post",
+       path: "/api/assets/holdings/operations",
+       middleware: [authenticated(auth)],
+       request: {
+         body: jsonBody(
+           z.object({
+             instrumentId: z.string().uuid(),
+           }),
+         ),
+       },
+       responses: {
+         200: {
+           description: "All holding operations for an instrument, across active and closed holdings",
+           content: {
+             "application/json": {
+               schema: responseSchema(
+                 z.object({
+                   items: z.array(
+                     holdingOperationSchema.extend({
+                       holdingId: z.string().uuid(),
+                     }),
+                   ),
+                 }),
+               ),
+             },
+           },
+         },
+       },
+     }),
+     (context) =>
+       context.json(
+         success(
+           {
+             items: assets.listHoldingOperationsByInstrument(
+               context.get("currentUser").id,
+               context.req.valid("json").instrumentId,
+             ),
+           },
+         ),
+         200,
+       ),
+   );
+
   app.openapi(
     createRoute({
       method: "post",

@@ -17,6 +17,10 @@ import {
   type KlineRange,
   type KlineSubchart
 } from "./kline-analysis";
+import {
+  operationsToKlineAnnotations,
+  type HoldingOperationWithHolding
+} from "./kline-operations";
 import { instrumentKlineTitle, type InstrumentKlineTarget } from "@/views/instrument-kline-presentation";
 
 const props = defineProps<{
@@ -35,10 +39,38 @@ const maPeriods = ref<number[]>(initialPreferences.maPeriods);
 const subchart = ref<KlineSubchart>(initialPreferences.subchart);
 const bars = ref<PriceBar[]>([]);
 const macdLines = ref<Record<string, Array<number | null>> | null>(null);
+const operations = ref<HoldingOperationWithHolding[]>([]);
 const isLoading = ref(false);
 const errorMessage = ref("");
 let requestVersion = 0;
 const hasBars = computed(() => bars.value.length > 0);
+
+/** 操作记录映射为 K 线标注（与外部传入的 annotations 合并，按日期去重）。 */
+const klineAnnotations = computed<KlineAnnotation[]>(() => {
+  if (bars.value.length === 0 || operations.value.length === 0) return props.annotations ?? [];
+  const fromDate = formatDate(bars.value[0]!.date);
+  const toDate = formatDate(bars.value[bars.value.length - 1]!.date);
+  const operationAnnotations = operationsToKlineAnnotations(operations.value, fromDate, toDate);
+  // 合并外部 annotations（趋势拐点等）与操作记录标注
+  const external = props.annotations ?? [];
+  const operationDates = new Set(operationAnnotations.map((annotation) => annotation.date));
+  const merged = [...operationAnnotations, ...external.filter((annotation) => !operationDates.has(annotation.date))];
+  return merged;
+});
+
+async function loadOperations(instrumentId: string, accessToken: string): Promise<void> {
+  try {
+    const response = await api.addHoldingOperations(accessToken, instrumentId);
+    operations.value = response.items;
+  } catch {
+    // 操作记录加载失败不影响 K 线展示，静默忽略
+    operations.value = [];
+  }
+}
+
+function formatDate(value: unknown): string {
+  return String(value ?? "").slice(0, 10);
+}
 
 async function loadChart(): Promise<void> {
   const instrument = props.instrument;
@@ -49,6 +81,8 @@ async function loadChart(): Promise<void> {
   errorMessage.value = "";
 
   try {
+    // 并行加载操作记录（不阻塞 K 线加载）
+    void loadOperations(instrument.id, accessToken);
     if (props.barsOverride !== undefined && props.barsOverride !== null) {
       bars.value = props.barsOverride;
       macdLines.value = props.indicatorResults?.find((result) => result.indicatorId === "MACD")?.lines ?? null;
@@ -103,6 +137,7 @@ watch(
     requestVersion += 1;
     bars.value = [];
     macdLines.value = null;
+    operations.value = [];
     errorMessage.value = "";
     if (id !== undefined) void loadChart();
   },
@@ -136,7 +171,7 @@ onBeforeUnmount(() => { requestVersion += 1; });
       <p v-if="isLoading && !hasBars" class="batman-selected">正在加载 K 线行情...</p>
       <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
       <p v-else-if="!isLoading && !hasBars" class="batman-selected">暂无可展示的 K 线行情</p>
-      <KLineChart v-if="hasBars" :annotations="annotations" :bars="bars" height="min(62vh, 520px)" :macd-lines="macdLines" :ma-periods="maPeriods" :overlays="overlays" :subchart="subchart" title="" />
+      <KLineChart v-if="hasBars" :annotations="klineAnnotations" :bars="bars" height="min(62vh, 520px)" :macd-lines="macdLines" :ma-periods="maPeriods" :overlays="overlays" :subchart="subchart" title="" />
     </section>
   </div>
 </template>

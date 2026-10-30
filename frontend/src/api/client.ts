@@ -1331,6 +1331,17 @@ export const api = {
       note?: string;
     },
   ) => post<{ id: string }>("/assets/holdings/transaction", input, token),
+  addHoldingOperations: (
+    token: string,
+    instrumentId: string,
+  ) =>
+    post<{
+      items: Array<HoldingOperation & { holdingId: string }>;
+    }>(
+      "/assets/holdings/operations",
+      { instrumentId },
+      token,
+    ),
   deleteHoldingTransaction: (
     token: string,
     holdingId: string,
