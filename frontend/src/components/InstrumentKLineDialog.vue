@@ -45,7 +45,6 @@ const showIndex = ref(false);
 const indexBars = ref<PriceBar[]>([]);
 const indexName = ref("");
 const indexLoading = ref(false);
-const indexError = ref("");
 const isLoading = ref(false);
 const errorMessage = ref("");
 let requestVersion = 0;
@@ -85,12 +84,11 @@ const benchmarkComparison = computed(() => {
 
 async function loadIndex(instrumentId: string, accessToken: string, version: number): Promise<void> {
   indexLoading.value = true;
-  indexError.value = "";
   try {
     const response = await api.benchmarkHistory(accessToken, instrumentId, KLINE_RANGES[range.value].limit);
     if (version !== requestVersion) return;
     if (response.benchmark === null) {
-      indexError.value = "该标的无对应市场指数";
+      // 无对应市场指数：静默忽略，按钮回退显示「所属指数」
       indexBars.value = [];
       indexName.value = "";
       return;
@@ -99,7 +97,7 @@ async function loadIndex(instrumentId: string, accessToken: string, version: num
     indexName.value = response.benchmark.name;
   } catch {
     if (version !== requestVersion) return;
-    indexError.value = "指数数据加载失败";
+    // 指数加载失败不影响 K 线展示，静默忽略
     indexBars.value = [];
     indexName.value = "";
   } finally {
@@ -133,7 +131,6 @@ async function loadChart(): Promise<void> {
   isLoading.value = true;
   indexBars.value = [];
   indexName.value = "";
-  indexError.value = "";
   errorMessage.value = "";
 
   try {
@@ -197,7 +194,6 @@ watch(
     operations.value = [];
     indexBars.value = [];
     indexName.value = "";
-    indexError.value = "";
     errorMessage.value = "";
     if (id !== undefined) void loadChart();
   },
@@ -237,11 +233,8 @@ onBeforeUnmount(() => { requestVersion += 1; });
             type="button"
             @click="toggleIndex"
           >
-            所属指数
+            {{ indexName || '所属指数' }}
           </button>
-          <span v-if="showIndex && indexError" class="kline-index-hint">{{ indexError }}</span>
-          <span v-else-if="showIndex && indexLoading" class="kline-index-hint">指数加载中</span>
-          <span v-else-if="showIndex && indexName" class="kline-index-hint">叠加 {{ indexName }}</span>
         </div>
       </div>
       <p v-if="isLoading && !hasBars" class="batman-selected">正在加载 K 线行情...</p>
@@ -276,6 +269,5 @@ onBeforeUnmount(() => { requestVersion += 1; });
 .kline-index-controls button:focus-visible { outline: 2px solid #57bdb4; outline-offset: 2px; position: relative; z-index: 1; }
 .kline-index-controls button.active { background: #b58cf0; border-color: #9b6fdf; color: #fff; position: relative; z-index: 1; }
 .kline-index-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
-.kline-index-hint { font-size: 11px; color: #91a4bd; }
 @media (max-width: 760px) { .kline-index-controls { margin-left: 0; }.kline-control-group button { min-width: 42px; padding: 4px 6px; } }
 </style>
