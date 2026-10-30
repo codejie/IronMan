@@ -1799,6 +1799,57 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/market/benchmark-history",
+      middleware: [authenticated(auth)],
+      request: {
+        body: jsonBody(
+          z.object({
+            instrumentId: z.string().uuid(),
+            limit: historyLimitSchema,
+          }),
+        ),
+      },
+      responses: {
+        200: {
+          description: "Benchmark index daily K-line for the instrument's exchange",
+          content: {
+            "application/json": {
+              schema: responseSchema(
+                z.object({
+                  benchmark: z
+                    .object({
+                      code: z.string(),
+                      name: z.string(),
+                      bars: z.array(priceBarSchema),
+                    })
+                    .nullable(),
+                }),
+              ),
+            },
+          },
+        },
+      },
+    }),
+    async (context) => {
+      const input = context.req.valid("json");
+      return context.json(
+        success(
+          {
+            benchmark: await market.getBenchmarkHistory(
+              context.get("currentUser").id,
+              input.instrumentId,
+              input.limit,
+            ),
+          },
+        ),
+        200,
+      );
+    },
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/market/snapshots/series",
       middleware: [authenticated(auth)],
       request: {

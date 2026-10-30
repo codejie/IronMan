@@ -1286,6 +1286,16 @@ export const api = {
       {},
       token,
     ),
+  benchmarkHistory: (
+    token: string,
+    instrumentId: string,
+    limit: number,
+  ) =>
+    post<{ benchmark: { code: string; name: string; bars: PriceBar[] } | null }>(
+      "/market/benchmark-history",
+      { instrumentId, limit },
+      token,
+    ),
   holdingWorkspace: (token: string, refresh = false) =>
     post<HoldingWorkspace>("/assets/holdings/workspace", { refresh }, token),
   batmanHoldingWorkspace: (token: string, refresh = false) =>

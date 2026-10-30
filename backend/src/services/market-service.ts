@@ -52,21 +52,31 @@ export interface IntradayBenchmark {
   points: IntradayMinuteResult["points"];
 }
 
-function benchmarkInstrument(instrument: Instrument): Instrument | null {
+export function benchmarkIndexesFor(exchange: Exchange): { code: string; name: string } | null {
+  const index = benchmarkIndexes[exchange];
+  if (index === undefined) return null;
+  return { code: index.code, name: index.name };
+}
+
+export function benchmarkInstrumentFor(instrument: Instrument): Instrument | null {
   const exchange = instrument.assetType === "fund"
     ? instrument.code.startsWith("5") || instrument.code.startsWith("6") ? "sh" : "sz"
     : instrument.exchange;
-  const index = benchmarkIndexes[exchange];
-  if (index === undefined) return null;
+  const meta = benchmarkIndexesFor(exchange);
+  if (meta === null) return null;
   return {
-    id: `benchmark-${exchange}-${index.code}`,
-    code: index.code,
+    id: `benchmark-${exchange}-${meta.code}`,
+    code: meta.code,
     exchange,
-    name: index.name,
+    name: meta.name,
     assetType: "index",
     createdAt: instrument.createdAt,
     updatedAt: instrument.updatedAt
   };
+}
+
+function benchmarkInstrument(instrument: Instrument): Instrument | null {
+  return benchmarkInstrumentFor(instrument);
 }
 
 const defaultConfig: DataSourceConfig = { primary: "eastmoney", fallback: "tencent" };
@@ -211,6 +221,20 @@ export class MarketService {
       }
       throw error;
     }
+  }
+
+  /** 标的市场所属指数的日 K 线（收盘价供 K 线对话框叠加对比）。指数为虚拟标的，直接走数据源拉取，不做本地缓存。 */
+  async getBenchmarkHistory(
+    userId: string,
+    instrumentId: string,
+    limit: number
+  ): Promise<{ code: string; name: string; bars: PriceBar[] } | null> {
+    const instrument = this.getInstrument(instrumentId);
+    const benchmark = benchmarkInstrumentFor(instrument);
+    if (benchmark === null) return null;
+    const config = this.getDataSourceConfig(userId);
+    const result = await this.fetchWithFallback(benchmark, "day", config, limit);
+    return { code: benchmark.code, name: benchmark.name, bars: this.takeRecentBars(result.bars, limit) };
   }
 
   /**

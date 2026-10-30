@@ -659,6 +659,36 @@ describe("market data and asset workspace", () => {
     expect(((await foreignWorkspace.json()) as ApiResponse<{ active: unknown[] }>).result.active).toHaveLength(0);
   });
 
+  test("returns the benchmark index daily K-line for the instrument's exchange", async () => {
+    const admin = await register("admin@example.com");
+    const alice = await register("alice@example.com");
+    const stockResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600010", exchange: "sh", name: "包钢股份", assetType: "stock" },
+      admin.token
+    );
+    const stock = (await stockResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/settings/data-sources/update", { primary: "eastmoney", fallback: "tencent" }, alice.token);
+
+    const result = await post("/api/market/benchmark-history", { instrumentId: stock.result.id, limit: 30 }, alice.token);
+    expect(result.status).toBe(200);
+    const body = (await result.json()) as ApiResponse<{
+      benchmark: { code: string; name: string; bars: Array<{ date: string; close: number }> } | null;
+    }>;
+    expect(body.result.benchmark).not.toBeNull();
+    expect(body.result.benchmark!.code).toBe("000001");
+    expect(body.result.benchmark!.name).toBe("上证指数");
+    // K 线对话框叠加使用收盘价，bars 必须带 close 字段且与 limit 对齐
+    expect(body.result.benchmark!.bars).toHaveLength(30);
+    expect(typeof body.result.benchmark!.bars[0]!.close).toBe("number");
+
+    // 市场指数是公共行情，未配置数据源的用户也走默认数据源配置拉取（与市场数据非用户隔离一致）
+    const bob = await register("bob@example.com");
+    const bobResult = await post("/api/market/benchmark-history", { instrumentId: stock.result.id, limit: 30 }, bob.token);
+    expect(bobResult.status).toBe(200);
+    expect(((await bobResult.json()) as ApiResponse<{ benchmark: { code: string } | null }>).result.benchmark?.code).toBe("000001");
+  });
+
   test("calculates TA-Lib compatible core indicators from normalized history", async () => {
     const admin = await register("admin@example.com");
     const user = await register("user@example.com");

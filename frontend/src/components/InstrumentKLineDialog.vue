@@ -21,6 +21,7 @@ import {
   operationsToKlineAnnotations,
   type HoldingOperationWithHolding
 } from "./kline-operations";
+import { alignBenchmarkClosePrices } from "./kline-benchmark";
 import { instrumentKlineTitle, type InstrumentKlineTarget } from "@/views/instrument-kline-presentation";
 
 const props = defineProps<{
@@ -40,6 +41,11 @@ const subchart = ref<KlineSubchart>(initialPreferences.subchart);
 const bars = ref<PriceBar[]>([]);
 const macdLines = ref<Record<string, Array<number | null>> | null>(null);
 const operations = ref<HoldingOperationWithHolding[]>([]);
+const showIndex = ref(false);
+const indexBars = ref<PriceBar[]>([]);
+const indexName = ref("");
+const indexLoading = ref(false);
+const indexError = ref("");
 const isLoading = ref(false);
 const errorMessage = ref("");
 let requestVersion = 0;
@@ -68,6 +74,53 @@ async function loadOperations(instrumentId: string, accessToken: string): Promis
   }
 }
 
+/** 指数叠加线：收盘价按日期对齐到标的 K 线 bars，交给独立坐标轴展示。 */
+const benchmarkComparison = computed(() => {
+  if (!showIndex.value || indexBars.value.length === 0) return null;
+  return {
+    name: indexName.value === "" ? "所属指数" : indexName.value,
+    values: alignBenchmarkClosePrices(bars.value, indexBars.value)
+  };
+});
+
+async function loadIndex(instrumentId: string, accessToken: string, version: number): Promise<void> {
+  indexLoading.value = true;
+  indexError.value = "";
+  try {
+    const response = await api.benchmarkHistory(accessToken, instrumentId, KLINE_RANGES[range.value].limit);
+    if (version !== requestVersion) return;
+    if (response.benchmark === null) {
+      indexError.value = "该标的无对应市场指数";
+      indexBars.value = [];
+      indexName.value = "";
+      return;
+    }
+    indexBars.value = response.benchmark.bars;
+    indexName.value = response.benchmark.name;
+  } catch {
+    if (version !== requestVersion) return;
+    indexError.value = "指数数据加载失败";
+    indexBars.value = [];
+    indexName.value = "";
+  } finally {
+    if (version === requestVersion) indexLoading.value = false;
+  }
+}
+
+async function toggleIndex(): Promise<void> {
+  if (showIndex.value) {
+    showIndex.value = false;
+    return;
+  }
+  showIndex.value = true;
+  const instrument = props.instrument;
+  const accessToken = token.value;
+  if (instrument === null || accessToken === null) return;
+  if (indexBars.value.length > 0) return;
+  const version = requestVersion;
+  void loadIndex(instrument.id, accessToken, version);
+}
+
 function formatDate(value: unknown): string {
   return String(value ?? "").slice(0, 10);
 }
@@ -78,11 +131,15 @@ async function loadChart(): Promise<void> {
   if (instrument === null || accessToken === null) return;
   const version = ++requestVersion;
   isLoading.value = true;
+  indexBars.value = [];
+  indexName.value = "";
+  indexError.value = "";
   errorMessage.value = "";
 
   try {
-    // 并行加载操作记录（不阻塞 K 线加载）
+    // 并行加载操作记录与所属指数（不阻塞 K 线加载）
     void loadOperations(instrument.id, accessToken);
+    if (showIndex.value) void loadIndex(instrument.id, accessToken, version);
     if (props.barsOverride !== undefined && props.barsOverride !== null) {
       bars.value = props.barsOverride;
       macdLines.value = props.indicatorResults?.find((result) => result.indicatorId === "MACD")?.lines ?? null;
@@ -138,6 +195,9 @@ watch(
     bars.value = [];
     macdLines.value = null;
     operations.value = [];
+    indexBars.value = [];
+    indexName.value = "";
+    indexError.value = "";
     errorMessage.value = "";
     if (id !== undefined) void loadChart();
   },
@@ -163,15 +223,42 @@ onBeforeUnmount(() => { requestVersion += 1; });
         <div class="kline-control-group" aria-label="均线" role="group">
           <button v-for="period in MA_PERIODS" :key="period" :aria-pressed="maPeriods.includes(period)" :class="{ active: maPeriods.includes(period) }" type="button" @click="toggleMa(period)">MA{{ period }}</button>
         </div>
-        <div class="kline-control-group kline-subchart-controls" aria-label="副图" role="group">
+        <div class="kline-control-group" aria-label="副图" role="group">
           <button :aria-pressed="subchart === 'macd'" :class="{ active: subchart === 'macd' }" type="button" @click="selectSubchart('macd')">MACD</button>
           <button :aria-pressed="subchart === 'volume'" :class="{ active: subchart === 'volume' }" type="button" @click="selectSubchart('volume')">成交量</button>
+        </div>
+        <div class="kline-index-controls">
+          <button
+            :aria-pressed="showIndex"
+            :class="{ active: showIndex }"
+            :disabled="indexLoading"
+            :title="showIndex ? `隐藏 ${indexName || '所属指数'} K线对比` : '叠加所属指数 K线对比（收盘价）'"
+            aria-label="叠加所属指数"
+            type="button"
+            @click="toggleIndex"
+          >
+            所属指数
+          </button>
+          <span v-if="showIndex && indexError" class="kline-index-hint">{{ indexError }}</span>
+          <span v-else-if="showIndex && indexLoading" class="kline-index-hint">指数加载中</span>
+          <span v-else-if="showIndex && indexName" class="kline-index-hint">叠加 {{ indexName }}</span>
         </div>
       </div>
       <p v-if="isLoading && !hasBars" class="batman-selected">正在加载 K 线行情...</p>
       <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
       <p v-else-if="!isLoading && !hasBars" class="batman-selected">暂无可展示的 K 线行情</p>
-      <KLineChart v-if="hasBars" :annotations="klineAnnotations" :bars="bars" height="min(62vh, 520px)" :macd-lines="macdLines" :ma-periods="maPeriods" :overlays="overlays" :subchart="subchart" title="" />
+      <KLineChart
+        v-if="hasBars"
+        :annotations="klineAnnotations"
+        :bars="bars"
+        height="min(62vh, 520px)"
+        :macd-lines="macdLines"
+        :ma-periods="maPeriods"
+        :comparison="benchmarkComparison"
+        :overlays="overlays"
+        :subchart="subchart"
+        title=""
+      />
     </section>
   </div>
 </template>
@@ -184,6 +271,11 @@ onBeforeUnmount(() => { requestVersion += 1; });
 .kline-control-group button:first-child { border-radius: 5px 0 0 5px; }.kline-control-group button:last-child { border-radius: 0 5px 5px 0; }
 .kline-control-group button:focus-visible { outline: 2px solid #57bdb4; outline-offset: 2px; position: relative; z-index: 1; }
 .kline-control-group button.active { background: #2673bd; border-color: #4598eb; color: #fff; position: relative; z-index: 1; }
-.kline-subchart-controls { margin-left: auto; }
-@media (max-width: 760px) { .kline-subchart-controls { margin-left: 0; }.kline-control-group button { min-width: 42px; padding: 4px 6px; } }
+.kline-index-controls { align-items: center; display: inline-flex; gap: 6px; margin-left: auto; }
+.kline-index-controls button { background: #162236; border: 1px solid #344963; color: #b9c8d9; cursor: pointer; font-size: 12px; min-width: 44px; padding: 4px 7px; border-radius: 5px; }
+.kline-index-controls button:focus-visible { outline: 2px solid #57bdb4; outline-offset: 2px; position: relative; z-index: 1; }
+.kline-index-controls button.active { background: #b58cf0; border-color: #9b6fdf; color: #fff; position: relative; z-index: 1; }
+.kline-index-controls button:disabled { opacity: 0.5; cursor: not-allowed; }
+.kline-index-hint { font-size: 11px; color: #91a4bd; }
+@media (max-width: 760px) { .kline-index-controls { margin-left: 0; }.kline-control-group button { min-width: 42px; padding: 4px 6px; } }
 </style>
