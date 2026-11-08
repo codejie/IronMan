@@ -783,6 +783,49 @@ export interface AlertSettings {
   quietHours: { start: string; end: string } | null;
 }
 
+export type StopLossStrategy =
+  | "fixed_percentage"
+  | "fixed_amount"
+  | "technical"
+  | "atr";
+
+export type TakeProfitStrategy =
+  | "risk_reward"
+  | "trailing"
+  | "atr_trailing"
+  | "ma_trail"
+  | "scaled";
+
+export interface StopLossSettings {
+  strategy: StopLossStrategy;
+  fixedPercent: number;
+  fixedAmount: number;
+  maPeriod: number;
+  bufferPercent: number;
+  atrPeriod: number;
+  atrMultiplier: number;
+}
+
+export interface TakeProfitSettings {
+  strategy: TakeProfitStrategy;
+  riskRewardRatio: number;
+  trailingPercent: number;
+  atrPeriod: number;
+  atrTrailMultiplier: number;
+  maTrailPeriod: number;
+  scaleStages: Array<{ ratio: number; sellPercent: number }>;
+}
+
+export interface RiskSizingSettings {
+  riskPerTradePercent: number;
+}
+
+export interface StopProfitSettings {
+  stopLoss: StopLossSettings;
+  takeProfit: TakeProfitSettings;
+  risk: RiskSizingSettings;
+}
+
 export interface Note {
   id: string;
   instrumentId: string | null;
@@ -1571,6 +1614,13 @@ export const api = {
     post<AlertSettings>("/automation/alerts/settings/get", {}, token),
   updateAlertSettings: (token: string, input: Partial<AlertSettings>) =>
     post<AlertSettings>("/automation/alerts/settings/update", input, token),
+  getStopProfitSettings: (token: string) =>
+    post<StopProfitSettings>("/settings/stop-profit/get", {}, token),
+  updateStopProfitSettings: (
+    token: string,
+    input: Partial<StopProfitSettings>,
+  ) =>
+    post<StopProfitSettings>("/settings/stop-profit/update", input, token),
   createNote: (
     token: string,
     input: {

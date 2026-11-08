@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   updateDataSourceConfig: vi.fn(),
   getIntradaySource: vi.fn(),
   updateIntradaySource: vi.fn(),
+  getStopProfitSettings: vi.fn(),
+  updateStopProfitSettings: vi.fn(),
   confirm: vi.fn(),
 }));
 
@@ -49,6 +51,8 @@ vi.mock("@/api/client", () => ({
     updateDataSourceConfig: mocks.updateDataSourceConfig,
     getIntradaySource: mocks.getIntradaySource,
     updateIntradaySource: mocks.updateIntradaySource,
+    getStopProfitSettings: mocks.getStopProfitSettings,
+    updateStopProfitSettings: mocks.updateStopProfitSettings,
   },
 }));
 
@@ -86,6 +90,8 @@ describe("SystemConfigurationView", () => {
     mocks.updateDataSourceConfig.mockReset();
     mocks.getIntradaySource.mockReset();
     mocks.updateIntradaySource.mockReset();
+    mocks.getStopProfitSettings.mockReset();
+    mocks.updateStopProfitSettings.mockReset();
     mocks.confirm.mockReset();
     mocks.getDataSourceConfig.mockResolvedValue({ primary: "tencent", fallback: "eastmoney" });
     mocks.updateDataSourceConfig.mockImplementation((_token: string, config: { primary: string; fallback: string }) => Promise.resolve(config));
@@ -211,6 +217,33 @@ describe("SystemConfigurationView", () => {
       maxExternalSourcesPerHolding: 5,
     });
     mocks.confirm.mockResolvedValue(true);
+    mocks.getStopProfitSettings.mockResolvedValue({
+      stopLoss: {
+        strategy: "fixed_percentage",
+        fixedPercent: 5,
+        fixedAmount: 500,
+        maPeriod: 20,
+        bufferPercent: 1,
+        atrPeriod: 14,
+        atrMultiplier: 2,
+      },
+      takeProfit: {
+        strategy: "risk_reward",
+        riskRewardRatio: 3,
+        trailingPercent: 5,
+        atrPeriod: 14,
+        atrTrailMultiplier: 3,
+        maTrailPeriod: 20,
+        scaleStages: [
+          { ratio: 1, sellPercent: 50 },
+          { ratio: 2, sellPercent: 30 },
+        ],
+      },
+      risk: { riskPerTradePercent: 1 },
+    });
+    mocks.updateStopProfitSettings.mockImplementation((_token: string, input: unknown) =>
+      Promise.resolve(input),
+    );
   });
 
   test("shows the intraday data source preference and persists the selection", async () => {
@@ -239,6 +272,41 @@ describe("SystemConfigurationView", () => {
 
     expect(mocks.updateIntradaySource).toHaveBeenCalledWith("test-token", "realtime");
     expect(wrapper.text()).toContain("分时数据源已保存");
+  });
+
+  test("renders the stop-profit section and persists stop-loss and take-profit settings", async () => {
+    const wrapper = mount(SystemConfigurationView);
+    await flushPromises();
+
+    const nav = wrapper
+      .findAll(".system-configuration-nav-item")
+      .find((button) => button.text().includes("损盈规则"));
+    if (nav === undefined) throw new Error("stop-profit section was not rendered");
+    await nav.trigger("click");
+    await flushPromises();
+
+    expect(mocks.getStopProfitSettings).toHaveBeenCalledWith("test-token");
+    expect(wrapper.text()).toContain("损盈规则");
+    expect(wrapper.text()).toContain("止损规则");
+    expect(wrapper.text()).toContain("止盈规则");
+
+    const saveButton = wrapper
+      .findAll("button")
+      .find((button) => button.text().includes("保存损盈规则"));
+    if (saveButton === undefined) throw new Error("stop-profit save button was not rendered");
+    const form = wrapper.find("form[aria-label='损盈规则配置']");
+    if (form.exists()) await form.trigger("submit");
+    else await saveButton.trigger("click");
+    await flushPromises();
+
+    expect(mocks.updateStopProfitSettings).toHaveBeenCalledTimes(1);
+    const savedInput = mocks.updateStopProfitSettings.mock.calls[0]?.[1] as {
+      stopLoss: { strategy: string };
+      takeProfit: { strategy: string };
+    };
+    expect(savedInput.stopLoss.strategy).toBe("fixed_percentage");
+    expect(savedInput.takeProfit.strategy).toBe("risk_reward");
+    expect(wrapper.text()).toContain("损盈规则已保存");
   });
 
   test("stops offering the retired local mock data source and saves only real sources", async () => {

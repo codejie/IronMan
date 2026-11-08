@@ -43,6 +43,8 @@ import {
 } from "./services/market-snapshot-service";
 import { NoteService } from "./services/note-service";
 import { SettingsService } from "./services/settings-service";
+import { StopProfitSettingsService } from "./services/stop-profit-service";
+import type { StopProfitSettings } from "./services/stop-profit-settings";
 import { StrategyService } from "./services/strategy-service";
 import {
   TrendIndicatorService,
@@ -396,6 +398,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const scheduler = new AutomationScheduler(automation);
   const notes = new NoteService(database, market);
   const backup = new BackupService(database);
+  const stopProfit = new StopProfitSettingsService(database);
   const app = new OpenAPIHono<{ Variables: AppVariables }>();
   const allowedOrigins = new Set(
     (
@@ -4450,6 +4453,92 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
           automation.updateAlertSettings(
             context.get("currentUser").id,
             context.req.valid("json"),
+          ),
+        ),
+        200,
+      ),
+  );
+
+  const stopLossStrategySchema = z.enum(["fixed_percentage", "fixed_amount", "technical", "atr"]);
+  const takeProfitStrategySchema = z.enum(["risk_reward", "trailing", "atr_trailing", "ma_trail", "scaled"]);
+  const stopLossSchema = z.object({
+    strategy: stopLossStrategySchema,
+    fixedPercent: z.number().min(0.1).max(90),
+    fixedAmount: z.number().min(1).max(1_000_000_000),
+    maPeriod: z.number().int().min(2).max(500),
+    bufferPercent: z.number().min(0).max(30),
+    atrPeriod: z.number().int().min(2).max(500),
+    atrMultiplier: z.number().min(0.1).max(20),
+  });
+  const scaleStageSchema = z.object({
+    ratio: z.number().min(0.1).max(50),
+    sellPercent: z.number().min(1).max(100),
+  });
+  const takeProfitSchema = z.object({
+    strategy: takeProfitStrategySchema,
+    riskRewardRatio: z.number().min(0.1).max(50),
+    trailingPercent: z.number().min(0.1).max(90),
+    atrPeriod: z.number().int().min(2).max(500),
+    atrTrailMultiplier: z.number().min(0.1).max(20),
+    maTrailPeriod: z.number().int().min(2).max(500),
+    scaleStages: z.array(scaleStageSchema).min(1).max(8),
+  });
+  const stopProfitSchema = z.object({
+    stopLoss: stopLossSchema,
+    takeProfit: takeProfitSchema,
+    risk: z.object({ riskPerTradePercent: z.number().min(0.1).max(50) }),
+  });
+  const stopProfitUpdateSchema = z.object({
+    stopLoss: stopLossSchema.partial().optional(),
+    takeProfit: takeProfitSchema.partial().optional(),
+    risk: z.object({ riskPerTradePercent: z.number().min(0.1).max(50) }).partial().optional(),
+  });
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/stop-profit/get",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(emptyBodySchema) },
+      responses: {
+        200: {
+          description: "Stop-loss / take-profit strategy settings",
+          content: {
+            "application/json": { schema: responseSchema(stopProfitSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          stopProfit.get(context.get("currentUser").id) satisfies StopProfitSettings,
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
+      path: "/api/settings/stop-profit/update",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(stopProfitUpdateSchema) },
+      responses: {
+        200: {
+          description: "Updated stop-loss / take-profit settings",
+          content: {
+            "application/json": { schema: responseSchema(stopProfitSchema) },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          stopProfit.update(
+            context.get("currentUser").id,
+            context.req.valid("json") as Partial<import("./services/stop-profit-settings").StopProfitSettings>,
           ),
         ),
         200,

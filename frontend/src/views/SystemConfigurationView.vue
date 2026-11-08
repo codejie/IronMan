@@ -15,6 +15,7 @@ import {
   Eraser,
   FileUp,
   LineChart,
+  Percent,
   RefreshCw,
   RotateCcw,
   ScanSearch,
@@ -22,6 +23,7 @@ import {
   ServerCog,
   Settings2,
   ShieldAlert,
+  Target,
   Trash2,
   Upload,
   X,
@@ -44,6 +46,7 @@ import {
   type MarketSnapshotSettings,
   type MarketSnapshotStatus,
   type MarketSource,
+  type StopProfitSettings,
   type TradingCalendar,
   type UserExport,
 } from "@/api/client";
@@ -51,7 +54,7 @@ import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
 import { formatDateTime } from "@/utils/date-format";
 
-type SectionId = "backup" | "market" | "diagnosis" | "candidate" | "rules" | "ai" | "maintenance";
+type SectionId = "backup" | "market" | "diagnosis" | "candidate" | "rules" | "ai" | "maintenance" | "stopp";
 type Dialog = "snapshot" | "source" | "calendar" | "ai" | "prompt" | "import" | "clear" | null;
 
 interface SectionItem {
@@ -146,6 +149,30 @@ const candidateSettings = ref<AiCandidateSettings>({
   scheduledTime: "18:30",
   retentionDays: 30,
 });
+const stopProfitSettings = ref<StopProfitSettings>({
+  stopLoss: {
+    strategy: "fixed_percentage",
+    fixedPercent: 5,
+    fixedAmount: 500,
+    maPeriod: 20,
+    bufferPercent: 1,
+    atrPeriod: 14,
+    atrMultiplier: 2,
+  },
+  takeProfit: {
+    strategy: "risk_reward",
+    riskRewardRatio: 3,
+    trailingPercent: 5,
+    atrPeriod: 14,
+    atrTrailMultiplier: 3,
+    maTrailPeriod: 20,
+    scaleStages: [
+      { ratio: 1, sellPercent: 50 },
+      { ratio: 2, sellPercent: 30 },
+    ],
+  },
+  risk: { riskPerTradePercent: 1 },
+});
 
 const sections: SectionItem[] = [
   { id: "backup", label: "数据与备份", icon: DatabaseBackup },
@@ -153,6 +180,7 @@ const sections: SectionItem[] = [
   { id: "diagnosis", label: "持仓诊断", icon: ScanSearch },
   { id: "candidate", label: "AI 候选", icon: ChartNoAxesCombined },
   { id: "rules", label: "规则", icon: Bell },
+  { id: "stopp", label: "损盈规则", icon: ShieldAlert },
   { id: "ai", label: "AI 服务", icon: BrainCircuit },
   { id: "maintenance", label: "维护", icon: ShieldAlert, adminOnly: true },
 ];
@@ -231,7 +259,7 @@ function snapshotStatusLabel(): string {
 }
 
 function isSectionId(value: unknown): value is SectionId {
-  return typeof value === "string" && ["backup", "market", "diagnosis", "candidate", "rules", "ai", "maintenance"].includes(value);
+  return typeof value === "string" && ["backup", "market", "diagnosis", "candidate", "rules", "ai", "maintenance", "stopp"].includes(value);
 }
 
 function fundHistoryStatusLabel(state: FundHistoryState): string {
@@ -330,6 +358,43 @@ async function loadDiagnosisSettings(): Promise<void> {
 async function loadCandidateSettings(): Promise<void> {
   if (token.value === null) return;
   candidateSettings.value = await api.getAiCandidateSettings(token.value);
+}
+
+async function loadStopProfitSettings(): Promise<void> {
+  if (token.value === null) return;
+  stopProfitSettings.value = await api.getStopProfitSettings(token.value);
+}
+
+async function saveStopProfitSettings(): Promise<void> {
+  if (token.value === null || isBusy.value) return;
+  isBusy.value = true;
+  clearFeedback();
+  try {
+    stopProfitSettings.value = await api.updateStopProfitSettings(
+      token.value,
+      stopProfitSettings.value,
+    );
+    notify("success", "损盈规则已保存");
+  } catch (error) {
+    notify("error", message(error, "保存损盈规则失败"));
+  } finally {
+    isBusy.value = false;
+  }
+}
+
+function addStopProfitStage(): void {
+  if (stopProfitSettings.value.takeProfit.scaleStages.length >= 8) return;
+  const last = stopProfitSettings.value.takeProfit.scaleStages.at(-1);
+  stopProfitSettings.value.takeProfit.scaleStages.push({
+    ratio: last ? Number((last.ratio + 1).toFixed(1)) : 1,
+    sellPercent: 30,
+  });
+}
+
+function removeStopProfitStage(index: number): void {
+  const stages = stopProfitSettings.value.takeProfit.scaleStages;
+  if (stages.length <= 1) return;
+  stages.splice(index, 1);
 }
 
 async function saveCandidateSettings(): Promise<void> {
@@ -872,7 +937,7 @@ function closeDialog(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadCandidateSettings(), loadFundHistoryStatus()]);
+    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadCandidateSettings(), loadFundHistoryStatus(), loadStopProfitSettings()]);
   } catch (error) {
     notify("error", message(error, "加载系统配置失败"));
   }
@@ -1220,6 +1285,101 @@ function buildCalendarMonths(
               <label class="system-rule-interval"><span>分钟</span><input v-model="scanIntervalMinutesDraft" aria-label="扫描间隔" :disabled="isBusy" max="10080" min="1" required step="1" type="number" /></label>
             </section>
             <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存规则配置</button></footer>
+          </form>
+        </template>
+
+        <template v-else-if="activeSection === 'stopp'">
+          <header class="system-configuration-heading">
+            <div>
+              <h1>损盈规则</h1>
+              <p>配置止损、止盈策略参数，控制单笔最大亏损并锁定利润；策略可结合风控仓位模型使用。</p>
+            </div>
+          </header>
+          <form aria-label="损盈规则配置" class="system-configuration-rows system-rule-settings system-stopp-settings" @submit.prevent="saveStopProfitSettings">
+            <section class="system-configuration-row system-stopp-row">
+              <div class="setting-row-icon"><ShieldAlert :size="18" /></div>
+              <div class="system-stopp-row-main">
+                <h2>止损规则</h2>
+                <p>控制最大单笔亏损，保护交易本金。按所选策略显示对应参数。</p>
+              </div>
+              <select v-model="stopProfitSettings.stopLoss.strategy" aria-label="止损策略" :disabled="isBusy" class="system-stopp-select">
+                <option value="fixed_percentage">固定百分比</option>
+                <option value="fixed_amount">固定金额</option>
+                <option value="technical">技术结构</option>
+                <option value="atr">波动率 (ATR)</option>
+              </select>
+            </section>
+            <section v-if="stopProfitSettings.stopLoss.strategy === 'fixed_percentage'" class="system-stopp-field">
+              <label><span>止损比例</span><input v-model.number="stopProfitSettings.stopLoss.fixedPercent" aria-label="固定百分比止损" :disabled="isBusy" max="90" min="0.1" step="0.1" type="number" />%</label>
+              <small>止损价 = 买入价 × (1 − 止损比例)。适合初学者与趋势右侧交易。</small>
+            </section>
+            <section v-else-if="stopProfitSettings.stopLoss.strategy === 'fixed_amount'" class="system-stopp-field">
+              <label><span>最大亏损金额</span><input v-model.number="stopProfitSettings.stopLoss.fixedAmount" aria-label="固定金额止损" :disabled="isBusy" max="1000000000" min="1" step="1" type="number" />元</label>
+              <small>单笔交易最大允许亏损的绝对金额，超出即离场。</small>
+            </section>
+            <section v-else-if="stopProfitSettings.stopLoss.strategy === 'technical'" class="system-stopp-field system-stopp-field-grid">
+              <label><span>参考均线周期</span><select v-model.number="stopProfitSettings.stopLoss.maPeriod" aria-label="技术止损均线周期" :disabled="isBusy"><option :value="10">10 日</option><option :value="20">20 日</option><option :value="60">60 日</option></select></label>
+              <label><span>缓冲带</span><input v-model.number="stopProfitSettings.stopLoss.bufferPercent" aria-label="技术止损缓冲带" :disabled="isBusy" max="30" min="0" step="0.1" type="number" />%</label>
+              <small>止损设在支撑 / 均线下方缓冲带，防止假突破误止损。</small>
+            </section>
+            <section v-else class="system-stopp-field system-stopp-field-grid">
+              <label><span>ATR 周期</span><input v-model.number="stopProfitSettings.stopLoss.atrPeriod" aria-label="ATR 止损周期" :disabled="isBusy" max="500" min="2" step="1" type="number" /></label>
+              <label><span>波动倍数 k</span><input v-model.number="stopProfitSettings.stopLoss.atrMultiplier" aria-label="ATR 止损倍数" :disabled="isBusy" max="20" min="0.1" step="0.1" type="number" /></label>
+              <small>止损价 = 买入价 − k × ATR；高波动自动放宽止损空间。</small>
+            </section>
+
+            <section class="system-configuration-row system-stopp-row">
+              <div class="setting-row-icon"><Target :size="18" /></div>
+              <div class="system-stopp-row-main">
+                <h2>止盈规则</h2>
+                <p>锁定既得利润，同时让盈利头寸充分延伸。</p>
+              </div>
+              <select v-model="stopProfitSettings.takeProfit.strategy" aria-label="止盈策略" :disabled="isBusy" class="system-stopp-select">
+                <option value="risk_reward">目标盈亏比</option>
+                <option value="trailing">移动止盈</option>
+                <option value="atr_trailing">ATR 移动止盈</option>
+                <option value="ma_trail">均线跟踪</option>
+                <option value="scaled">阶梯 / 分批止盈</option>
+              </select>
+            </section>
+            <section v-if="stopProfitSettings.takeProfit.strategy === 'risk_reward'" class="system-stopp-field">
+              <label><span>盈亏比 R:R</span><input v-model.number="stopProfitSettings.takeProfit.riskRewardRatio" aria-label="目标盈亏比" :disabled="isBusy" max="50" min="0.1" step="0.1" type="number" /></label>
+              <small>止盈价 = 买入价 + 盈亏比 × 单股止损金额。</small>
+            </section>
+            <section v-else-if="stopProfitSettings.takeProfit.strategy === 'trailing'" class="system-stopp-field">
+              <label><span>高点回撤</span><input v-model.number="stopProfitSettings.takeProfit.trailingPercent" aria-label="移动止盈回撤" :disabled="isBusy" max="90" min="0.1" step="0.1" type="number" />%</label>
+              <small>从买入后最高价回撤该比例即离场。</small>
+            </section>
+            <section v-else-if="stopProfitSettings.takeProfit.strategy === 'atr_trailing'" class="system-stopp-field system-stopp-field-grid">
+              <label><span>ATR 周期</span><input v-model.number="stopProfitSettings.takeProfit.atrPeriod" aria-label="ATR 止盈周期" :disabled="isBusy" max="500" min="2" step="1" type="number" /></label>
+              <label><span>波动倍数 p</span><input v-model.number="stopProfitSettings.takeProfit.atrTrailMultiplier" aria-label="ATR 止盈倍数" :disabled="isBusy" max="20" min="0.1" step="0.1" type="number" /></label>
+              <small>吊灯止盈 = 近期最高价 − p × ATR。</small>
+            </section>
+            <section v-else-if="stopProfitSettings.takeProfit.strategy === 'ma_trail'" class="system-stopp-field">
+              <label><span>跟踪均线周期</span><select v-model.number="stopProfitSettings.takeProfit.maTrailPeriod" aria-label="均线跟踪周期" :disabled="isBusy"><option :value="10">10 日</option><option :value="20">20 日</option><option :value="30">30 日</option></select></label>
+              <small>股价有效跌破该均线时清仓离场。</small>
+            </section>
+            <section v-else class="system-stopp-field system-stopp-scaled">
+              <p>达到阶段目标后分批卖出，余下仓位留作博弈主升浪。可配置 1–8 个阶段：</p>
+              <div v-for="(stage, index) in stopProfitSettings.takeProfit.scaleStages" :key="index" class="system-stopp-stage">
+                <label><span>盈亏比</span><input v-model.number="stage.ratio" :aria-label="`阶梯阶段 ${index + 1} 盈亏比`" :disabled="isBusy" max="50" min="0.1" step="0.1" type="number" /></label>
+                <label><span>卖出</span><input v-model.number="stage.sellPercent" :aria-label="`阶梯阶段 ${index + 1} 卖出比例`" :disabled="isBusy" max="100" min="1" step="1" type="number" />%</label>
+                <button aria-label="删除阶梯阶段" :disabled="isBusy || stopProfitSettings.takeProfit.scaleStages.length <= 1" class="batman-icon-button danger" type="button" @click="removeStopProfitStage(index)"><Trash2 :size="14" /></button>
+              </div>
+              <button :disabled="isBusy" type="button" @click="addStopProfitStage">
+                <CirclePlus :size="14" />添加阶段
+              </button>
+            </section>
+
+            <section class="system-configuration-row system-stopp-row">
+              <div class="setting-row-icon"><Percent :size="18" /></div>
+              <div class="system-stopp-row-main">
+                <h2>风控仓位 (R 值)</h2>
+                <p>每笔交易最大允许风险占账户比例，用于反推建仓数量。</p>
+              </div>
+              <label class="system-stopp-field"><span>风险占比</span><input v-model.number="stopProfitSettings.risk.riskPerTradePercent" aria-label="单笔最大风险占比" :disabled="isBusy" max="50" min="0.1" step="0.1" type="number" />%</label>
+            </section>
+            <footer class="system-rule-settings-footer"><button class="batman-button primary" :disabled="isBusy" type="submit"><Save :size="15" />保存损盈规则</button></footer>
           </form>
         </template>
 
@@ -2475,6 +2635,130 @@ function buildCalendarMonths(
   font-size: 12px;
   min-height: 36px;
   padding: 0 8px;
+}
+.system-stopp-settings {
+  display: grid;
+  gap: 4px;
+}
+.system-stopp-row {
+  align-items: center;
+}
+.system-stopp-row-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.system-stopp-row-main h2 {
+  color: #dcebf8;
+  font-size: 14px;
+  margin: 0;
+}
+.system-stopp-row-main p {
+  color: #8fa8bf;
+  font-size: 12px;
+  margin: 0;
+}
+.system-stopp-select {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  font-size: 12px;
+  min-height: 36px;
+  min-width: 150px;
+  padding: 0 9px;
+}
+.system-stopp-select:focus {
+  border-color: #65d7ca;
+  outline: 1px solid #65d7ca;
+}
+.system-stopp-field {
+  border-bottom: 1px solid #263950;
+  display: grid;
+  gap: 8px;
+  padding: 13px 0;
+}
+.system-stopp-field > label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+.system-stopp-field > label > span {
+  color: #9db3c8;
+  font-size: 12px;
+  font-weight: 600;
+  min-width: 84px;
+}
+.system-stopp-field input {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  font-size: 12px;
+  min-height: 36px;
+  padding: 0 9px;
+  text-align: right;
+  width: 120px;
+}
+.system-stopp-field input:focus,
+.system-stopp-field select:focus {
+  border-color: #65d7ca;
+  outline: 1px solid #65d7ca;
+}
+.system-stopp-field select {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  font-size: 12px;
+  min-height: 36px;
+  padding: 0 9px;
+  min-width: 110px;
+}
+.system-stopp-field small {
+  color: #71899f;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.system-stopp-field-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.system-stopp-field-grid small {
+  grid-column: 1 / -1;
+}
+.system-stopp-scaled p {
+  color: #9db3c8;
+  font-size: 12px;
+  margin: 0;
+}
+.system-stopp-stage {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+.system-stopp-stage label {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+}
+.system-stopp-stage label span {
+  color: #9db3c8;
+  font-size: 12px;
+  min-width: 52px;
+}
+.system-stopp-stage input {
+  background: #1d293b;
+  border: 1px solid #3a506d;
+  border-radius: 5px;
+  color: #edf6ff;
+  font-size: 12px;
+  min-height: 32px;
+  padding: 0 8px;
+  text-align: right;
+  width: 90px;
+}
+.system-stopp-stage button {
+  align-self: center;
 }
 @media (max-width: 1220px) {
   .system-calendar-grid {
