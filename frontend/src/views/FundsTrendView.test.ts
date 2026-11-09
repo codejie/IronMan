@@ -4,12 +4,16 @@ import FundsTrendView from "./FundsTrendView.vue";
 
 const mocks = vi.hoisted(() => ({
   fundHistory: vi.fn(),
+  recalculateFundHistory: vi.fn(),
   push: vi.fn(),
 }));
 
 vi.mock("@/api/client", () => ({
   ApiError: class ApiError extends Error {},
-  api: { fundHistory: mocks.fundHistory },
+  api: {
+    fundHistory: mocks.fundHistory,
+    recalculateFundHistory: mocks.recalculateFundHistory,
+  },
 }));
 
 vi.mock("@/stores/session", () => ({
@@ -70,11 +74,13 @@ function result() {
 describe("FundsTrendView", () => {
   beforeEach(() => {
     mocks.fundHistory.mockReset();
+    mocks.recalculateFundHistory.mockReset();
     mocks.push.mockReset();
     mocks.fundHistory.mockResolvedValue(result());
+    mocks.recalculateFundHistory.mockResolvedValue(result());
   });
 
-  test("loads three months by default and switches the requested range", async () => {
+  test("recalculates on entry then loads three months by default and switches the requested range", async () => {
     const wrapper = mount(FundsTrendView, {
       global: {
         stubs: {
@@ -86,6 +92,8 @@ describe("FundsTrendView", () => {
     });
     await flushPromises();
 
+    expect(mocks.recalculateFundHistory).toHaveBeenCalledTimes(1);
+    expect(mocks.recalculateFundHistory).toHaveBeenCalledWith("test-token");
     expect(mocks.fundHistory).toHaveBeenCalledTimes(1);
     const firstCall = mocks.fundHistory.mock.calls[0] as [string, string, string];
     expect(firstCall[0]).toBe("test-token");
@@ -97,6 +105,7 @@ describe("FundsTrendView", () => {
     await flushPromises();
     const secondCall = mocks.fundHistory.mock.calls[1] as [string, string, string];
     expect(monthDistance(secondCall[1], secondCall[2])).toBe(6);
+    expect(mocks.recalculateFundHistory).toHaveBeenCalledTimes(1);
   });
 
   test("returns to holdings from the compact header action", async () => {

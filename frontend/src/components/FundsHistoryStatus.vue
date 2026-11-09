@@ -28,7 +28,6 @@ const statusTone = computed(() => props.state.status === "failed" ? "error" : pr
     <span v-else>尚未生成历史数据</span>
     <span><Clock3 :size="13" />{{ formatDateTime(state.updatedAt) }}</span>
     <span v-if="hasPartial">沿用 {{ carriedCount }} · 缺失 {{ missingCount }}</span>
-    <RouterLink v-if="state.status === 'dirty' || state.status === 'failed'" to="/system/configuration?section=backup">前往系统配置</RouterLink>
   </div>
 </template>
 
@@ -42,7 +41,5 @@ const statusTone = computed(() => props.state.status === "failed" ? "error" : pr
 .fund-history-status.warning > svg, .fund-history-status.warning strong, .fund-history-status.loading > svg { color: #e0bd62; }
 .fund-history-status.error { background: #351e26; border-color: #79434e; }
 .fund-history-status.error > svg, .fund-history-status.error strong { color: #f08c96; }
-.fund-history-status a { color: #77d9d0; margin-left: auto; text-decoration: none; }
-.fund-history-status a:hover { text-decoration: underline; }
-@media (max-width: 720px) { .fund-history-status a { margin-left: 0; } }
+@media (max-width: 720px) { .fund-history-status { gap: 8px 10px; } }
 </style>

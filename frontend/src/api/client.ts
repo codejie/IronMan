@@ -1319,8 +1319,6 @@ export const api = {
       { startDate, endDate },
       token,
     ),
-  fundHistoryStatus: (token: string) =>
-    post<FundHistoryState>("/assets/funds/history/status", {}, token),
   recalculateFundHistory: (token: string) =>
     post<FundHistoryResult>("/assets/funds/history/recalculate", {}, token),
   listHoldings: (token: string) =>

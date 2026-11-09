@@ -28,11 +28,15 @@ const orderedPoints = computed(() => [...(result.value?.points ?? [])].reverse()
 const totalPages = computed(() => Math.max(1, Math.ceil(orderedPoints.value.length / pageSize)));
 const visiblePoints = computed(() => orderedPoints.value.slice((page.value - 1) * pageSize, page.value * pageSize));
 
-async function load(): Promise<void> {
+async function load(recalculate: boolean): Promise<void> {
   if (token.value === null || isLoading.value) return;
   isLoading.value = true;
   errorMessage.value = "";
   try {
+    if (recalculate) {
+      // 进入页面自动重新计算，再按当前时间范围取数展示
+      await api.recalculateFundHistory(token.value);
+    }
     const endDate = latestCompleteDate();
     result.value = await api.fundHistory(token.value, shiftMonths(endDate, -period.value), endDate);
     page.value = 1;
@@ -46,7 +50,7 @@ async function load(): Promise<void> {
 async function selectPeriod(value: PeriodMonths): Promise<void> {
   if (period.value === value) return;
   period.value = value;
-  await load();
+  await load(false);
 }
 
 function goBack(): void {
@@ -103,7 +107,7 @@ function shiftDays(value: string, offset: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-onMounted(load);
+onMounted(() => load(true));
 </script>
 
 <template>
@@ -118,12 +122,11 @@ onMounted(load);
       </div>
     </header>
 
-    <p v-if="errorMessage" class="funds-trend-error" role="alert">{{ errorMessage }}<button :disabled="isLoading" type="button" @click="load"><RefreshCw :class="{ spinning: isLoading }" :size="14" />重试</button></p>
-    <div v-if="isLoading && result === null" class="funds-trend-loading"><RefreshCw class="spinning" :size="20" />正在生成资金历史</div>
+    <p v-if="errorMessage" class="funds-trend-error" role="alert">{{ errorMessage }}<button :disabled="isLoading" type="button" @click="load(true)"><RefreshCw :class="{ spinning: isLoading }" :size="14" />重试</button></p>
+    <div v-if="isLoading && result === null" class="funds-trend-loading"><RefreshCw class="spinning" :size="20" />正在重新计算资金历史</div>
 
     <template v-else-if="result">
       <FundsHistoryStatus :points="result.points" :state="result.state" />
-
       <div v-if="result.points.length === 0" class="funds-trend-empty">
         <strong>暂无可计算的资金历史</strong>
         <button class="batman-button" type="button" @click="goBack"><ArrowLeft :size="15" />返回持仓信息</button>

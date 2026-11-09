@@ -39,7 +39,6 @@ import {
   type AlertSettings,
   type AiCandidateSettings,
   type DataSourceConfig,
-  type FundHistoryState,
   type HoldingDiagnosisSettings,
   type HoldingDiagnosisSourceCatalogItem,
   type IntradayDisplaySource,
@@ -127,8 +126,6 @@ const aiSystemPrompt = ref("");
 const defaultAiSystemPrompt = ref("");
 const autoScanEnabledDraft = ref(false);
 const scanIntervalMinutesDraft = ref("5");
-const fundHistoryState = ref<FundHistoryState | null>(null);
-const isFundHistoryRecalculating = ref(false);
 const diagnosisSettings = ref<HoldingDiagnosisSettings>({
   enabled: false,
   scheduledTime: "15:30",
@@ -260,42 +257,6 @@ function snapshotStatusLabel(): string {
 
 function isSectionId(value: unknown): value is SectionId {
   return typeof value === "string" && ["backup", "market", "diagnosis", "candidate", "rules", "ai", "maintenance", "stopp"].includes(value);
-}
-
-function fundHistoryStatusLabel(state: FundHistoryState): string {
-  if (state.status === "dirty") return `待重新计算（自 ${state.dirtyFrom ?? "历史记录"}）`;
-  if (state.status === "calculating") return "正在计算";
-  if (state.status === "failed") return `计算失败${state.lastError ? `：${state.lastError}` : ""}`;
-  return state.tradeDayCount > 0 ? "已更新" : "尚未生成";
-}
-
-async function loadFundHistoryStatus(): Promise<void> {
-  if (token.value === null) return;
-  fundHistoryState.value = await api.fundHistoryStatus(token.value);
-}
-
-async function recalculateFundHistory(): Promise<void> {
-  if (token.value === null || isBusy.value) return;
-  const confirmed = await requestConfirmation({
-    title: "重新计算资金趋势",
-    message: "将重建最近一年的资金趋势历史，包含活动持仓、清仓记录和历史行情。计算期间不会修改资金与交易记录。",
-    confirmLabel: "重新计算",
-  });
-  if (!confirmed) return;
-  isBusy.value = true;
-  isFundHistoryRecalculating.value = true;
-  clearFeedback();
-  try {
-    const rebuilt = await api.recalculateFundHistory(token.value);
-    fundHistoryState.value = rebuilt.state;
-    notify("success", "资金趋势历史已重新计算");
-  } catch (error) {
-    notify("error", message(error, "重新计算资金趋势历史失败"));
-    await loadFundHistoryStatus().catch(() => undefined);
-  } finally {
-    isBusy.value = false;
-    isFundHistoryRecalculating.value = false;
-  }
 }
 
 async function loadMarketConfig(): Promise<void> {
@@ -693,7 +654,6 @@ async function importData(): Promise<void> {
   isBusy.value = true;
   try {
     await api.importData(token.value, importedData.value);
-    await loadFundHistoryStatus();
     dialog.value = null;
     importedData.value = null;
     importFileName.value = "";
@@ -937,7 +897,7 @@ function closeDialog(): void {
 
 onMounted(async () => {
   try {
-    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadCandidateSettings(), loadFundHistoryStatus(), loadStopProfitSettings()]);
+    await Promise.all([loadMarketConfig(), loadRuleSettings(), loadDiagnosisSettings(), loadCandidateSettings(), loadStopProfitSettings()]);
   } catch (error) {
     notify("error", message(error, "加载系统配置失败"));
   }
@@ -1037,22 +997,6 @@ function buildCalendarMonths(
                 @click="chooseImport"
               >
                 <FileUp :size="15" />选择文件
-              </button>
-            </section>
-            <section class="system-configuration-row">
-              <div class="setting-row-icon"><ChartNoAxesCombined :size="18" /></div>
-              <div>
-                <h2>资金趋势历史数据</h2>
-                <p v-if="fundHistoryState">
-                  {{ fundHistoryState.coveredFrom && fundHistoryState.coveredTo ? `${fundHistoryState.coveredFrom} 至 ${fundHistoryState.coveredTo}` : "尚未生成日期范围" }}，
-                  {{ fundHistoryState.tradeDayCount }} 个交易日，版本 {{ fundHistoryState.calculationVersion }}；
-                  {{ fundHistoryStatusLabel(fundHistoryState) }}。
-                </p>
-                <p v-else>正在读取资金趋势历史状态。</p>
-                <small v-if="fundHistoryState">最近计算 {{ formatDateTime(fundHistoryState.updatedAt) }}</small>
-              </div>
-              <button class="batman-button" :disabled="isBusy" type="button" @click="recalculateFundHistory">
-                <RefreshCw :class="{ spinning: isFundHistoryRecalculating }" :size="15" />重新计算
               </button>
             </section>
           </div>

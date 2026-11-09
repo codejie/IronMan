@@ -17,8 +17,6 @@ const mocks = vi.hoisted(() => ({
   getHoldingDiagnosisSettings: vi.fn(),
   holdingDiagnosisSourceCatalog: vi.fn(),
   updateAlertSettings: vi.fn(),
-  fundHistoryStatus: vi.fn(),
-  recalculateFundHistory: vi.fn(),
   updateHoldingDiagnosisSettings: vi.fn(),
   updateDataSourceConfig: vi.fn(),
   getIntradaySource: vi.fn(),
@@ -45,8 +43,6 @@ vi.mock("@/api/client", () => ({
     getHoldingDiagnosisSettings: mocks.getHoldingDiagnosisSettings,
     holdingDiagnosisSourceCatalog: mocks.holdingDiagnosisSourceCatalog,
     updateAlertSettings: mocks.updateAlertSettings,
-    fundHistoryStatus: mocks.fundHistoryStatus,
-    recalculateFundHistory: mocks.recalculateFundHistory,
     updateHoldingDiagnosisSettings: mocks.updateHoldingDiagnosisSettings,
     updateDataSourceConfig: mocks.updateDataSourceConfig,
     getIntradaySource: mocks.getIntradaySource,
@@ -84,8 +80,6 @@ describe("SystemConfigurationView", () => {
     mocks.getHoldingDiagnosisSettings.mockReset();
     mocks.holdingDiagnosisSourceCatalog.mockReset();
     mocks.updateAlertSettings.mockReset();
-    mocks.fundHistoryStatus.mockReset();
-    mocks.recalculateFundHistory.mockReset();
     mocks.updateHoldingDiagnosisSettings.mockReset();
     mocks.updateDataSourceConfig.mockReset();
     mocks.getIntradaySource.mockReset();
@@ -166,31 +160,6 @@ describe("SystemConfigurationView", () => {
       autoScanEnabled: true,
       scanIntervalMinutes: 15,
       quietHours: null,
-    });
-    mocks.fundHistoryStatus.mockResolvedValue({
-      coveredFrom: "2026-04-01",
-      coveredTo: "2026-07-30",
-      dirtyFrom: "2026-07-20",
-      status: "dirty",
-      lastError: null,
-      calculationVersion: 1,
-      updatedAt: "2026-07-30T08:00:00.000Z",
-      tradeDayCount: 82,
-    });
-    mocks.recalculateFundHistory.mockResolvedValue({
-      points: [],
-      events: [],
-      summary: {},
-      state: {
-        coveredFrom: "2025-07-31",
-        coveredTo: "2026-07-30",
-        dirtyFrom: null,
-        status: "idle",
-        lastError: null,
-        calculationVersion: 1,
-        updatedAt: "2026-07-31T08:00:00.000Z",
-        tradeDayCount: 240,
-      },
     });
     mocks.getHoldingDiagnosisSettings.mockResolvedValue({
       enabled: false,
@@ -366,22 +335,6 @@ describe("SystemConfigurationView", () => {
       scanIntervalMinutes: 15,
     });
     expect(wrapper.text()).toContain("规则自动扫描已保存");
-  });
-
-  test("shows derived history status and rebuilds it through the shared confirmation", async () => {
-    const wrapper = mount(SystemConfigurationView);
-    await flushPromises();
-
-    expect(wrapper.text()).toContain("资金趋势历史数据");
-    expect(wrapper.text()).toContain("82 个交易日");
-    const rebuild = wrapper.findAll("button").find((button) => button.text().includes("重新计算"));
-    if (rebuild === undefined) throw new Error("fund history rebuild control was not rendered");
-    await rebuild.trigger("click");
-    await flushPromises();
-
-    expect(mocks.confirm).toHaveBeenCalledWith(expect.objectContaining({ title: "重新计算资金趋势" }));
-    expect(mocks.recalculateFundHistory).toHaveBeenCalledWith("test-token");
-    expect(wrapper.text()).toContain("资金趋势历史已重新计算");
   });
 
   test("configures the intraday snapshot master switch and collection mode", async () => {
