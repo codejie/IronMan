@@ -28,25 +28,47 @@ const props = withDefaults(
 
 const maColors = ["#6581da", "#92c978", "#ffbd4b", "#c985d7", "#56c4c9", "#ed7777"];
 const element = ref<HTMLDivElement | null>(null);
+const hoveredOperation = ref<{ title: string; reason: string; color: string } | null>(null);
+const tipLeft = ref(0);
+const tipTop = ref(0);
 let chart: ECharts | undefined;
 let resizeObserver: ResizeObserver | undefined;
 
 use([BarChart, CandlestickChart, LineChart, ScatterChart, GridComponent, LegendComponent, TooltipComponent, AxisPointerComponent, CanvasRenderer]);
 
-/** 标记上显示的短标签：买入/卖出/计息（同日买卖合并时显示「买卖」）。 */
-function annotationShortLabel(title: string): string {
-  const hasBuy = title.includes("买入");
-  const hasSell = title.includes("卖出");
-  if (hasBuy && hasSell) return "买卖";
-  if (hasBuy) return "买";
-  if (hasSell) return "卖";
-  if (title.includes("计息")) return "息";
-  return title.slice(0, 1);
+/** 标记上显示的紧凑标签：买入/卖出/计息 → 买/卖/息，附数量等信息。 */
+function compactOperationLabel(title: string): string {
+  const compact = title.replace("买入", "买").replace("卖出", "卖").replace("计息", "息");
+  return compact.length > 12 ? `${compact.slice(0, 12)}…` : compact;
+}
+
+function handleChartMouseOver(raw: unknown): void {
+  const params = raw as {
+    data?: { operation?: { title: string; reason: string; color: string } } | null;
+    event?: { offsetX?: number; offsetY?: number };
+  };
+  const operation = params.data?.operation;
+  if (operation === undefined) {
+    clearHoveredOperation();
+    return;
+  }
+  hoveredOperation.value = operation;
+  const width = element.value?.clientWidth ?? 0;
+  const height = element.value?.clientHeight ?? 0;
+  const x = params.event?.offsetX ?? 0;
+  const y = params.event?.offsetY ?? 0;
+  tipLeft.value = Math.max(8, Math.min(x + 14, Math.max(8, width - 250)));
+  tipTop.value = Math.max(8, Math.min(y - 12, Math.max(8, height - 110)));
+}
+
+function clearHoveredOperation(): void {
+  hoveredOperation.value = null;
 }
 
 function render(): void {
   if (element.value === null) return;
   chart ??= init(element.value);
+  clearHoveredOperation();
 
   const dates = props.bars.map((bar) => bar.date);
   const labels = dates.map(formatDate);
@@ -89,7 +111,7 @@ function render(): void {
     }));
     const visuals = buildKlineAnnotationVisuals(props.annotations, points);
     if (visuals.length === 0) return [];
-    const data = visuals.map(({ marker }) => ({
+    const data = visuals.map(({ marker, annotation }) => ({
       name: marker.name,
       value: marker.coord,
       symbol: marker.symbol,
@@ -97,10 +119,15 @@ function render(): void {
       symbolSize: marker.symbolSize,
       symbolOffset: marker.symbolOffset,
       itemStyle: marker.itemStyle,
+      operation: {
+        title: annotation.title,
+        reason: annotation.reason,
+        color: annotation.color
+      },
       label: {
         show: true,
         position: marker.symbolRotate === 0 ? "top" : "bottom",
-        formatter: annotationShortLabel(marker.name),
+        formatter: compactOperationLabel(marker.name),
         color: "#f4fbff",
         backgroundColor: marker.itemStyle.color,
         borderRadius: 2,
@@ -174,14 +201,33 @@ onMounted(() => {
   resizeObserver = new ResizeObserver(() => chart?.resize());
   resizeObserver.observe(element.value);
   render();
+  chart?.on("mouseover", handleChartMouseOver);
+  chart?.on("globalout", clearHoveredOperation);
 });
 
 watch(() => [props.bars, props.trace, props.maPeriods, props.subchart, props.macdLines, props.annotations], render, { deep: true });
-onBeforeUnmount(() => { resizeObserver?.disconnect(); chart?.dispose(); });
+onBeforeUnmount(() => {
+  resizeObserver?.disconnect();
+  chart?.off("mouseover", handleChartMouseOver);
+  chart?.off("globalout", clearHoveredOperation);
+  chart?.dispose();
+});
 </script>
 
-<template><div ref="element" class="holding-performance-chart" /></template>
+<template>
+  <div class="holding-performance-chart-shell">
+    <div ref="element" class="holding-performance-chart" />
+    <div v-if="hoveredOperation" class="holding-operation-tip" :style="{ left: `${tipLeft}px`, top: `${tipTop}px` }">
+      <strong :style="{ color: hoveredOperation.color }">{{ hoveredOperation.title }}</strong>
+      <span>{{ hoveredOperation.reason }}</span>
+    </div>
+  </div>
+</template>
 
 <style scoped>
+.holding-performance-chart-shell { position: relative; }
 .holding-performance-chart { height: min(64vh, 630px); min-height: 490px; width: 100%; }
+.holding-operation-tip { background: #172337; border: 1px solid #30445d; border-radius: 6px; box-shadow: 0 8px 22px rgb(0 0 0 / 45%); color: #dce9f5; display: grid; gap: 4px; max-width: 240px; padding: 8px 10px; pointer-events: none; position: absolute; z-index: 5; }
+.holding-operation-tip strong { font-size: 12px; }
+.holding-operation-tip span { color: #9db3c8; font-size: 11px; line-height: 1.45; white-space: pre-line; }
 </style>

@@ -31,6 +31,8 @@ export interface KlineAnnotation {
 
 export interface KlineAnnotationVisual {
   key: string;
+  /** 来源标注，便于调用方在 tooltip/交互中读取完整信息。 */
+  annotation: KlineAnnotation;
   marker: {
     name: string;
     coord: [string, number];
@@ -197,6 +199,7 @@ export function buildKlineAnnotationVisuals(
     const directionLabel = bullish ? "↑ 多头" : risk ? "↓ 风险" : "↓ 空头";
     return [{
       key: annotationKey(annotation, annotationIndex),
+      annotation,
       marker: {
         name: annotation.title,
         coord: [point.label, annotation.price ?? point.close],
