@@ -74,6 +74,25 @@ describe("HoldingDetailView", () => {
     expect(mocks.holdingChart).toHaveBeenCalledTimes(2);
   });
 
+  test("passes buy/sell operation markers to the K-line chart", async () => {
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    const chart = wrapper.findComponent({ name: "HoldingPerformanceChart" });
+    expect(chart.exists()).toBe(true);
+    const annotations = chart.props("annotations") as Array<{
+      date: string;
+      title: string;
+      seriesName?: string;
+    }>;
+    // 买入发生在行情窗口内；07-05 计息超出 K 线日期范围，不应生成标注
+    expect(annotations).toEqual([
+      expect.objectContaining({ date: "2026-07-01", title: "买入 100", seriesName: "操作" }),
+    ]);
+  });
+
   test("renders operation timestamps as dates only", async () => {
     const wrapper = mount(HoldingDetailView, {
       global: { stubs: { HoldingPerformanceChart: true } },

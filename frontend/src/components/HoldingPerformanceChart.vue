@@ -1,12 +1,18 @@
 <script setup lang="ts">
-import { BarChart, CandlestickChart, LineChart } from "echarts/charts";
+import { BarChart, CandlestickChart, LineChart, ScatterChart } from "echarts/charts";
 import { AxisPointerComponent, GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
 import { init, use, type ECharts } from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { HoldingChartTrace, PriceBar } from "@/api/client";
 import { formatDate } from "@/utils/date-format";
-import { lineVisualStyle, movingAverage, type KlineSubchart } from "./kline-analysis";
+import {
+  buildKlineAnnotationVisuals,
+  lineVisualStyle,
+  movingAverage,
+  type KlineAnnotation,
+  type KlineSubchart
+} from "./kline-analysis";
 
 const props = withDefaults(
   defineProps<{
@@ -15,8 +21,9 @@ const props = withDefaults(
     maPeriods?: number[];
     subchart?: KlineSubchart;
     macdLines?: Record<string, Array<number | null>> | null;
+    annotations?: KlineAnnotation[];
   }>(),
-  { maPeriods: () => [], subchart: "macd", macdLines: null }
+  { maPeriods: () => [], subchart: "macd", macdLines: null, annotations: () => [] }
 );
 
 const maColors = ["#6581da", "#92c978", "#ffbd4b", "#c985d7", "#56c4c9", "#ed7777"];
@@ -24,7 +31,18 @@ const element = ref<HTMLDivElement | null>(null);
 let chart: ECharts | undefined;
 let resizeObserver: ResizeObserver | undefined;
 
-use([BarChart, CandlestickChart, LineChart, GridComponent, LegendComponent, TooltipComponent, AxisPointerComponent, CanvasRenderer]);
+use([BarChart, CandlestickChart, LineChart, ScatterChart, GridComponent, LegendComponent, TooltipComponent, AxisPointerComponent, CanvasRenderer]);
+
+/** 标记上显示的短标签：买入/卖出/计息（同日买卖合并时显示「买卖」）。 */
+function annotationShortLabel(title: string): string {
+  const hasBuy = title.includes("买入");
+  const hasSell = title.includes("卖出");
+  if (hasBuy && hasSell) return "买卖";
+  if (hasBuy) return "买";
+  if (hasSell) return "卖";
+  if (title.includes("计息")) return "息";
+  return title.slice(0, 1);
+}
 
 function render(): void {
   if (element.value === null) return;
@@ -63,6 +81,45 @@ function render(): void {
         }
       ];
 
+  const annotationSeries = (() => {
+    const points = props.bars.map((bar, index) => ({
+      date: bar.date,
+      label: labels[index]!,
+      close: bar.close
+    }));
+    const visuals = buildKlineAnnotationVisuals(props.annotations, points);
+    if (visuals.length === 0) return [];
+    const data = visuals.map(({ marker }) => ({
+      name: marker.name,
+      value: marker.coord,
+      symbol: marker.symbol,
+      symbolRotate: marker.symbolRotate,
+      symbolSize: marker.symbolSize,
+      symbolOffset: marker.symbolOffset,
+      itemStyle: marker.itemStyle,
+      label: {
+        show: true,
+        position: marker.symbolRotate === 0 ? "top" : "bottom",
+        formatter: annotationShortLabel(marker.name),
+        color: "#f4fbff",
+        backgroundColor: marker.itemStyle.color,
+        borderRadius: 2,
+        distance: 3,
+        fontSize: 10,
+        padding: [1, 3]
+      }
+    }));
+    return [{
+      type: "scatter" as const,
+      name: "操作",
+      xAxisIndex: 1,
+      yAxisIndex: 4,
+      z: 30,
+      tooltip: { show: false },
+      data
+    }];
+  })();
+
   chart.setOption({
     animation: false,
     backgroundColor: "transparent",
@@ -71,7 +128,7 @@ function render(): void {
       itemHeight: 8,
       itemWidth: 12,
       textStyle: { color: "#aabbd0", fontSize: 11 },
-      data: ["持有数量", "均价", "市值", "盈亏", "K线", ...maSeries.map((series) => series.name), ...secondarySeries.map((series) => series.name)]
+      data: ["持有数量", "均价", "市值", "盈亏", "K线", ...maSeries.map((series) => series.name), ...secondarySeries.map((series) => series.name), ...annotationSeries.map((series) => series.name)]
     },
     tooltip: {
       trigger: "axis",
@@ -106,6 +163,7 @@ function render(): void {
       { type: "line", name: "盈亏", xAxisIndex: 0, yAxisIndex: 2, data: dates.map((date) => traceByDate.get(date)?.profit ?? null), showSymbol: false, ...lineVisualStyle("#ec8389", 1.7) },
       { type: "candlestick", name: "K线", xAxisIndex: 1, yAxisIndex: 4, data: props.bars.map((bar) => [bar.open, bar.close, bar.low, bar.high]), itemStyle: { color: "#fa7575", color0: "#68d991", borderColor: "#fa7575", borderColor0: "#68d991" } },
       ...maSeries,
+      ...annotationSeries,
       ...secondarySeries
     ]
   }, { notMerge: true });
@@ -118,7 +176,7 @@ onMounted(() => {
   render();
 });
 
-watch(() => [props.bars, props.trace, props.maPeriods, props.subchart, props.macdLines], render, { deep: true });
+watch(() => [props.bars, props.trace, props.maPeriods, props.subchart, props.macdLines, props.annotations], render, { deep: true });
 onBeforeUnmount(() => { resizeObserver?.disconnect(); chart?.dispose(); });
 </script>
 

@@ -7,8 +7,10 @@ import {
   KLINE_PREFERENCES_KEY,
   MA_PERIODS,
   parseKlinePreferences,
+  type KlineAnnotation,
   type KlineSubchart
 } from "@/components/kline-analysis";
+import { operationsToKlineAnnotations } from "@/components/kline-operations";
 import { api, ApiError, type HoldingChartData } from "@/api/client";
 import { requestConfirmation } from "@/components/confirmation";
 import { useSession } from "@/stores/session";
@@ -67,6 +69,21 @@ const traceTableRows = computed(() => {
   return rows.reverse();
 });
 const latestTrace = computed(() => visibleTrace.value.at(-1) ?? data.value?.trace.at(-1) ?? null);
+/** 当前持仓的买入/卖出/计息记录映射为 K 线标注（仅保留落在行情窗口内的日期）。 */
+const operationAnnotations = computed<KlineAnnotation[]>(() => {
+  const chart = data.value;
+  if (chart === null || chart.bars.length === 0) return [];
+  const operations = chart.transactions.map((transaction) => ({
+    ...transaction,
+    holdingId: chart.holding.id
+  }));
+  return operationsToKlineAnnotations(
+    operations,
+    chart.bars[0]!.date,
+    chart.bars[chart.bars.length - 1]!.date
+  );
+});
+
 const summary = computed(() => data.value === null || latestTrace.value === null ? null : {
   currentPrice: visibleBars.value.at(-1)?.close ?? null,
   marketValue: latestTrace.value.marketValue,
@@ -241,7 +258,7 @@ onMounted(() => { void load(); });
         <div class="kline-control-group" aria-label="均线" role="group"><button v-for="period in MA_PERIODS" :key="period" :aria-pressed="maPeriods.includes(period)" :class="{ active: maPeriods.includes(period) }" type="button" @click="toggleMa(period)">MA{{ period }}</button></div>
         <div class="kline-control-group holding-detail-subchart" aria-label="副图" role="group"><button :aria-pressed="subchart === 'macd'" :class="{ active: subchart === 'macd' }" type="button" @click="selectSubchart('macd')">MACD</button><button :aria-pressed="subchart === 'volume'" :class="{ active: subchart === 'volume' }" type="button" @click="selectSubchart('volume')">成交量</button></div>
       </div>
-      <div v-if="visibleBars.length" class="holding-detail-chart-frame"><HoldingPerformanceChart :bars="visibleBars" :macd-lines="macdLines" :ma-periods="maPeriods" :subchart="subchart" :trace="visibleTrace" /></div>
+      <div v-if="visibleBars.length" class="holding-detail-chart-frame"><HoldingPerformanceChart :annotations="operationAnnotations" :bars="visibleBars" :macd-lines="macdLines" :ma-periods="maPeriods" :subchart="subchart" :trace="visibleTrace" /></div>
       <p v-else class="batman-selected">暂无可展示的历史行情。</p>
 
       <div class="batman-section-divider"><span>明细记录</span><div class="holding-detail-tabs"><button :class="{ active: selectedTable === 'operations' }" type="button" @click="selectedTable = 'operations'">操作记录</button><button :class="{ active: selectedTable === 'trace' }" type="button" @click="selectedTable = 'trace'">每日跟踪</button></div></div>
