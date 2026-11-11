@@ -1368,8 +1368,6 @@ export const api = {
       { id, refresh },
       token,
     ),
-  deleteHolding: (token: string, id: string) =>
-    post<{ deleted: true }>("/assets/holdings/delete", { id }, token),
   removeHolding: (token: string, id: string) =>
     post<{ removed: true }>("/assets/holdings/remove", { id }, token),
   addHoldingTransaction: (

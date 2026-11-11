@@ -131,12 +131,8 @@ describe("HoldingsView", () => {
     expect(alertButton.attributes("data-hint-position")).toBe("top");
     expect(alertButton.attributes("title")).toBeUndefined();
     expect(wrapper.findAll(".holding-record-row .batman-text-button").some((button) => button.text() === "详情")).toBe(false);
-    const deleteButton = wrapper.get("button[aria-label='删除 测试股票 持仓']");
-    expect(deleteButton.classes()).toContain("batman-icon-button");
-    expect(deleteButton.text()).toBe("");
-    expect(deleteButton.attributes("data-hint")).toBe("删除持仓");
-    expect(deleteButton.attributes("data-hint-position")).toBe("top");
-    expect(deleteButton.attributes("title")).toBeUndefined();
+    expect(wrapper.find("button[aria-label='删除 测试股票 持仓']").exists()).toBe(false);
+    expect(wrapper.find(".holding-record-row .batman-icon-button.danger").exists()).toBe(false);
     expect(wrapper.find(".batman-expander").exists()).toBe(false);
     expect(wrapper.find(".batman-operations-row").exists()).toBe(false);
     expect(wrapper.findAll(".holdings-table thead th")).toHaveLength(12);

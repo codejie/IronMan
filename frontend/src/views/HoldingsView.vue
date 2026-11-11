@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
+import { Activity, Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, X } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
@@ -14,7 +14,7 @@ import { holdingDetailRouteQuery } from "./holding-detail-presentation";
 import { holdingProfitSummary, holdingQuoteDateLabel } from "./holdings-presentation";
 import { formatDateTime, formatDate } from "@/utils/date-format";
 
-type Dialog = "create" | "capital" | "delete-holding";
+type Dialog = "create" | "capital";
 const intradaySnapshotLookbackDays = 45;
 
 const { token } = useSession();
@@ -24,7 +24,6 @@ const showClosed = ref(false);
 const useLocalData = ref(false);
 const dialog = ref<Dialog | null>(null);
 const isInstrumentPickerOpen = ref(false);
-const selectedHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const alertHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const selectedInstrument = ref<Instrument | null>(null);
 const selectedKlineInstrument = ref<BatmanHoldingWorkspaceRecord["instrument"] | null>(null);
@@ -342,12 +341,6 @@ function viewFundsTrend(): void {
   void router.push("/holding/funds/trend");
 }
 
-function openDeleteHolding(holding: BatmanHoldingWorkspaceRecord): void {
-  selectedHolding.value = holding;
-  errorMessage.value = "";
-  dialog.value = "delete-holding";
-}
-
 function openQuickAlert(holding: BatmanHoldingWorkspaceRecord): void {
   alertHolding.value = holding;
 }
@@ -364,7 +357,6 @@ function holdingAlertPrice(holding: BatmanHoldingWorkspaceRecord): number | null
 function closeDialog(): void {
   dialog.value = null;
   isInstrumentPickerOpen.value = false;
-  selectedHolding.value = null;
   selectedInstrument.value = null;
   errorMessage.value = "";
 }
@@ -519,20 +511,6 @@ async function adjustCapital(): Promise<void> {
   }
 }
 
-async function deleteCurrent(): Promise<void> {
-  if (token.value === null || selectedHolding.value === null || isSaving.value) return;
-  isSaving.value = true;
-  try {
-    await api.deleteHolding(token.value, selectedHolding.value.id);
-    closeDialog();
-    await load();
-  } catch (error) {
-    errorMessage.value = error instanceof ApiError ? error.message : "删除记录失败";
-  } finally {
-    isSaving.value = false;
-  }
-}
-
 function money(value: number | null): string { return value === null ? "-" : value.toFixed(2); }
 function percent(value: number | null): string { return value === null ? "-" : `${value.toFixed(2)}%`; }
 function signed(value: number | null): string { return value === null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`; }
@@ -564,7 +542,7 @@ onMounted(load);
     <div class="batman-table-frame holdings-table-frame">
       <table class="batman-table holdings-table"><colgroup><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>名称/代码</th><th>持仓/占比</th><th>成本/占比</th><th>均价/价差</th><th>现价/日期</th><th title="涨跌额/涨跌幅%">涨跌额/涨跌幅%</th><th>市值/占比</th><th>盈亏/占比</th><th>盈亏率%</th><th title="昨差/昨差率%">昨差/昨差率%</th><th class="batman-action-header">操作</th></tr></thead>
         <tbody v-overflow-title>
-          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)" :disabled="intradayDataCache.get(holding.instrument.id) === false || holding.instrument.assetType === 'fund'"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button><button :aria-label="`删除 ${holding.instrument.name} 持仓`" class="batman-icon-button danger" data-hint="删除持仓" data-hint-position="top" type="button" @click="openDeleteHolding(holding)"><Trash2 :size="14" /></button></div></td></tr>
+          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)" :disabled="intradayDataCache.get(holding.instrument.id) === false || holding.instrument.assetType === 'fund'"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button></div></td></tr>
           <tr v-if="activeRecords.length === 0"><td class="batman-empty-cell" colspan="12">-</td></tr>
         </tbody>
         <tfoot v-if="workspace"><tr><td colspan="7"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(dailyDifferenceTotal)">{{ signed(dailyDifferenceTotal) }}</td><td></td></tr></tfoot>
@@ -577,7 +555,7 @@ onMounted(load);
     <div v-if="dialog" class="batman-dialog-backdrop" @click.self="closeDialog">
       <section class="batman-dialog" aria-modal="true" role="dialog">
         <header>
-          <strong>{{ dialog === 'create' ? '增加持股' : dialog === 'capital' ? '资金调整' : '确认删除' }}</strong>
+          <strong>{{ dialog === 'create' ? '增加持股' : '资金调整' }}</strong>
           <button aria-label="关闭对话框" class="batman-icon-button" title="关闭" type="button" @click="closeDialog"><X :size="17" /></button>
         </header>
         <form v-if="dialog === 'create'" class="batman-form" @submit.prevent="createHolding">
@@ -590,17 +568,12 @@ onMounted(load);
           <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
           <footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="selectedInstrument === null || isSaving" type="submit">确定</button></footer>
         </form>
-        <form v-else-if="dialog === 'capital'" class="batman-form" @submit.prevent="adjustCapital">
+        <form v-else class="batman-form" @submit.prevent="adjustCapital">
           <label>资金调整<input v-model="capitalAmount" placeholder="增加为正，提取为负" required step="0.01" type="number" /></label>
           <label>备注<input v-model.trim="capitalNote" maxlength="500" /></label>
           <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
           <footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit">确定</button></footer>
         </form>
-        <div v-else class="batman-confirm">
-          <p>删除“{{ selectedHolding?.instrument.name ?? '' }}”及其全部操作记录？</p>
-          <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
-          <footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button danger" :disabled="isSaving" type="button" @click="deleteCurrent">删除</button></footer>
-        </div>
       </section>
     </div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
