@@ -389,7 +389,7 @@ export class ThirdPartyDataService {
            JOIN (
              SELECT instrument_id FROM watchlist_entries WHERE user_id = $userId
              UNION
-             SELECT instrument_id FROM holdings WHERE user_id = $userId
+             SELECT instrument_id FROM holdings WHERE user_id = $userId AND removed_at IS NULL
            ) AS referenced ON referenced.instrument_id = instruments.id
           WHERE instruments.asset_type = 'stock'
           ORDER BY instruments.code ASC`,

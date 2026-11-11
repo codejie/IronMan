@@ -2676,6 +2676,35 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   app.openapi(
     createRoute({
       method: "post",
+      path: "/api/assets/holdings/remove",
+      middleware: [authenticated(auth)],
+      request: { body: jsonBody(z.object({ id: z.string().uuid() })) },
+      responses: {
+        200: {
+          description: "Marked holding as removed",
+          content: {
+            "application/json": {
+              schema: responseSchema(z.object({ removed: z.literal(true) })),
+            },
+          },
+        },
+      },
+    }),
+    (context) =>
+      context.json(
+        success(
+          assets.removeHolding(
+            context.get("currentUser").id,
+            context.req.valid("json").id,
+          ),
+        ),
+        200,
+      ),
+  );
+
+  app.openapi(
+    createRoute({
+      method: "post",
       path: "/api/assets/holdings/list",
       middleware: [authenticated(auth)],
       request: { body: jsonBody(emptyBodySchema) },

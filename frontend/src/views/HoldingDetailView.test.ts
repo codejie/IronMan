@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   deleteHoldingTransaction: vi.fn(),
   holdingChart: vi.fn(),
   push: vi.fn(),
+  removeHolding: vi.fn(),
   requestConfirmation: vi.fn(),
 }));
 
@@ -17,6 +18,7 @@ vi.mock("@/api/client", () => ({
     addHoldingTransaction: mocks.addHoldingTransaction,
     deleteHoldingTransaction: mocks.deleteHoldingTransaction,
     holdingChart: mocks.holdingChart,
+    removeHolding: mocks.removeHolding,
   },
 }));
 
@@ -39,10 +41,12 @@ describe("HoldingDetailView", () => {
     mocks.deleteHoldingTransaction.mockReset();
     mocks.holdingChart.mockReset();
     mocks.push.mockReset();
+    mocks.removeHolding.mockReset();
     mocks.requestConfirmation.mockReset();
     mocks.addHoldingTransaction.mockResolvedValue({ id: "operation-2" });
     mocks.deleteHoldingTransaction.mockResolvedValue({ deleted: true });
     mocks.holdingChart.mockResolvedValue(detail());
+    mocks.removeHolding.mockResolvedValue({ removed: true });
     mocks.requestConfirmation.mockResolvedValue(true);
   });
 
@@ -200,6 +204,42 @@ describe("HoldingDetailView", () => {
     }));
     expect(mocks.deleteHoldingTransaction).toHaveBeenCalledWith("test-token", "holding-1", "operation-1");
     expect(mocks.holdingChart).toHaveBeenCalledTimes(2);
+  });
+
+  test("replaces refresh with a confirmed soft delete of the holding record", async () => {
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("刷新行情");
+    const remove = wrapper.get("button[aria-label='删除 测试标的 持仓记录']");
+    expect(remove.text()).toContain("删除");
+
+    await remove.trigger("click");
+    await flushPromises();
+
+    expect(mocks.requestConfirmation).toHaveBeenCalledWith(expect.objectContaining({
+      title: "删除持仓记录",
+      confirmLabel: "删除",
+      tone: "danger",
+    }));
+    expect(mocks.removeHolding).toHaveBeenCalledWith("test-token", "holding-1");
+    expect(mocks.push).toHaveBeenCalledWith("/holding/list");
+  });
+
+  test("keeps the holding when the delete confirmation is cancelled", async () => {
+    mocks.requestConfirmation.mockResolvedValue(false);
+    const wrapper = mount(HoldingDetailView, {
+      global: { stubs: { HoldingPerformanceChart: true } },
+    });
+    await flushPromises();
+
+    await wrapper.get("button[aria-label='删除 测试标的 持仓记录']").trigger("click");
+    await flushPromises();
+
+    expect(mocks.removeHolding).not.toHaveBeenCalled();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 
   test("does not offer a new operation for a closed holding", async () => {

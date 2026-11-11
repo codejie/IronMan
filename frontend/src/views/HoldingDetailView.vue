@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, RefreshCw, Trash2, X } from "lucide-vue-next";
+import { ArrowLeft, ChevronLeft, ChevronRight, CirclePlus, Trash2, X } from "lucide-vue-next";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import HoldingPerformanceChart from "@/components/HoldingPerformanceChart.vue";
@@ -37,6 +37,7 @@ const operationFee = ref("0");
 const operationOccurredAt = ref(nowInputValue());
 const operationNote = ref("");
 const isLoading = ref(false);
+const isRemoving = ref(false);
 const isSavingOperation = ref(false);
 const deletingOperationId = ref<string | null>(null);
 const errorMessage = ref("");
@@ -209,6 +210,30 @@ async function deleteOperation(transaction: HoldingChartData["transactions"][num
   }
 }
 
+/** 仅标记删除当前持仓记录；操作流水、资金流水和行情历史都保留。 */
+async function removeHolding(): Promise<void> {
+  const accessToken = token.value;
+  const holding = data.value?.holding;
+  if (accessToken === null || holding === undefined || isRemoving.value) return;
+  const confirmed = await requestConfirmation({
+    title: "删除持仓记录",
+    message: `确定删除“${holding.instrument.name}”的持仓记录吗？这里仅标记删除该持仓记录，不会删除已有操作、资金流水和行情历史。`,
+    confirmLabel: "删除",
+    tone: "danger",
+  });
+  if (!confirmed) return;
+  isRemoving.value = true;
+  errorMessage.value = "";
+  try {
+    await api.removeHolding(accessToken, holding.id);
+    await router.push("/holding/list");
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError ? error.message : "删除持仓记录失败";
+  } finally {
+    isRemoving.value = false;
+  }
+}
+
 function money(value: number | null): string { return value === null ? "-" : value.toFixed(2); }
 function signed(value: number | null): string { return value === null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}`; }
 function percent(value: number | null): string { return value === null ? "-" : `${value.toFixed(2)}%`; }
@@ -233,7 +258,7 @@ onMounted(() => { void load(); });
         <button :disabled="currentIndex <= 0" class="batman-button" type="button" @click="navigate(-1)"><ChevronLeft :size="15" />上一个</button>
         <button :disabled="currentIndex < 0 || currentIndex >= holdingIds.length - 1" class="batman-button" type="button" @click="navigate(1)">下一个<ChevronRight :size="15" /></button>
       </div>
-      <button :disabled="isLoading" class="batman-button" type="button" @click="load(true)"><RefreshCw :class="{ spinning: isLoading }" :size="15" />刷新行情</button>
+      <button :disabled="data === null || isRemoving" :aria-label="`删除 ${data?.holding.instrument.name ?? '当前'} 持仓记录`" class="batman-button danger" type="button" @click="removeHolding"><Trash2 :size="15" />{{ isRemoving ? "删除中..." : "删除" }}</button>
     </div>
 
     <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>

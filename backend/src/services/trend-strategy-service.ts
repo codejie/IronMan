@@ -151,7 +151,7 @@ export class TrendStrategyService {
     let ids: string[];
     switch (strategy.targetScope) {
       case "holdings":
-        ids = this.database.all<{ instrument_id: string }>("SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active'", { userId }).map((row) => row.instrument_id);
+        ids = this.database.all<{ instrument_id: string }>("SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active' AND removed_at IS NULL", { userId }).map((row) => row.instrument_id);
         break;
       case "watchlist":
         ids = this.database.all<{ instrument_id: string }>("SELECT instrument_id FROM watchlist_entries WHERE user_id = $userId", { userId }).map((row) => row.instrument_id);
@@ -160,7 +160,7 @@ export class TrendStrategyService {
         ids = strategy.customInstrumentIds;
         break;
       case "holdings_watchlist":
-        ids = this.database.all<{ instrument_id: string }>(`SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active' UNION SELECT instrument_id FROM watchlist_entries WHERE user_id = $userId`, { userId }).map((row) => row.instrument_id);
+        ids = this.database.all<{ instrument_id: string }>(`SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active' AND removed_at IS NULL UNION SELECT instrument_id FROM watchlist_entries WHERE user_id = $userId`, { userId }).map((row) => row.instrument_id);
         break;
       case "all":
         ids = this.database.all<{ id: string }>("SELECT id FROM instruments ORDER BY code ASC").map((row) => row.id);

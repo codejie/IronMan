@@ -840,6 +840,16 @@ const migrations: Migration[] = [
       ALTER TABLE trend_run_report_interpretations_widened RENAME TO trend_run_report_interpretations;
       CREATE INDEX IF NOT EXISTS trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
     `
+  },
+  {
+    version: 19,
+    sql: `
+      ALTER TABLE holdings ADD COLUMN removed_at TEXT;
+      DROP INDEX IF EXISTS holdings_active_unique_idx;
+      CREATE UNIQUE INDEX IF NOT EXISTS holdings_active_unique_idx
+        ON holdings(user_id, instrument_id) WHERE status = 'active' AND removed_at IS NULL;
+      CREATE INDEX IF NOT EXISTS holdings_owner_removed_idx ON holdings(user_id, removed_at);
+    `
   }
 ];
 

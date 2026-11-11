@@ -197,6 +197,15 @@ describe("trend analysis", () => {
         UNIQUE(report_id)
       );
       CREATE INDEX trend_run_report_interpretations_owner_idx ON trend_run_report_interpretations(user_id, run_id, created_at DESC);
+      CREATE TABLE holdings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        instrument_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE UNIQUE INDEX holdings_active_unique_idx ON holdings(user_id, instrument_id) WHERE status = 'active';
       INSERT INTO users (id) VALUES ('user-1');
       INSERT INTO trend_runs (id) VALUES ('run-1');
       INSERT INTO trend_run_reports (id) VALUES ('report-1'), ('report-2');

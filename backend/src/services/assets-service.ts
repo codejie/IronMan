@@ -207,7 +207,7 @@ export class AssetsService {
       .all<{ instrument_id: string }>(
         `SELECT instrument_id FROM watchlist_entries WHERE user_id = $userId
          UNION
-         SELECT instrument_id FROM holdings WHERE user_id = $userId`,
+         SELECT instrument_id FROM holdings WHERE user_id = $userId AND removed_at IS NULL`,
         { userId }
       )
       .map((row) => row.instrument_id);
@@ -239,7 +239,7 @@ export class AssetsService {
   async getWatchlistWorkspace(userId: string, refresh: boolean): Promise<WatchlistWorkspace> {
     const activeHoldings = new Set(
       this.database
-        .all<{ instrument_id: string }>("SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active'", { userId })
+        .all<{ instrument_id: string }>("SELECT instrument_id FROM holdings WHERE user_id = $userId AND status = 'active' AND removed_at IS NULL", { userId })
         .map((holding) => holding.instrument_id)
     );
     const items = await Promise.all(
@@ -323,7 +323,7 @@ export class AssetsService {
     this.market.getInstrument(input.instrumentId);
     return this.database.transaction(() => {
       const duplicate = this.database.get<{ id: string }>(
-        "SELECT id FROM holdings WHERE user_id = $userId AND instrument_id = $instrumentId AND status = 'active'",
+        "SELECT id FROM holdings WHERE user_id = $userId AND instrument_id = $instrumentId AND status = 'active' AND removed_at IS NULL",
         { userId, instrumentId: input.instrumentId }
       );
       if (duplicate !== undefined) {
@@ -383,6 +383,22 @@ export class AssetsService {
       this.database.run("DELETE FROM holdings WHERE id = $id AND user_id = $userId", { id, userId });
       if (affectedDate !== undefined) this.fundHistory?.markDirty(userId, affectedDate);
       return { deleted: true };
+    });
+  }
+
+  /**
+   * 仅标记删除当前持仓记录：保留操作流水、资金流水与行情历史，避免误删历史数据。
+   * 被标记的记录不再出现在持仓列表、工作台和详情接口中。
+   */
+  removeHolding(userId: string, id: string): { removed: true } {
+    return this.database.transaction(() => {
+      this.getHoldingRecord(userId, id);
+      const now = new Date().toISOString();
+      this.database.run(
+        "UPDATE holdings SET removed_at = $removedAt, updated_at = $updatedAt WHERE id = $id AND user_id = $userId",
+        { id, userId, removedAt: now, updatedAt: now }
+      );
+      return { removed: true };
     });
   }
 
@@ -481,6 +497,7 @@ export class AssetsService {
          WHERE t.user_id = $userId
            AND h.instrument_id = $instrumentId
            AND h.user_id = $userId
+           AND h.removed_at IS NULL
          ORDER BY t.occurred_at ASC, t.created_at ASC`,
       { userId, instrumentId }
     );
@@ -527,6 +544,7 @@ export class AssetsService {
          JOIN instruments ON instruments.id = holdings.instrument_id
          LEFT JOIN holding_transactions ON holding_transactions.holding_id = holdings.id AND holding_transactions.user_id = holdings.user_id
         WHERE holdings.user_id = $userId
+          AND holdings.removed_at IS NULL
         GROUP BY holdings.id
         ORDER BY CASE holdings.status WHEN 'active' THEN 0 ELSE 1 END, holdings.updated_at DESC`,
       { userId }
@@ -543,7 +561,7 @@ export class AssetsService {
 
   private getHoldingRecord(userId: string, id: string): HoldingRecord {
     const holding = this.database.get<HoldingRecord>(
-      "SELECT id, status, instrument_id FROM holdings WHERE id = $id AND user_id = $userId",
+      "SELECT id, status, instrument_id FROM holdings WHERE id = $id AND user_id = $userId AND removed_at IS NULL",
       { id, userId }
     );
     if (holding === undefined) {
@@ -625,7 +643,7 @@ export class AssetsService {
     const status: "active" | "closed" = quantity > 0 ? "active" : "closed";
     if (status === "active" && holding.status === "closed") {
       const duplicate = this.database.get<{ id: string }>(
-        "SELECT id FROM holdings WHERE user_id = $userId AND instrument_id = $instrumentId AND status = 'active' AND id != $id",
+        "SELECT id FROM holdings WHERE user_id = $userId AND instrument_id = $instrumentId AND status = 'active' AND id != $id AND removed_at IS NULL",
         { userId, instrumentId: holding.instrument_id, id: holding.id }
       );
       if (duplicate !== undefined) {

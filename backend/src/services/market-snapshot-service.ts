@@ -357,7 +357,7 @@ export class MarketSnapshotService {
     if (scope === "holdings" || scope === "holdings_watchlist") {
       conditions.push(`SELECT holdings.instrument_id
         FROM holdings JOIN instruments ON instruments.id = holdings.instrument_id
-       WHERE holdings.user_id = $userId AND holdings.status = 'active' AND instruments.asset_type IN ('stock', 'index')`);
+       WHERE holdings.user_id = $userId AND holdings.status = 'active' AND holdings.removed_at IS NULL AND instruments.asset_type IN ('stock', 'index')`);
     }
     if (scope === "watchlist" || scope === "holdings_watchlist") {
       conditions.push(`SELECT watchlist_entries.instrument_id

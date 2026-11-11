@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -349,6 +350,57 @@ describe("market data and asset workspace", () => {
     expect(deleteHolding.status).toBe(200);
     const cash = await post("/api/assets/cash/summary", {}, alice.token);
     expect(((await cash.json()) as ApiResponse<{ available: number }>).result.available).toBe(10000);
+  });
+
+  test("marks a holding as removed while preserving its operation history", async () => {
+    const admin = await register("remove-admin@example.com");
+    const alice = await register("remove-alice@example.com");
+    const bob = await register("remove-bob@example.com");
+    const instrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600015", exchange: "sh", name: "华夏银行", assetType: "stock" },
+      admin.token
+    );
+    const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/assets/cash/adjust", { amount: 10000, note: "本金" }, alice.token);
+    const created = await post(
+      "/api/assets/holdings/create",
+      { instrumentId: instrument.result.id, quantity: 100, price: 10, fee: 0, occurredAt: "2026-07-18T09:30:00.000Z" },
+      alice.token
+    );
+    const holding = (await created.json()) as ApiResponse<{ id: string }>;
+
+    const foreignRemove = await post("/api/assets/holdings/remove", { id: holding.result.id }, bob.token);
+    expect(foreignRemove.status).toBe(404);
+
+    const removed = await post("/api/assets/holdings/remove", { id: holding.result.id }, alice.token);
+    expect(removed.status).toBe(200);
+    expect(((await removed.json()) as ApiResponse<{ removed: boolean }>).result).toEqual({ removed: true });
+
+    const list = await post("/api/assets/holdings/list", {}, alice.token);
+    const listBody = (await list.json()) as ApiResponse<{ items: Array<{ id: string }> }>;
+    expect(listBody.result.items.map((item) => item.id)).not.toContain(holding.result.id);
+
+    const detail = await post("/api/assets/holdings/detail", { id: holding.result.id }, alice.token);
+    expect(detail.status).toBe(404);
+
+    const operations = await post("/api/assets/holdings/operations", { instrumentId: instrument.result.id }, alice.token);
+    const operationsBody = (await operations.json()) as ApiResponse<{ items: unknown[] }>;
+    expect(operationsBody.result.items).toHaveLength(0);
+
+    const database = new Database(join(tempDirectory, "ironman.sqlite"));
+    const holdingRow = database.query("SELECT removed_at FROM holdings WHERE id = ?").get(holding.result.id) as { removed_at: string | null } | null;
+    const operationRows = database.query("SELECT COUNT(*) AS count FROM holding_transactions WHERE holding_id = ?").get(holding.result.id) as { count: number } | null;
+    database.close();
+    expect(holdingRow?.removed_at).not.toBeNull();
+    expect(operationRows?.count).toBe(1);
+
+    const recreate = await post(
+      "/api/assets/holdings/create",
+      { instrumentId: instrument.result.id, quantity: 200, price: 11, fee: 0, occurredAt: "2026-07-21T09:30:00.000Z" },
+      alice.token
+    );
+    expect(recreate.status).toBe(201);
   });
 
   test("builds an isolated daily holding chart from transactions and market history", async () => {

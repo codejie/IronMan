@@ -820,7 +820,7 @@ export class HoldingDiagnosisService {
          FROM holdings
          JOIN instruments ON instruments.id = holdings.instrument_id
         LEFT JOIN holding_transactions ON holding_transactions.holding_id = holdings.id AND holding_transactions.user_id = holdings.user_id
-        WHERE holdings.user_id = $userId AND holdings.status = 'active'
+        WHERE holdings.user_id = $userId AND holdings.status = 'active' AND holdings.removed_at IS NULL
         GROUP BY holdings.id, instruments.id
         ORDER BY instruments.code ASC, instruments.id ASC`,
       { userId },
