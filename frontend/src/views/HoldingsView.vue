@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Activity, Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, X } from "lucide-vue-next";
+import { Activity, Bell, ChartNoAxesCombined, CirclePlus, RefreshCw, ShieldAlert, ShieldCheck, ShieldQuestion, Target, X } from "lucide-vue-next";
 import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import InstrumentKLineDialog from "@/components/InstrumentKLineDialog.vue";
@@ -7,7 +7,7 @@ import InstrumentPickerDialog from "@/components/InstrumentPickerDialog.vue";
 import KLineChart from "@/components/KLineChart.vue";
 import QuickAlertDialog from "@/components/QuickAlertDialog.vue";
 import { macd } from "@/components/kline-analysis";
-import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint, type PriceBar } from "@/api/client";
+import { api, ApiError, type BatmanHoldingWorkspace, type BatmanHoldingWorkspaceRecord, type Instrument, type MarketSnapshotPoint, type PriceBar, type ProfitRuleCheck, type ProfitRuleSignal } from "@/api/client";
 import { useSession } from "@/stores/session";
 import { instrumentCodeLabel } from "./instrument-kline-presentation";
 import { holdingDetailRouteQuery } from "./holding-detail-presentation";
@@ -44,6 +44,7 @@ const intradayLoading = ref(false);
 const intradayError = ref("");
 let intradayRequestVersion = 0;
 const intradayHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
+const ruleHolding = ref<BatmanHoldingWorkspaceRecord | null>(null);
 const intradayChartType = ref<"kline" | "line">("line");
 const intradayRange = ref<1 | 2 | 5 | "all">(2);
 const intradayOrigin = ref<"snapshot" | "minute">("snapshot");
@@ -354,6 +355,70 @@ function holdingAlertPrice(holding: BatmanHoldingWorkspaceRecord): number | null
   return basePrice === null ? null : Number((basePrice * 0.95).toFixed(4));
 }
 
+const ruleChecks = computed<ProfitRuleCheck[]>(() => {
+  const rule = ruleHolding.value?.profitRule;
+  return rule === null || rule === undefined ? [] : [rule.stopLoss, rule.takeProfit];
+});
+
+function profitRuleSignal(holding: BatmanHoldingWorkspaceRecord): ProfitRuleSignal {
+  return holding.profitRule?.signal ?? "unavailable";
+}
+
+function profitRuleIcon(signal: ProfitRuleSignal) {
+  if (signal === "stop_loss") return ShieldAlert;
+  if (signal === "take_profit") return Target;
+  if (signal === "unavailable") return ShieldQuestion;
+  return ShieldCheck;
+}
+
+function profitRuleHint(holding: BatmanHoldingWorkspaceRecord): string {
+  const signal = profitRuleSignal(holding);
+  if (signal === "stop_loss") return "已触发止损";
+  if (signal === "take_profit") return "已触发止盈";
+  if (signal === "unavailable") return "损盈规则（数据不足）";
+  return "损盈规则";
+}
+
+function profitRuleClass(holding: BatmanHoldingWorkspaceRecord): string {
+  const signal = profitRuleSignal(holding);
+  return signal === "stop_loss" ? "danger" : signal === "take_profit" ? "profit" : "";
+}
+
+function profitRuleSignalLabel(signal: ProfitRuleSignal): string {
+  if (signal === "stop_loss") return "已触发止损";
+  if (signal === "take_profit") return "已触发止盈";
+  if (signal === "unavailable") return "数据不足";
+  return "未触发";
+}
+
+function profitRuleStatusLabel(status: ProfitRuleCheck["status"]): string {
+  if (status === "triggered") return "已触发";
+  if (status === "unavailable") return "数据不足";
+  return "未触发";
+}
+
+function profitRulePrice(value: number | null): string {
+  return value === null ? "-" : Number(value.toFixed(4)).toString();
+}
+
+function profitRulePercent(value: number | null): string {
+  return value === null ? "-" : `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function profitRuleThresholdLabel(check: ProfitRuleCheck): string {
+  if (check.kind === "stop_loss") return "止损价";
+  if (check.strategy === "trailing" || check.strategy === "atr_trailing" || check.strategy === "ma_trail") return "离场价";
+  return "止盈价";
+}
+
+function openProfitRule(holding: BatmanHoldingWorkspaceRecord): void {
+  ruleHolding.value = holding;
+}
+
+function closeProfitRule(): void {
+  ruleHolding.value = null;
+}
+
 function closeDialog(): void {
   dialog.value = null;
   isInstrumentPickerOpen.value = false;
@@ -542,7 +607,7 @@ onMounted(load);
     <div class="batman-table-frame holdings-table-frame">
       <table class="batman-table holdings-table"><colgroup><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /><col /></colgroup><thead><tr><th>#</th><th>名称/代码</th><th>持仓/占比</th><th>成本/占比</th><th>均价/价差</th><th>现价/日期</th><th title="涨跌额/涨跌幅%">涨跌额/涨跌幅%</th><th>市值/占比</th><th>盈亏/占比</th><th>盈亏率%</th><th title="昨差/昨差率%">昨差/昨差率%</th><th class="batman-action-header">操作</th></tr></thead>
         <tbody v-overflow-title>
-          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)" :disabled="intradayDataCache.get(holding.instrument.id) === false || holding.instrument.assetType === 'fund'"><Activity :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button></div></td></tr>
+          <tr v-for="(holding, index) in activeRecords" :key="holding.id" :aria-label="`查看 ${holding.instrument.name} 持仓详情`" :data-holding-record="holding.id" class="holding-record-row" role="link" tabindex="0" @click="viewHoldingDetailFromRow($event, holding, activeRecords)" @keydown="viewHoldingDetailFromKeyboard($event, holding, activeRecords)"><td>{{ index + 1 }}</td><td class="batman-name"><button :aria-label="`查看 ${holding.instrument.name} K线`" class="batman-name-button" type="button" @click="viewKline(holding.instrument)"><strong data-overflow-content>{{ holding.instrument.name }}</strong><span data-overflow-content>{{ instrumentCodeLabel(holding.instrument) }}</span></button></td><td>{{ holding.quantity }} / {{ percent(holding.quantityRatio) }}</td><td>{{ money(holding.costCashFlow) }} / {{ percent(holding.costRatio) }}</td><td>{{ money(holding.averageCost) }} / <b :class="tone(holding.averagePriceDifference)">{{ signed(holding.averagePriceDifference) }}</b></td><td>{{ money(holding.currentPrice) }} {{ holdingQuoteDateLabel(holding.quoteDate) }}</td><td :class="tone(holding.priceChange)">{{ signed(holding.priceChange) }} / {{ percent(holding.priceChangeRate) }}</td><td>{{ money(holding.marketValue) }} / {{ percent(holding.marketValueRatio) }}</td><td :class="tone(holding.profit)">{{ signed(holding.profit) }} / {{ percent(holding.profitRatio) }}</td><td :class="tone(holding.profitRate)">{{ percent(holding.profitRate) }}</td><td :class="tone(holding.dailyDifference)">{{ signed(holding.dailyDifference) }} / {{ percent(holding.dailyDifferenceRate) }}</td><td class="batman-actions"><div class="batman-action-controls"><button :aria-label="`查看 ${holding.instrument.name} 分时数据`" class="batman-icon-button" data-hint="分时数据" data-hint-position="top" type="button" @click="openIntraday(holding)" :disabled="intradayDataCache.get(holding.instrument.id) === false || holding.instrument.assetType === 'fund'"><Activity :size="14" /></button><button :aria-label="`查看 ${holding.instrument.name} 损盈规则`" class="batman-icon-button" :class="profitRuleClass(holding)" :data-hint="profitRuleHint(holding)" data-hint-position="top" type="button" @click="openProfitRule(holding)"><component :is="profitRuleIcon(profitRuleSignal(holding))" :size="14" /></button><button :aria-label="`为 ${holding.instrument.name} 设置持仓提醒`" class="batman-icon-button" data-hint="设置提醒" data-hint-position="top" type="button" @click="openQuickAlert(holding)"><Bell :size="15" /></button></div></td></tr>
           <tr v-if="activeRecords.length === 0"><td class="batman-empty-cell" colspan="12">-</td></tr>
         </tbody>
         <tfoot v-if="workspace"><tr><td colspan="7"></td><td>{{ money(workspace.summary.totalMarketValue) }}</td><td :class="tone(profitSummary?.activeProfit ?? null)">{{ signed(profitSummary?.activeProfit ?? null) }}</td><td></td><td :class="tone(dailyDifferenceTotal)">{{ signed(dailyDifferenceTotal) }}</td><td></td></tr></tfoot>
@@ -574,6 +639,45 @@ onMounted(load);
           <p v-if="errorMessage" class="batman-error">{{ errorMessage }}</p>
           <footer><button class="batman-button" type="button" @click="closeDialog">取消</button><button class="batman-button primary" :disabled="isSaving" type="submit">确定</button></footer>
         </form>
+      </section>
+    </div>
+    <div v-if="ruleHolding" class="batman-dialog-backdrop" @click.self="closeProfitRule">
+      <section aria-modal="true" class="batman-dialog profit-rule-dialog" role="dialog">
+        <header>
+          <strong class="profit-rule-title">
+            损盈规则 · {{ ruleHolding.instrument.name }}
+            <span class="profit-rule-badge" :class="profitRuleSignal(ruleHolding)">{{ profitRuleSignalLabel(profitRuleSignal(ruleHolding)) }}</span>
+          </strong>
+          <button aria-label="关闭损盈规则对话框" class="batman-icon-button" title="关闭" type="button" @click="closeProfitRule"><X :size="17" /></button>
+        </header>
+        <p class="profit-rule-summary">{{ ruleHolding.profitRule?.summary ?? "当前持仓暂时缺少损盈评估数据。" }}</p>
+        <dl class="profit-rule-facts">
+          <div><dt>现价</dt><dd>{{ money(ruleHolding.currentPrice) }}</dd></div>
+          <div><dt>成本价</dt><dd>{{ money(ruleHolding.averageCost) }}</dd></div>
+          <div><dt>持仓数量</dt><dd>{{ ruleHolding.quantity }}</dd></div>
+          <div><dt>行情日期</dt><dd>{{ ruleHolding.quoteDate === null ? "-" : formatDate(ruleHolding.quoteDate) }}</dd></div>
+        </dl>
+        <div v-if="ruleChecks.length > 0" class="profit-rule-grid">
+          <article v-for="check in ruleChecks" :key="check.kind" class="profit-rule-card" :class="`rule-${check.kind}`">
+            <header>
+              <h3>{{ check.kind === "stop_loss" ? "止损规则" : "止盈规则" }}</h3>
+              <span class="profit-rule-badge" :class="check.status === 'triggered' ? check.kind : check.status">{{ profitRuleStatusLabel(check.status) }}</span>
+            </header>
+            <p class="profit-rule-strategy">{{ check.strategyLabel }}</p>
+            <dl class="profit-rule-metrics">
+              <div><dt>{{ profitRuleThresholdLabel(check) }}</dt><dd>{{ profitRulePrice(check.thresholdPrice) }}</dd></div>
+              <div><dt>距触发</dt><dd>{{ profitRulePercent(check.distancePercent) }}</dd></div>
+              <div><dt>触发时盈亏</dt><dd :class="tone(check.thresholdAmount)">{{ signed(check.thresholdAmount) }}</dd></div>
+              <div><dt>当前浮盈亏</dt><dd :class="tone(check.currentProfit)">{{ signed(check.currentProfit) }}</dd></div>
+            </dl>
+            <p class="profit-rule-detail">{{ check.detail }}</p>
+            <ul class="profit-rule-basis"><li v-for="item in check.basis" :key="item">{{ item }}</li></ul>
+          </article>
+        </div>
+        <footer class="profit-rule-footer">
+          <span>规则来自「系统配置 › 损盈规则」，按当前行情与持仓成本计算。</span>
+          <button class="batman-button" type="button" @click="closeProfitRule">关闭</button>
+        </footer>
       </section>
     </div>
     <InstrumentKLineDialog :instrument="selectedKlineInstrument" @close="closeKlineDialog" />
@@ -799,5 +903,185 @@ onMounted(load);
 .batman-icon-button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.batman-icon-button.danger {
+  color: #ff8c91;
+}
+
+.batman-icon-button.danger:hover {
+  color: #ffb1b5;
+}
+
+.batman-icon-button.profit {
+  color: #65d7ca;
+}
+
+.batman-icon-button.profit:hover {
+  color: #8ff0e6;
+}
+
+.profit-rule-dialog {
+  max-width: 760px;
+  width: min(100%, 760px);
+}
+
+.profit-rule-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.profit-rule-badge {
+  border: 1px solid #3b516d;
+  border-radius: 999px;
+  color: #a7bbcf;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.profit-rule-badge.stop_loss {
+  background: #3a2228;
+  border-color: #a7494d;
+  color: #ffb1b5;
+}
+
+.profit-rule-badge.take_profit {
+  background: #183336;
+  border-color: #3d7f7b;
+  color: #8ff0e6;
+}
+
+.profit-rule-badge.unavailable {
+  border-style: dashed;
+  color: #8498ae;
+}
+
+.profit-rule-summary {
+  background: #182636;
+  border-left: 3px solid #65d7ca;
+  border-radius: 4px;
+  color: #dce9f5;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+  padding: 9px 11px;
+}
+
+.profit-rule-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin: 0 0 14px;
+}
+
+.profit-rule-facts div {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+}
+
+.profit-rule-facts dt {
+  color: #8498ae;
+  font-size: 11px;
+}
+
+.profit-rule-facts dd {
+  color: #dce9f5;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 0;
+}
+
+.profit-rule-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.profit-rule-card {
+  background: #131d2b;
+  border: 1px solid #2c4059;
+  border-radius: 7px;
+  padding: 12px;
+}
+
+.profit-rule-card > header {
+  align-items: center;
+  border: 0;
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.profit-rule-card h3 {
+  color: #edf7ff;
+  font-size: 14px;
+  margin: 0;
+}
+
+.profit-rule-strategy {
+  color: #96abc2;
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+
+.profit-rule-metrics {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 10px;
+}
+
+.profit-rule-metrics dt {
+  color: #8498ae;
+  font-size: 11px;
+}
+
+.profit-rule-metrics dd {
+  color: #dce9f5;
+  font-size: 13px;
+  font-weight: 700;
+  margin: 2px 0 0;
+}
+
+.profit-rule-detail {
+  color: #c3d3e2;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.profit-rule-basis {
+  border-top: 1px dashed #2c4059;
+  color: #8fa1b4;
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 9px 0 0;
+  padding: 8px 0 0 16px;
+}
+
+.profit-rule-footer {
+  align-items: center;
+  border-top: 1px solid #2c4059;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.profit-rule-footer span {
+  color: #8498ae;
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .profit-rule-grid {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

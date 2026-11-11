@@ -711,6 +711,78 @@ describe("market data and asset workspace", () => {
     expect(((await foreignWorkspace.json()) as ApiResponse<{ active: unknown[] }>).result.active).toHaveLength(0);
   });
 
+  test("evaluates profit rules from the current user's stop-profit settings", async () => {
+    const admin = await register("rule-admin@example.com");
+    const alice = await register("rule-alice@example.com");
+    const bob = await register("rule-bob@example.com");
+    const instrumentResponse = await post(
+      "/api/market/instruments/upsert",
+      { code: "600019", exchange: "sh", name: "宝钢股份", assetType: "stock" },
+      admin.token
+    );
+    const instrument = (await instrumentResponse.json()) as ApiResponse<{ id: string }>;
+    await post("/api/assets/cash/adjust", { amount: 50000, note: "本金" }, alice.token);
+    await post(
+      "/api/assets/holdings/create",
+      { instrumentId: instrument.result.id, quantity: 100, price: 10, fee: 0, occurredAt: "2026-01-05T09:30:00.000Z" },
+      alice.token
+    );
+
+    const initial = await post("/api/assets/holdings/batman-workspace", { refresh: false }, alice.token);
+    const initialBody = (await initial.json()) as ApiResponse<{
+      active: Array<{
+        profitRule: {
+          signal: string;
+          summary: string;
+          asOf: string | null;
+          stopLoss: { strategyLabel: string; status: string; thresholdPrice: number | null; basis: string[] };
+          takeProfit: { strategyLabel: string; status: string; thresholdPrice: number | null; basis: string[] };
+        } | null;
+      }>;
+    }>;
+    const initialRule = initialBody.result.active[0]!.profitRule!;
+    expect(initialRule).not.toBeNull();
+    expect(initialRule.asOf).not.toBeNull();
+    expect(initialRule.stopLoss.strategyLabel).toBe("固定比例止损");
+    expect(initialRule.stopLoss.thresholdPrice).toBeCloseTo(9.5, 6);
+    expect(initialRule.stopLoss.status).toBe("safe");
+    expect(initialRule.takeProfit.strategyLabel).toBe("盈亏比止盈");
+    expect(initialRule.takeProfit.thresholdPrice).toBeCloseTo(11.5, 6);
+    expect(initialRule.takeProfit.status).toBe("triggered");
+    expect(initialRule.signal).toBe("take_profit");
+    expect(initialRule.summary).toContain("止盈");
+
+    await post(
+      "/api/settings/stop-profit/update",
+      { takeProfit: { strategy: "risk_reward", riskRewardRatio: 40 } },
+      alice.token
+    );
+    const relaxed = await post("/api/assets/holdings/batman-workspace", { refresh: false }, alice.token);
+    const relaxedRule = ((await relaxed.json()) as ApiResponse<{
+      active: Array<{ profitRule: { signal: string; takeProfit: { status: string; thresholdPrice: number | null } } | null }>;
+    }>).result.active[0]!.profitRule!;
+    expect(relaxedRule.takeProfit.thresholdPrice).toBeCloseTo(30, 6);
+    expect(relaxedRule.takeProfit.status).toBe("safe");
+    expect(relaxedRule.signal).toBe("safe");
+
+    await post(
+      "/api/settings/stop-profit/update",
+      { stopLoss: { strategy: "atr", atrPeriod: 14, atrMultiplier: 2 } },
+      alice.token
+    );
+    const atr = await post("/api/assets/holdings/batman-workspace", { refresh: false }, alice.token);
+    const atrRule = ((await atr.json()) as ApiResponse<{
+      active: Array<{ profitRule: { stopLoss: { strategyLabel: string; thresholdPrice: number | null; basis: string[] } } | null }>;
+    }>).result.active[0]!.profitRule!;
+    expect(atrRule.stopLoss.strategyLabel).toBe("ATR 止损");
+    expect(atrRule.stopLoss.thresholdPrice).not.toBeNull();
+    expect(atrRule.stopLoss.basis.join(" ")).toContain("ATR(14)");
+
+    const foreign = await post("/api/assets/holdings/batman-workspace", { refresh: false }, bob.token);
+    const foreignBody = (await foreign.json()) as ApiResponse<{ active: unknown[] }>;
+    expect(foreignBody.result.active).toHaveLength(0);
+  });
+
   test("returns the benchmark index daily K-line for the instrument's exchange", async () => {
     const admin = await register("admin@example.com");
     const alice = await register("alice@example.com");

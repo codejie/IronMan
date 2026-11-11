@@ -1,10 +1,12 @@
 import { IronManDatabase } from "../db/database";
 import { errors } from "../errors";
-import type { Instrument } from "../market/types";
+import type { Instrument, PriceBar } from "../market/types";
 import { IndicatorService } from "./indicator-service";
 import { fundBusinessDate, type FundHistoryService } from "./fund-history-service";
 import { MarketService } from "./market-service";
 import type { MarketSnapshotService } from "./market-snapshot-service";
+import { evaluateProfitRule, type ProfitRuleEvaluation } from "./profit-rule-service";
+import type { StopProfitSettingsService } from "./stop-profit-service";
 
 type StoredHoldingAction = "buy" | "sell" | "dividend";
 export type HoldingAction = "buy" | "sell" | "interest";
@@ -129,6 +131,7 @@ export interface HoldingWorkspaceRecord extends HoldingSummary {
   marketValue: number | null;
   profit: number | null;
   profitRate: number | null;
+  profitRule?: ProfitRuleEvaluation | null;
 }
 
 export interface HoldingWorkspace {
@@ -168,6 +171,7 @@ export class AssetsService {
     private readonly market: MarketService,
     private readonly fundHistory?: Pick<FundHistoryService, "markDirty">,
     private readonly snapshots?: Pick<MarketSnapshotService, "captureFromManualRefresh">,
+    private readonly stopProfit?: Pick<StopProfitSettingsService, "get">,
   ) {}
 
   createWatchlistEntry(userId: string, input: { instrumentId: string; note: string; targetPrice?: number | null }): WatchlistEntry {
@@ -409,14 +413,29 @@ export class AssetsService {
 
   async getHoldingWorkspace(userId: string, refresh: boolean): Promise<HoldingWorkspace> {
     const summaries = this.listHoldingRows(userId).map((row) => this.toHoldingSummary(row));
+    const profitSettings = this.stopProfit?.get(userId) ?? null;
+    const firstBuyDates = new Map<string, string>();
+    if (profitSettings !== null) {
+      for (const row of this.database.all<{ holding_id: string; first_buy_at: string }>(
+        `SELECT holding_id, MIN(occurred_at) AS first_buy_at
+           FROM holding_transactions
+          WHERE user_id = $userId AND action = 'buy'
+          GROUP BY holding_id`,
+        { userId }
+      )) {
+        firstBuyDates.set(row.holding_id, row.first_buy_at);
+      }
+    }
     const records: HoldingWorkspaceRecord[] = [];
     for (const holding of summaries) {
       let currentPrice: number | null = null;
       let quoteDate: string | null = null;
       let priceChange: number | null = null;
       let priceChangeRate: number | null = null;
+      let bars: PriceBar[] = [];
       try {
         const history = await this.market.getHistory(userId, holding.instrument.id, "day", refresh);
+        bars = history.bars;
         const latest = history.bars.at(-1);
         const previous = history.bars.at(-2);
         if (latest !== undefined) {
@@ -433,6 +452,7 @@ export class AssetsService {
       }
       const marketValue = currentPrice === null ? null : Number((holding.quantity * currentPrice).toFixed(6));
       const profit = marketValue === null ? null : Number((marketValue - holding.cost).toFixed(6));
+      const firstBuyAt = firstBuyDates.get(holding.id);
       records.push({
         ...holding,
         currentPrice,
@@ -441,7 +461,18 @@ export class AssetsService {
         priceChangeRate,
         marketValue,
         profit,
-        profitRate: profit === null || holding.cost === 0 ? null : Number(((profit / Math.abs(holding.cost)) * 100).toFixed(4))
+        profitRate: profit === null || holding.cost === 0 ? null : Number(((profit / Math.abs(holding.cost)) * 100).toFixed(4)),
+        profitRule: holding.status === "active" && profitSettings !== null
+          ? evaluateProfitRule({
+              averageCost: holding.averageCost,
+              quantity: holding.quantity,
+              currentPrice,
+              quoteDate,
+              bars,
+              firstBuyDate: firstBuyAt === undefined ? null : fundBusinessDate(firstBuyAt),
+              settings: profitSettings
+            })
+          : null
       });
     }
     const active = records.filter((record) => record.status === "active");

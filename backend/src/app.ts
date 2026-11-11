@@ -331,7 +331,8 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     tradingCalendar,
     market,
   );
-  const assets = new AssetsService(database, market, fundHistory, snapshots);
+  const stopProfit = new StopProfitSettingsService(database);
+  const assets = new AssetsService(database, market, fundHistory, snapshots, stopProfit);
   const indicators = new IndicatorService();
   const trendIndicators = new TrendIndicatorService();
   const assistantConversations = new AssistantConversationService(database);
@@ -398,7 +399,6 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
   const scheduler = new AutomationScheduler(automation);
   const notes = new NoteService(database, market);
   const backup = new BackupService(database);
-  const stopProfit = new StopProfitSettingsService(database);
   const app = new OpenAPIHono<{ Variables: AppVariables }>();
   const allowedOrigins = new Set(
     (
@@ -2450,6 +2450,25 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     marketValue: z.number(),
     profit: z.number(),
   });
+  const profitRuleCheckSchema = z.object({
+    kind: z.enum(["stop_loss", "take_profit"]),
+    strategy: z.string(),
+    strategyLabel: z.string(),
+    status: z.enum(["triggered", "safe", "unavailable"]),
+    thresholdPrice: z.number().nullable(),
+    thresholdAmount: z.number().nullable(),
+    currentProfit: z.number().nullable(),
+    distancePercent: z.number().nullable(),
+    detail: z.string(),
+    basis: z.array(z.string()),
+  });
+  const profitRuleEvaluationSchema = z.object({
+    signal: z.enum(["stop_loss", "take_profit", "safe", "unavailable"]),
+    summary: z.string(),
+    asOf: z.string().nullable(),
+    stopLoss: profitRuleCheckSchema,
+    takeProfit: profitRuleCheckSchema,
+  });
   const holdingWorkspaceRecordSchema = holdingSchema.extend({
     currentPrice: z.number().nullable(),
     quoteDate: z.string().nullable(),
@@ -2458,6 +2477,7 @@ export function createApp(config: RuntimeConfig): IronManRuntime {
     marketValue: z.number().nullable(),
     profit: z.number().nullable(),
     profitRate: z.number().nullable(),
+    profitRule: profitRuleEvaluationSchema.nullable().optional(),
   });
   const holdingWorkspaceSchema = z.object({
     summary: z.object({

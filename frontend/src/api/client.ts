@@ -143,6 +143,31 @@ export interface HoldingWorkspaceRecord extends HoldingSummary {
   marketValue: number | null;
   profit: number | null;
   profitRate: number | null;
+  profitRule?: ProfitRuleEvaluation | null;
+}
+
+export type ProfitRuleSignal = "stop_loss" | "take_profit" | "safe" | "unavailable";
+export type ProfitRuleStatus = "triggered" | "safe" | "unavailable";
+
+export interface ProfitRuleCheck {
+  kind: "stop_loss" | "take_profit";
+  strategy: string;
+  strategyLabel: string;
+  status: ProfitRuleStatus;
+  thresholdPrice: number | null;
+  thresholdAmount: number | null;
+  currentProfit: number | null;
+  distancePercent: number | null;
+  detail: string;
+  basis: string[];
+}
+
+export interface ProfitRuleEvaluation {
+  signal: ProfitRuleSignal;
+  summary: string;
+  asOf: string | null;
+  stopLoss: ProfitRuleCheck;
+  takeProfit: ProfitRuleCheck;
 }
 
 export interface HoldingWorkspace {

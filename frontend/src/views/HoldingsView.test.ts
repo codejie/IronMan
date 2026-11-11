@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
-import type { BatmanHoldingWorkspace, BatmanHoldingWorkspaceRecord } from "@/api/client";
+import type { BatmanHoldingWorkspace, BatmanHoldingWorkspaceRecord, ProfitRuleCheck, ProfitRuleEvaluation } from "@/api/client";
 import HoldingsView from "./HoldingsView.vue";
 
 const mocks = vi.hoisted(() => ({
@@ -136,6 +136,134 @@ describe("HoldingsView", () => {
     expect(wrapper.find(".batman-expander").exists()).toBe(false);
     expect(wrapper.find(".batman-operations-row").exists()).toBe(false);
     expect(wrapper.findAll(".holdings-table thead th")).toHaveLength(12);
+  });
+
+  test("places the profit-rule action after intraday data and shows the triggered stop loss", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [
+        holding({
+          id: "holding-1",
+          profitRule: profitRule({
+            signal: "stop_loss",
+            summary: "固定比例止损触发：现价 0.9 已跌破止损价 0.95，浮亏 -10.00 元。",
+            stopLoss: ruleCheck({ status: "triggered", detail: "现价 0.9 已跌破止损价 0.95" })
+          })
+        })
+      ],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+
+    const wrapper = await mountView();
+    const controls = wrapper.get(".holding-record-row .batman-action-controls");
+    const buttons = controls.findAll("button");
+    expect(buttons.map((button) => button.attributes("aria-label"))).toEqual([
+      "查看 测试股票 分时数据",
+      "查看 测试股票 损盈规则",
+      "为 测试股票 设置持仓提醒"
+    ]);
+
+    const ruleButton = buttons[1]!;
+    expect(ruleButton.attributes("data-hint")).toBe("已触发止损");
+    expect(ruleButton.attributes("data-hint-position")).toBe("top");
+    expect(ruleButton.classes()).toContain("danger");
+
+    await ruleButton.trigger("click");
+    const dialog = wrapper.get(".profit-rule-dialog");
+    expect(dialog.text()).toContain("损盈规则 · 测试股票");
+    expect(dialog.text()).toContain("已触发止损");
+    expect(dialog.text()).toContain("止损规则");
+    expect(dialog.text()).toContain("止盈规则");
+    expect(dialog.text()).toContain("固定比例止损");
+    expect(dialog.text()).toContain("止损价");
+    expect(dialog.text()).toContain("0.95");
+    expect(dialog.text()).toContain("止损比例 5%");
+    expect(dialog.text()).toContain("盈亏比止盈");
+    expect(dialog.text()).toContain("1.15");
+    expect(dialog.text()).toContain("规则来自「系统配置 › 损盈规则」");
+
+    await wrapper.get("button[aria-label='关闭损盈规则对话框']").trigger("click");
+    expect(wrapper.find(".profit-rule-dialog").exists()).toBe(false);
+  });
+
+  test("shows a take-profit signal with its own icon color", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 120,
+        totalAssets: 120,
+        principal: 100,
+        profit: 20,
+        profitRate: 20
+      },
+      active: [
+        holding({
+          id: "holding-1",
+          profitRule: profitRule({
+            signal: "take_profit",
+            takeProfit: ruleCheck({
+              kind: "take_profit",
+              strategy: "trailing",
+              strategyLabel: "移动止盈",
+              status: "triggered",
+              thresholdPrice: 1.14,
+              thresholdAmount: 14,
+              currentProfit: 20,
+              distancePercent: -2.63,
+              detail: "现价 1.2 已回撤至离场价 1.14",
+              basis: ["持仓期最高价 1.2", "回撤比例 5%", "离场价 1.14"]
+            })
+          })
+        })
+      ],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+
+    const wrapper = await mountView();
+    const ruleButton = wrapper.get("button[aria-label='查看 测试股票 损盈规则']");
+    expect(ruleButton.attributes("data-hint")).toBe("已触发止盈");
+    expect(ruleButton.classes()).toContain("profit");
+    expect(ruleButton.classes()).not.toContain("danger");
+
+    await ruleButton.trigger("click");
+    expect(wrapper.get(".profit-rule-dialog").text()).toContain("离场价");
+  });
+
+  test("falls back to a data-missing profit rule when the workspace has no evaluation", async () => {
+    mocks.batmanHoldingWorkspace.mockResolvedValue({
+      summary: {
+        cashAvailable: 0,
+        totalCost: 100,
+        totalMarketValue: 90,
+        totalAssets: 90,
+        principal: 100,
+        profit: -10,
+        profitRate: -10
+      },
+      active: [holding({ id: "holding-1" })],
+      closed: []
+    } satisfies BatmanHoldingWorkspace);
+
+    const wrapper = await mountView();
+    const ruleButton = wrapper.get("button[aria-label='查看 测试股票 损盈规则']");
+    expect(ruleButton.attributes("data-hint")).toBe("损盈规则（数据不足）");
+    expect(ruleButton.classes()).not.toContain("danger");
+    expect(ruleButton.classes()).not.toContain("profit");
+
+    await ruleButton.trigger("click");
+    const dialog = wrapper.get(".profit-rule-dialog");
+    expect(dialog.text()).toContain("数据不足");
+    expect(dialog.text()).toContain("当前持仓暂时缺少损盈评估数据。");
+    expect(dialog.find(".profit-rule-card").exists()).toBe(false);
   });
 
   test("renders intraday snapshots as timestamped candlesticks instead of a table", { timeout: 15000 }, async () => {
@@ -741,4 +869,59 @@ function holding(overrides: Partial<BatmanHoldingWorkspaceRecord>): BatmanHoldin
     dailyDifferenceRate: null,
     ...overrides
   };
+}
+
+function ruleCheck(overrides: Partial<ProfitRuleCheck> = {}): ProfitRuleCheck {
+  return {
+    kind: "stop_loss",
+    strategy: "fixed_percentage",
+    strategyLabel: "固定比例止损",
+    status: "safe",
+    thresholdPrice: 0.95,
+    thresholdAmount: -5,
+    currentProfit: -10,
+    distancePercent: 5.26,
+    detail: "现价 0.9 仍在止损价 0.95 之上",
+    basis: ["成本价 1", "止损比例 5%"],
+    ...overrides
+  };
+}
+
+function profitRule(overrides: Partial<ProfitRuleEvaluation> = {}): ProfitRuleEvaluation {
+  return {
+    signal: "safe",
+    summary: "当前价格未触发止损或止盈规则。",
+    asOf: "2026-07-24",
+    stopLoss: ruleCheck(),
+    takeProfit: ruleCheck({
+      kind: "take_profit",
+      strategy: "risk_reward",
+      strategyLabel: "盈亏比止盈",
+      thresholdPrice: 1.15,
+      thresholdAmount: 15,
+      distancePercent: -21.74,
+      detail: "现价 0.9 尚未达到止盈价 1.15",
+      basis: ["成本价 1", "每股止损空间 0.05", "盈亏比 1 : 3"]
+    }),
+    ...overrides
+  };
+}
+
+async function mountView() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [{ component: { template: "<div />" }, path: "/holding/detail" }]
+  });
+  const wrapper = mount(HoldingsView, {
+    global: {
+      plugins: [router],
+      stubs: {
+        InstrumentKLineDialog: true,
+        InstrumentPickerDialog: true,
+        QuickAlertDialog: true
+      }
+    }
+  });
+  await flushPromises();
+  return wrapper;
 }
